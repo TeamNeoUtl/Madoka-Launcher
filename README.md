@@ -15,7 +15,7 @@ MLAYN Launcher は完全無料・自由・オープンソースです。広告�
 
 # 対応ソフト
 
-| | ゆっくりMovieMaker 4 | ゆっくりMovieMaker 4 Lite | AviUtl ExEdit0 | AviUtl ExEdit2 | NeoUtl | AviQtl Plus |
+| | ゆっくりMovieMaker 4 | ゆっくりMovieMaker 4 Lite | AviUtl ExEdit0 | AviUtl ExEdit2 | NeoUtl | Freya NLE |
 | --- | --- | --- | --- | --- | --- | --- |
 | **バージョン管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | **インスタンス管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
