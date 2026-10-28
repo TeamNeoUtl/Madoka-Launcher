@@ -456,3 +456,4 @@ macOS: ランチャーの対象外 (README: Windows 11 と Linux)。
 | 6 | APM `archivePath` の解釈 | Phase 3 で実アーカイブ 2 件以上と照合 | 3 |
 | 7 | APM 生成物 (`v3/*.json`) の実体 | Phase 2 で `cdn.jsdelivr.net` から取得 | 5 |
 | 8 | APM の GitHub パッケージ 78 件のうち `archive-name-pattern.json` に一致しない件数 | Phase 5 で全件走査 | 5 |
+| 9 | 実行ファイル名と展開後の階層。実装の探索対象: YMM4 `YukkuriMovieMaker.exe`、NeoUtl `NeoUtl` / `NeoUtl.exe`、Freya NLE `freya-nle` `freya` `aviqtl` (候補。確認なし)。探索深さ 2 | Phase 4 のローカル検証で ZIP の実物を確認し、`Kind::executable_stems` を確定 | 4 |

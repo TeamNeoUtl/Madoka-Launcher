@@ -16,6 +16,7 @@ pub trait Http: Send + Sync {
 
 const GITHUB_API_HOST: &str = "api.github.com";
 
+#[derive(Clone)]
 pub struct ReqwestHttp {
     client: reqwest::Client,
     github_token: Option<String>,

@@ -48,6 +48,14 @@ pub enum Error {
     PluginUnsupported(Kind),
     #[error("directory id {dir} differs from file id {file}")]
     IdMismatch { dir: InstanceId, file: InstanceId },
+    #[error("executable of {kind:?} not found under {dir}")]
+    ExecutableNotFound { kind: Kind, dir: PathBuf },
+    #[error("{exe} exited with {status}\n{log}")]
+    LaunchFailed {
+        exe: PathBuf,
+        status: String,
+        log: String,
+    },
 }
 
 impl Error {

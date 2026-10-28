@@ -1,11 +1,10 @@
-[package]
-name = "MLAYN-Launcher"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
 resolver = "3"
-members = ["crates/launcher-core", "crates/launcher-providers"]
+members = [
+    "crates/launcher-core",
+    "crates/launcher-providers",
+    "crates/launcher-app",
+]
 
 [workspace.package]
 version = "0.1.0"

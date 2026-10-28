@@ -122,13 +122,15 @@ Wine を使用しない。すべて直接 spawn。
 
 - 非対応の Kind は New Instance 画面で選択不可。理由を 1 行表示する。
 - Freya NLE は GPU アダプタを必須とする。起動失敗時にログを表示する。
+- Runner (`launcher_core::Launched`): `<instance>/app/` の深さ 2 までを探索し、Kind ごとの実行ファイル名 (大文字小文字無視) に一致する最初のファイルを `current_dir` を親ディレクトリに設定して spawn する。stdout / stderr は `<instance>/launch.log` へ書き込む。起動後 5 秒以内に失敗ステータスで終了した場合は `Failed` とし、ログ末尾 4096 byte を理由に含める。
 
 ### 5.4 タスク
 
 - すべてのネットワーク処理・ファイル展開を `Task` として実行する。
 - `Task` の状態: `Queued` / `Running{done,total}` / `Succeeded` / `Failed{reason}`。
 - UI は `iced::Subscription` で状態を受信する。
-- 同一 Instance への書き込みタスクは直列化する (Instance 単位の Mutex)。Phase 4 で実装する (Phase 3 の `Installer` は排他制御を持たない)。
+- 同一 Instance への書き込みタスク (作成・削除・起動前の読込) は `InstanceLocks` (Instance 単位の `tokio::sync::Mutex`) で直列化する。`Installer` は排他制御を持たない。呼び出し側が `InstanceLocks::lock` を取得する。
+- `Running{done,total}` の単位は手順数 (`u16`)。状態は `TaskBoard` (共有リスト) に保持し、UI は進行中タスクがある間だけ 250 ms 周期の `Subscription` で再描画する。
 
 ### 5.5 YMM4 索引のパース
 
@@ -180,11 +182,11 @@ Wine を使用しない。すべて直接 spawn。
 |---|---|---|
 | 0 | 入力調査 | 完了。`docs/inputs.md` に記載。未確認 8 件は `docs/inputs.md` §8 |
 | 1 | `launcher-core`: モデル、`instance.toml` 読み書き、Instance CRUD | 完了。`cargo test` 8 件成功 (作成→保存→読込→削除、パス検証、一覧、Kind×Host) |
-| 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わない `ymm4plugins.yml` fixture の全件パース成功 (件数は実ファイルで確定) |
+| 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わずに、索引のパース規則 (§5.5) と asset 選択規則を検証して成功 |
 | 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
-| 4 | UI: Main / New Instance / Tasks | YMM4 / NeoUtl / Freya NLE のインスタンスを UI から作成して起動できる (Windows) |
-| 5 | UI: Browse / Plugins、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
-| 6 | Linux 対応 | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
+| 4 | UI: Main (ツールバー: 追加 / 更新 / タスク、Group 別グリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance / Tasks | 実装済。ローカルの `cargo fmt` / `clippy` / `test` と手動起動の結果待ち。YMM4 / NeoUtl / Freya NLE のインスタンスを UI から作成して起動できる (Windows) |
+| 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
+| 6 | Linux 対応 (展開後の実行権限付与を含む。`Archive::extract` は Unix mode を設定しない) | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
 | 7 | 配布: GitHub Actions で 2 OS ビルド、リリース成果物生成 | tag push で Windows と Linux の成果物が Release に添付される |
 
 各 Phase は 1 PR。Phase 完了時点で `main` はビルドとテストが成功している状態を保つ。
@@ -194,8 +196,9 @@ Wine を使用しない。すべて直接 spawn。
 | 種別 | 対象 | 方法 |
 |---|---|---|
 | 単体 | モデル、パス検証、バージョン比較 | `cargo test` |
-| Fixture | `ymm4plugins.yml` / `index.json` / APM `packages/*.json` のパース | 取得済みファイルを `tests/fixtures/` に保存し比較 |
+| 規則 | `ymm4plugins.yml` / `index.json` / APM `packages/*.json` のパース、asset 選択、導入可否判定 | テスト内で生成した最小の入力を検証。実データのスナップショット・件数・特定の値は検証しない |
 | 統合 | Installer | `tempfile` 上で zip を展開、`files` と実体を照合 |
+| 実データ | 索引・Release API の形状 | `#[ignore]` のネットワークテスト。件数ではなく不変条件 (ID の一意、必須項目の存在、各ホストで導入可能な版の存在) を検証 |
 | CI | fmt / clippy / test | `cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` を Windows と Linux で実行 |
 
 ネットワークを使うテストは `#[ignore]` を付け、CI の定期ジョブでのみ実行する。
@@ -233,3 +236,4 @@ Wine を使用しない。すべて直接 spawn。
 | 5 | APM データ (CC BY-NC-SA 4.0)、NeoUtl (AGPL)、各索引の同梱 | 同梱しない。実行時に取得 (決定済) |
 | 6 | macOS | 対象外 (決定済) |
 | 7 | AviUtl2 のインスタンス分離 | `instances/<id>/` 内で完全に独立。共有しない (決定済)。ポータブル ZIP のデータ配置は Phase 5 で確認 |
+| 8 | ダウンロードのバイト進捗 | 表示しない。`Running` は手順数。`Fetcher` への進捗通知は未定 |

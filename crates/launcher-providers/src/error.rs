@@ -19,4 +19,6 @@ pub enum ProviderError {
     UnsupportedHost { kind: Kind, host: Host },
     #[error("version {version} has no matching asset")]
     NoMatchingAsset { version: String },
+    #[error("no provider for kind {0:?}")]
+    NoProvider(Kind),
 }
