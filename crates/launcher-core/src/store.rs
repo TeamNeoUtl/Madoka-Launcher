@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use time::OffsetDateTime;
+use tracing::info;
 
 use crate::{Error, Host, Instance, InstanceConfig, InstanceId, NewInstance};
 
@@ -60,6 +61,12 @@ impl InstanceStore {
             let _ = fs::remove_dir_all(&instance.dir);
             return Err(error);
         }
+        info!(
+            id = %instance.config.id,
+            kind = ?instance.config.kind,
+            dir = %instance.dir.display(),
+            "instance created"
+        );
         Ok(instance)
     }
 
@@ -85,7 +92,9 @@ impl InstanceStore {
         if !dir.is_dir() {
             return Err(Error::NotFound(id));
         }
-        fs::remove_dir_all(&dir).map_err(|e| Error::io(&dir, e))
+        fs::remove_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        info!(%id, dir = %dir.display(), "instance deleted");
+        Ok(())
     }
 
     pub fn list(&self) -> Result<Listing, Error> {

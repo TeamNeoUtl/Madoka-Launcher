@@ -4,6 +4,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tracing::{debug, info, warn};
+
 use crate::{Error, Host, Instance, Kind};
 
 const LOG_FILE: &str = "launch.log";
@@ -73,10 +75,12 @@ pub fn find_executable(app_dir: &Path, kind: Kind, host: Host) -> Result<PathBuf
             }
         }
         if let Some(path) = found.into_iter().min() {
+            debug!(exe = %path.display(), ?kind, "executable found");
             return Ok(path);
         }
         level = next;
     }
+    warn!(dir = %app_dir.display(), ?kind, "executable not found");
     Err(Error::ExecutableNotFound {
         kind,
         dir: app_dir.to_owned(),
@@ -104,6 +108,7 @@ impl Launched {
             .stderr(err)
             .spawn()
             .map_err(|e| Error::io(&exe, e))?;
+        info!(exe = %exe.display(), pid = child.id(), log = %log.display(), "process spawned");
         Ok(Self { child, exe, log })
     }
 
@@ -118,8 +123,12 @@ impl Launched {
         let deadline = Instant::now() + window;
         loop {
             match child.try_wait().map_err(|e| Error::io(&exe, e))? {
-                Some(status) if status.success() => return Ok(()),
+                Some(status) if status.success() => {
+                    info!(exe = %exe.display(), %status, "process exited with success");
+                    return Ok(());
+                }
                 Some(status) => {
+                    warn!(exe = %exe.display(), %status, "process exited with failure");
                     return Err(Error::LaunchFailed {
                         exe,
                         status: status.to_string(),
@@ -127,6 +136,7 @@ impl Launched {
                     });
                 }
                 None if Instant::now() >= deadline => {
+                    info!(exe = %exe.display(), window_ms = window.as_millis(), "process still running");
                     reap(child);
                     return Ok(());
                 }
@@ -142,6 +152,7 @@ pub fn open_directory(dir: &Path, host: Host) -> Result<(), Error> {
         Host::Windows => "explorer",
         Host::Linux => "xdg-open",
     };
+    debug!(program, dir = %dir.display(), "open directory");
     let child = Command::new(program)
         .arg(dir)
         .spawn()

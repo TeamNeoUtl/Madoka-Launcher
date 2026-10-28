@@ -1,4 +1,5 @@
 mod app;
+mod logging;
 mod ops;
 mod screen;
 mod strings;
@@ -6,13 +7,26 @@ mod strings;
 use std::process::ExitCode;
 
 use app::App;
+use launcher_core::default_root;
 use ops::Services;
+use tracing::{error, info};
 
 fn main() -> ExitCode {
-    let services = match Services::new() {
+    let Some(root) = default_root() else {
+        eprintln!("data directory is unavailable");
+        return ExitCode::FAILURE;
+    };
+    let log = logging::init(&root);
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        root = %root.display(),
+        log = %log.display(),
+        "start"
+    );
+    let services = match Services::new(root) {
         Ok(services) => services,
         Err(error) => {
-            eprintln!("{error}");
+            error!(%error, "initialization failed");
             return ExitCode::FAILURE;
         }
     };
@@ -21,9 +35,12 @@ fn main() -> ExitCode {
         .subscription(App::subscription)
         .run();
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            info!("exit");
+            ExitCode::SUCCESS
+        }
         Err(error) => {
-            eprintln!("{error}");
+            error!(%error, "application failed");
             ExitCode::FAILURE
         }
     }

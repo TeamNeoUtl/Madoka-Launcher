@@ -4,9 +4,10 @@ use std::sync::Arc;
 use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Host, Installer, Instance, InstanceId,
     InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW, TaskBoard, TaskHandle,
-    default_root, open_directory,
+    open_directory,
 };
 use launcher_providers::{AnyProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp};
+use tracing::{debug, error, info, warn};
 
 const CREATE_STEPS: u16 = 2;
 const DELETE_STEPS: u16 = 1;
@@ -14,8 +15,6 @@ const LAUNCH_STEPS: u16 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpError {
-    #[error("data directory is unavailable")]
-    NoDataDir,
     #[error("{0}")]
     Core(Box<Error>),
     #[error("{0}")]
@@ -63,13 +62,19 @@ pub struct Services {
 }
 
 impl Services {
-    pub fn new() -> Result<Self, OpError> {
-        let root = default_root().ok_or(OpError::NoDataDir)?;
+    pub fn new(root: PathBuf) -> Result<Self, OpError> {
         let config = Config::load(&root)?;
         let user_agent = format!("MLAYN-Launcher/{}", env!("CARGO_PKG_VERSION"));
         let token = config.github_token.filter(|token| !token.trim().is_empty());
+        let config_has_token = token.is_some();
         let http = ReqwestHttp::new(&user_agent, token).map_err(ProviderError::from)?;
         let fetcher = ReqwestFetcher::new(&user_agent)?;
+        info!(
+            root = %root.display(),
+            host = ?Host::current(),
+            github_token = config_has_token,
+            "services ready"
+        );
         Ok(Self {
             host: Host::current(),
             board: TaskBoard::default(),
@@ -95,7 +100,12 @@ impl Services {
 
     pub async fn app_versions(self, kind: Kind) -> Result<Vec<AppVersion>, OpError> {
         let provider = AnyProvider::for_kind(kind, self.http.clone())?;
-        Ok(provider.app_versions().await?)
+        let result = provider.app_versions().await;
+        match &result {
+            Ok(versions) => info!(?kind, count = versions.len(), "app versions loaded"),
+            Err(error) => warn!(?kind, %error, "app versions failed"),
+        }
+        Ok(result?)
     }
 
     /// Keeps the versions that have an artifact for `selection`.
@@ -123,18 +133,24 @@ impl Services {
     /// Creates the instance directory, then installs the app into it.
     /// Deletes the instance directory when the installation fails.
     pub async fn create(self, handle: TaskHandle, request: CreateRequest) -> Option<InstanceId> {
+        info!(name = %request.name, kind = ?request.kind, version = %request.version.version, "create task start");
         let result = self.create_instance(&handle, request).await;
+        log_outcome("create", &result);
         handle.finish(&result);
         result.ok()
     }
 
     pub async fn delete(self, handle: TaskHandle, id: InstanceId) {
+        info!(%id, "delete task start");
         let result = self.delete_instance(&handle, id).await;
+        log_outcome("delete", &result);
         handle.finish(&result);
     }
 
     pub async fn launch(self, handle: TaskHandle, id: InstanceId) {
+        info!(%id, "launch task start");
         let result = self.launch_instance(&handle, id).await;
+        log_outcome("launch", &result);
         handle.finish(&result);
     }
 
@@ -157,6 +173,11 @@ impl Services {
             edition,
         };
         let artifacts = provider.plan_install_app(&version, selection)?;
+        debug!(
+            version = %version.version,
+            artifacts = ?artifacts.iter().map(|a| a.url.as_str()).collect::<Vec<_>>(),
+            "install plan"
+        );
         let instance = self.store.create(
             NewInstance {
                 name,
@@ -171,7 +192,10 @@ impl Services {
         let _guard = self.locks.lock(id).await;
         handle.running(1, CREATE_STEPS);
         if let Err(error) = self.installer.install_app(id, &artifacts).await {
-            let _ = self.store.delete(id);
+            warn!(%id, %error, "install failed, deleting the instance");
+            if let Err(cleanup) = self.store.delete(id) {
+                error!(%id, error = %cleanup, "instance cleanup failed");
+            }
             return Err(error.into());
         }
         Ok(id)
@@ -194,6 +218,13 @@ impl Services {
         };
         handle.running(1, LAUNCH_STEPS);
         blocking(move || launched.confirm(PROBE_WINDOW)).await
+    }
+}
+
+fn log_outcome<T>(task: &str, result: &Result<T, OpError>) {
+    match result {
+        Ok(_) => info!(task, "task succeeded"),
+        Err(error) => error!(task, %error, "task failed"),
     }
 }
 

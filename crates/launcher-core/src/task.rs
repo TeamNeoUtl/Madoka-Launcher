@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use tracing::debug;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(u64);
 
@@ -67,6 +69,7 @@ impl TaskBoard {
 
     fn set(&self, id: TaskId, state: TaskState) {
         if let Some(task) = self.lock().tasks.iter_mut().find(|task| task.id == id) {
+            debug!(task = %task.title, ?state, "task state");
             task.state = state;
         }
     }

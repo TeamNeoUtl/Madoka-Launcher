@@ -151,6 +151,8 @@ Wine を使用しない。すべて直接 spawn。
 - AviUtl2 本体: セットアップ実行ファイルを使用しない。ポータブル ZIP を `<instance>/app/` へ展開する。インスタンス間でファイル・設定・データを共有しない。
 - 索引の `run` アクション: 実行前に `path` と `args` を表示して確認を取る。`elevate = true` はランチャーでは昇格せず、確認ダイアログに表示する。
 - HTTP: `reqwest` + `rustls`。User-Agent は `MLAYN-Launcher/<version>`。GitHub API は未認証 60 req/h。ETag で条件付き取得し、`config.toml` の任意トークンで上限を引き上げる。
+- タイムアウト: 接続 15 秒。API 取得は全体 30 秒。本体ダウンロードは無通信 30 秒。超過は `Failed` とし、原因 (エラーの連鎖) を理由に含める。
+- ログ (`tracing`): 出力先は標準エラーと `<data_dir>/logs/launcher.log`。起動ごとに前回分を `launcher.previous.log` へ退避する。既定フィルタは `warn` + 本プロジェクトの crate と `reqwest` / `hyper_util` が `debug`。環境変数 `MLAYN_LOG` で上書きする。記録対象: 起動時のデータディレクトリ、通信 (URL・ステータス・バイト数・経過時間・リダイレクト・8 MiB ごとの進捗)、Installer の各手順、Instance の作成・削除、ロック待ち時間、タスク状態の遷移、起動したプロセスの pid と終了状態、パニック。
 
 ## 7. UI (Iced)
 
@@ -184,7 +186,7 @@ Wine を使用しない。すべて直接 spawn。
 | 1 | `launcher-core`: モデル、`instance.toml` 読み書き、Instance CRUD | 完了。`cargo test` 8 件成功 (作成→保存→読込→削除、パス検証、一覧、Kind×Host) |
 | 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わずに、索引のパース規則 (§5.5) と asset 選択規則を検証して成功 |
 | 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
-| 4 | UI: Main (ツールバー: 追加 / 更新 / タスク、Group 別グリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance / Tasks | 実装済。ローカルの `cargo fmt` / `clippy` / `test` と手動起動の結果待ち。YMM4 / NeoUtl / Freya NLE のインスタンスを UI から作成して起動できる (Windows) |
+| 4 | UI: Main (ツールバー: 追加 / 更新 / タスク、Group 別グリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance / Tasks | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
 | 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
 | 6 | Linux 対応 (展開後の実行権限付与を含む。`Archive::extract` は Unix mode を設定しない) | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
 | 7 | 配布: GitHub Actions で 2 OS ビルド、リリース成果物生成 | tag push で Windows と Linux の成果物が Release に添付される |

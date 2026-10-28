@@ -17,3 +17,5 @@ launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }
 thiserror = "2"
 tokio = { version = "1.54.1", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

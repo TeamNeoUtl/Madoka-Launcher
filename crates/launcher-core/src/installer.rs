@@ -1,7 +1,9 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::archive::{Archive, Layout};
@@ -51,10 +53,14 @@ impl<F: Fetcher> Installer<F> {
     /// Extracts each artifact into `<instance>/app/`.
     pub async fn install_app(&self, id: InstanceId, artifacts: &[Artifact]) -> Result<(), Error> {
         let instance = self.store.load(id)?;
+        info!(%id, artifacts = artifacts.len(), "install app");
         for artifact in artifacts {
             let download = self.download(artifact).await?;
-            Archive::open(&download.path, Layout::Tree)?.extract(&instance.app_dir())?;
+            let mut archive = Archive::open(&download.path, Layout::Tree)?;
+            debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
+            archive.extract(&instance.app_dir())?;
         }
+        info!(%id, "app installed");
         Ok(())
     }
 
@@ -69,6 +75,7 @@ impl<F: Fetcher> Installer<F> {
     ) -> Result<PluginRecord, Error> {
         let mut instance = self.store.load(id)?;
         let plugin_dir = plugin_dir(instance.config.kind, package)?;
+        info!(%id, package = %package.id, version, "install package");
         let download = self.download(artifact).await?;
         let mut archive = Archive::open(&download.path, Layout::Flat)?;
         let app_dir = instance.app_dir();
@@ -92,12 +99,14 @@ impl<F: Fetcher> Installer<F> {
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
+        info!(%id, package = %package.id, files = record.files.len(), "package installed");
         Ok(record)
     }
 
     /// Removes every file listed in the record, then the record.
     pub fn remove_package(&self, id: InstanceId, plugin_id: &str) -> Result<(), Error> {
         let mut instance = self.store.load(id)?;
+        info!(%id, package = plugin_id, "remove package");
         let position = position_of(&instance.config.plugins, plugin_id)
             .ok_or_else(|| Error::PluginNotFound(plugin_id.to_owned()))?;
         delete_files(
@@ -109,11 +118,13 @@ impl<F: Fetcher> Installer<F> {
     }
 
     async fn download(&self, artifact: &Artifact) -> Result<Downloaded, Error> {
+        debug!(name = %artifact.name, url = %artifact.url, hashed = artifact.hash.is_some(), "download requested");
         if !is_allowed_url(&artifact.url) {
             return Err(Error::HostNotAllowed(artifact.url.to_string()));
         }
         let dir = self.root.join(DOWNLOADS_DIR);
         fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        debug!(dir = %dir.display(), "download directory ready");
 
         let Some(expected) = &artifact.hash else {
             let path = dir.join(format!("{}{PART_SUFFIX}", Uuid::new_v4()));
@@ -121,12 +132,13 @@ impl<F: Fetcher> Installer<F> {
                 path,
                 temporary: true,
             };
-            self.fetcher.fetch(&artifact.url, &download.path).await?;
+            self.fetch_timed(artifact, &download.path).await?;
             return Ok(download);
         };
 
         let cached = dir.join(&expected.hex);
         if verify(&cached, expected, &artifact.name).is_ok() {
+            info!(name = %artifact.name, path = %cached.display(), "download cache hit");
             return Ok(Downloaded {
                 path: cached,
                 temporary: false,
@@ -136,13 +148,28 @@ impl<F: Fetcher> Installer<F> {
             path: dir.join(format!("{}{PART_SUFFIX}", expected.hex)),
             temporary: true,
         };
-        self.fetcher.fetch(&artifact.url, &part.path).await?;
+        self.fetch_timed(artifact, &part.path).await?;
         verify(&part.path, expected, &artifact.name)?;
+        debug!(name = %artifact.name, sha256 = %expected.hex, "hash verified");
         fs::rename(&part.path, &cached).map_err(|e| Error::io(&cached, e))?;
         Ok(Downloaded {
             path: cached,
             temporary: false,
         })
+    }
+}
+
+impl<F: Fetcher> Installer<F> {
+    async fn fetch_timed(&self, artifact: &Artifact, dest: &Path) -> Result<(), Error> {
+        let started = Instant::now();
+        self.fetcher.fetch(&artifact.url, dest).await?;
+        info!(
+            name = %artifact.name,
+            bytes = fs::metadata(dest).map_or(0, |meta| meta.len()),
+            elapsed_ms = started.elapsed().as_millis(),
+            "downloaded"
+        );
+        Ok(())
     }
 }
 
