@@ -28,6 +28,24 @@ pub enum Error {
     EmptyPluginId,
     #[error("unsafe relative path: {0}")]
     UnsafePath(String),
+    #[error("host not allowed: {0}")]
+    HostNotAllowed(String),
+    #[error("hash mismatch for {name}: expected {expected}, actual {actual}")]
+    HashMismatch {
+        name: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("fetch failed for {url}: {message}")]
+    Fetch { url: String, message: String },
+    #[error("zip error at {path}: {message}")]
+    Zip { path: PathBuf, message: String },
+    #[error("symlink entry in archive: {0}")]
+    SymlinkEntry(String),
+    #[error("plugin {0} is not installed")]
+    PluginNotFound(String),
+    #[error("plugin installation is unsupported for kind {0:?}")]
+    PluginUnsupported(Kind),
     #[error("directory id {dir} differs from file id {file}")]
     IdMismatch { dir: InstanceId, file: InstanceId },
 }
@@ -37,6 +55,13 @@ impl Error {
         Self::Io {
             path: path.into(),
             source,
+        }
+    }
+
+    pub(crate) fn zip(path: impl Into<PathBuf>, source: impl std::fmt::Display) -> Self {
+        Self::Zip {
+            path: path.into(),
+            message: source.to_string(),
         }
     }
 }

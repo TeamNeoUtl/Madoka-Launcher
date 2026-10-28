@@ -140,3 +140,11 @@ pub(crate) fn ensure_relative_path(path: &str) -> Result<(), Error> {
         Err(Error::UnsafePath(path.to_owned()))
     }
 }
+
+pub(crate) fn ensure_single_component(name: &str) -> Result<(), Error> {
+    ensure_relative_path(name)?;
+    if name.contains(['/', '\\']) {
+        return Err(Error::UnsafePath(name.to_owned()));
+    }
+    Ok(())
+}

@@ -77,7 +77,7 @@ files = ["relative/path"]
 ```
 Cargo.toml                      # workspace
 crates/
-  launcher-core/                # Iced 非依存。モデル、永続化、タスク
+  launcher-core/                # Iced 非依存。モデル、永続化、Installer、Fetcher trait、タスク
   launcher-providers/           # Provider 実装 4 種
   launcher-app/                 # Iced UI。bin
 ```
@@ -98,6 +98,7 @@ pub trait Provider: Send + Sync {
 
 `InstallPlan` は `Download(Vec<Artifact>)` と `OpenInBrowser(Url)` の 2 値。
 導入処理は `core` の `Installer` が実行する。Provider は計画のみ返す。
+`core` は `Fetcher` trait (URL → ファイル書込) を定義し、`launcher-providers` の `ReqwestFetcher` が実装する。
 
 | Kind | app_versions | catalog |
 |---|---|---|
@@ -127,7 +128,7 @@ Wine を使用しない。すべて直接 spawn。
 - すべてのネットワーク処理・ファイル展開を `Task` として実行する。
 - `Task` の状態: `Queued` / `Running{done,total}` / `Succeeded` / `Failed{reason}`。
 - UI は `iced::Subscription` で状態を受信する。
-- 同一 Instance への書き込みタスクは直列化する (Instance 単位の Mutex)。
+- 同一 Instance への書き込みタスクは直列化する (Instance 単位の Mutex)。Phase 4 で実装する (Phase 3 の `Installer` は排他制御を持たない)。
 
 ### 5.5 YMM4 索引のパース
 
@@ -144,7 +145,7 @@ Wine を使用しない。すべて直接 spawn。
 - `#![forbid(unsafe_code)]` を全 crate に設定する。unsafe は 0 件。
 - zip 展開: 各エントリの正規化後パスが展開先ディレクトリの配下であることを検証する。違反時はタスク全体を `Failed` にし、書き込み済みファイルを削除する。
 - ハッシュ: GitHub asset は `digest` (sha256)、APM は sha384、AviUtl2 索引は XXH3-128 を検証する。APM の `core.json` は URL が `http` のため、sha384 検証を必須とし、不一致は `Failed`。ハッシュを持たない項目は導入前に警告を 1 行表示する。提供しない場合は取得後に計算して `instance.toml` に記録しない (記録先が `files` のみのため)。
-- ダウンロード先ホスト許可リスト: `github.com`, `api.github.com`, `codeberg.org`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `spring-fragrance.mints.ne.jp`, およびカタログ Provider が指定するホスト。リダイレクト先もリストで検証する。
+- ダウンロード先ホスト許可リスト (`launcher_core::ALLOWED_HOSTS`、`https` のみ): `github.com`, `api.github.com`, `codeberg.org`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`。リダイレクト先も `ReqwestFetcher` が同じ関数で検証する。`spring-fragrance.mints.ne.jp` (`http`) とカタログ Provider が指定するホストは Phase 5 で追加する。
 - AviUtl2 本体: セットアップ実行ファイルを使用しない。ポータブル ZIP を `<instance>/app/` へ展開する。インスタンス間でファイル・設定・データを共有しない。
 - 索引の `run` アクション: 実行前に `path` と `args` を表示して確認を取る。`elevate = true` はランチャーでは昇格せず、確認ダイアログに表示する。
 - HTTP: `reqwest` + `rustls`。User-Agent は `MLAYN-Launcher/<version>`。GitHub API は未認証 60 req/h。ETag で条件付き取得し、`config.toml` の任意トークンで上限を引き上げる。
@@ -180,7 +181,7 @@ Wine を使用しない。すべて直接 spawn。
 | 0 | 入力調査 | 完了。`docs/inputs.md` に記載。未確認 8 件は `docs/inputs.md` §8 |
 | 1 | `launcher-core`: モデル、`instance.toml` 読み書き、Instance CRUD | 完了。`cargo test` 8 件成功 (作成→保存→読込→削除、パス検証、一覧、Kind×Host) |
 | 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わない `ymm4plugins.yml` fixture の全件パース成功 (件数は実ファイルで確定) |
-| 3 | Installer: ダウンロード、展開、ファイル記録、削除 | zip-slip fixture が `Failed`、正常 fixture が `files` 全件記録 |
+| 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
 | 4 | UI: Main / New Instance / Tasks | YMM4 / NeoUtl / Freya NLE のインスタンスを UI から作成して起動できる (Windows) |
 | 5 | UI: Browse / Plugins、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
 | 6 | Linux 対応 | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
