@@ -108,6 +108,7 @@ impl Archive {
                 .zip
                 .by_index(entry.index)
                 .map_err(|e| Error::zip(&self.path, e))?;
+            let mode = source.unix_mode();
             let mut out = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -115,9 +116,25 @@ impl Archive {
                 .map_err(|e| Error::io(&target, e))?;
             created.files.push(target.clone());
             io::copy(&mut source, &mut out).map_err(|e| Error::io(&target, e))?;
+            set_mode(&target, mode)?;
         }
         Ok(())
     }
+}
+
+/// Sets 0o755 on entries that carry an executable bit in the zip, 0o644 on the others.
+#[cfg(unix)]
+fn set_mode(path: &Path, zip_mode: Option<u32>) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = zip_mode.is_some_and(|mode| mode & 0o111 != 0);
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|e| Error::io(path, e))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _zip_mode: Option<u32>) -> Result<(), Error> {
+    Ok(())
 }
 
 fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {

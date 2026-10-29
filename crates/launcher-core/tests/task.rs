@@ -1,4 +1,4 @@
-use launcher_core::{InstanceId, InstanceLocks, TaskBoard, TaskState};
+use launcher_core::{InstanceId, InstanceLocks, Progress, ProgressSink, TaskBoard, TaskState};
 
 #[test]
 fn board_records_each_state() {
@@ -11,7 +11,11 @@ fn board_records_each_state() {
     first.running(1, 2);
     assert_eq!(
         board.snapshot()[0].state,
-        TaskState::Running { done: 1, total: 2 }
+        TaskState::Running {
+            done: 1,
+            total: 2,
+            transfer: None
+        }
     );
 
     first.finish(&Ok::<(), String>(()));
@@ -28,6 +32,40 @@ fn board_records_each_state() {
     assert_ne!(tasks[0].id, tasks[1].id);
     assert_eq!(tasks[0].title, "first");
     assert!(!board.has_active());
+}
+
+#[test]
+fn transfer_is_recorded_only_while_running_and_reset_by_the_next_step() {
+    let board = TaskBoard::default();
+    let handle = board.add("download");
+    let first = Progress {
+        done: 5,
+        total: Some(10),
+    };
+
+    handle.report(first);
+    assert_eq!(board.snapshot()[0].state, TaskState::Queued);
+
+    handle.running(0, 2);
+    handle.report(first);
+    assert_eq!(
+        board.snapshot()[0].state,
+        TaskState::Running {
+            done: 0,
+            total: 2,
+            transfer: Some(first)
+        }
+    );
+
+    handle.running(1, 2);
+    assert_eq!(
+        board.snapshot()[0].state,
+        TaskState::Running {
+            done: 1,
+            total: 2,
+            transfer: None
+        }
+    );
 }
 
 #[tokio::test]

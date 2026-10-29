@@ -23,3 +23,39 @@ fn invalid_toml_is_parse_error() {
     fs::write(dir.path().join("config.toml"), "github_token = [").unwrap();
     assert!(matches!(Config::load(dir.path()), Err(Error::Parse { .. })));
 }
+
+#[test]
+fn save_then_load_returns_the_same_value() {
+    let dir = tempdir().unwrap();
+    let config = Config {
+        github_token: Some("abc".to_owned()),
+        theme: Some("Tokyo Night".to_owned()),
+    };
+    config.save(dir.path()).unwrap();
+    assert_eq!(Config::load(dir.path()).unwrap(), config);
+}
+
+#[test]
+fn save_creates_the_directory_and_omits_unset_values() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("nested");
+    Config::default().save(&root).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("config.toml")).unwrap().trim(),
+        ""
+    );
+    assert!(!root.join("config.toml.tmp").exists());
+}
+
+#[test]
+fn updating_one_value_keeps_the_others() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("config.toml"), "github_token = \"abc\"\n").unwrap();
+    let mut config = Config::load(dir.path()).unwrap();
+    config.theme = Some("Dark".to_owned());
+    config.save(dir.path()).unwrap();
+
+    let reloaded = Config::load(dir.path()).unwrap();
+    assert_eq!(reloaded.github_token.as_deref(), Some("abc"));
+    assert_eq!(reloaded.theme.as_deref(), Some("Dark"));
+}

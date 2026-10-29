@@ -17,7 +17,7 @@ pub use catalog::{
 };
 pub use config::Config;
 pub use error::Error;
-pub use fetch::{ALLOWED_HOSTS, Fetcher, is_allowed_url};
+pub use fetch::{ALLOWED_HOSTS, Fetcher, NoProgress, Progress, ProgressSink, is_allowed_url};
 pub use host::Host;
 pub use installer::Installer;
 pub use lock::InstanceLocks;

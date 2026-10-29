@@ -1,16 +1,20 @@
 use std::fmt;
 
-use iced::widget::{button, column, pick_list, radio, row, text, text_input};
+use iced::alignment::Vertical;
+use iced::widget::{button, column, container, pick_list, radio, row, text, text_input};
 use iced::{Element, Length};
 use launcher_core::{AppVersion, Edition, Host, Kind};
 use launcher_providers::has_provider;
 
 use crate::ops::CreateRequest;
 use crate::strings;
+use crate::style::{self, Tone};
 
 type Ui = Element<'static, Message>;
 
-const KIND_LIST_WIDTH: f32 = 220.0;
+const KIND_LIST_WIDTH: f32 = 300.0;
+const BUTTON_PADDING: [u16; 2] = [8, 16];
+const INPUT_PADDING: u16 = 10;
 
 pub const KINDS: [Kind; 5] = [
     Kind::Ymm4,
@@ -76,6 +80,8 @@ impl fmt::Display for VersionChoice {
 }
 
 pub enum Load {
+    /// No request has been made for the selected kind.
+    Idle,
     Loading,
     Ready,
     Failed(String),
@@ -105,9 +111,13 @@ impl Form {
             edition: Edition::Normal,
             selected: None,
             choices: Vec::new(),
-            load: Load::Loading,
+            load: Load::Idle,
             versions: Vec::new(),
         }
+    }
+
+    pub fn needs_load(&self) -> bool {
+        matches!(self.load, Load::Idle)
     }
 
     pub fn select_kind(&mut self, kind: Kind) {
@@ -176,67 +186,104 @@ pub fn view(form: &Form, host: Host) -> Ui {
         .iter()
         .map(|kind| kind_entry(*kind, form.kind, host))
         .collect();
-    let left = column(kinds)
-        .spacing(6)
-        .width(Length::Fixed(KIND_LIST_WIDTH));
+    let kind_card = container(
+        column![
+            text(strings::KIND).size(18),
+            column(kinds).spacing(style::GAP)
+        ]
+        .spacing(style::GAP),
+    )
+    .width(Length::Fixed(KIND_LIST_WIDTH))
+    .padding(style::PADDING)
+    .style(style::card);
 
     let mut fields = column![
         text(strings::kind_label(form.kind)).size(22),
         labeled(
             strings::NAME,
-            text_input(strings::NAME_HINT, &form.name).on_input(Message::NameChanged),
+            text_input(strings::NAME_HINT, &form.name)
+                .on_input(Message::NameChanged)
+                .padding(INPUT_PADDING)
+                .style(style::input),
         ),
         labeled(
             strings::GROUP,
-            text_input(strings::GROUP_HINT, &form.group).on_input(Message::GroupChanged),
+            text_input(strings::GROUP_HINT, &form.group)
+                .on_input(Message::GroupChanged)
+                .padding(INPUT_PADDING)
+                .style(style::input),
         ),
     ]
-    .spacing(12);
+    .spacing(style::GAP);
     if form.kind == Kind::Ymm4 {
         fields = fields.push(edition_picker(form.edition));
     }
     fields = fields.push(labeled(strings::VERSION, version_picker(form)));
 
     let actions = row![
-        button(text(strings::CREATE)).on_press_maybe(form.can_submit().then_some(Message::Submit)),
-        button(text(strings::CANCEL)).on_press(Message::Cancel),
+        button(text(strings::CREATE))
+            .padding(BUTTON_PADDING)
+            .style(style::primary_button)
+            .on_press_maybe(form.can_submit().then_some(Message::Submit)),
+        button(text(strings::CANCEL))
+            .padding(BUTTON_PADDING)
+            .style(style::secondary_button)
+            .on_press(Message::Cancel),
     ]
     .spacing(8);
 
-    row![
-        left,
-        column![fields, actions].spacing(20).width(Length::Fill),
+    let form_card = container(column![fields, actions].spacing(style::PADDING))
+        .width(Length::Fill)
+        .padding(style::PADDING)
+        .style(style::card);
+
+    column![
+        text(strings::TAB_NEW).size(24),
+        row![kind_card, form_card].spacing(style::GAP),
     ]
-    .spacing(24)
-    .padding(12)
+    .spacing(style::GAP)
     .into()
 }
 
 fn kind_entry(kind: Kind, current: Kind, host: Host) -> Ui {
     let label = strings::kind_label(kind);
     match availability(kind, host) {
-        Availability::Available => button(text(label))
-            .width(Length::Fill)
-            .style(move |theme, status| {
-                if kind == current {
-                    button::primary(theme, status)
-                } else {
-                    button::secondary(theme, status)
-                }
-            })
+        Availability::Available => entry_button(label, None)
+            .style(style::tile(kind == current))
             .on_press(Message::KindSelected(kind))
             .into(),
-        Availability::UnsupportedHost => disabled_entry(label, strings::UNSUPPORTED_HOST),
-        Availability::NoProvider => disabled_entry(label, strings::NO_PROVIDER),
+        Availability::UnsupportedHost => disabled_entry(
+            label,
+            strings::unsupported_host_badge(host),
+            Tone::Danger,
+            strings::unsupported_host_reason(host),
+        ),
+        Availability::NoProvider => disabled_entry(
+            label,
+            strings::PLANNED.to_owned(),
+            Tone::Warning,
+            strings::NO_PROVIDER.to_owned(),
+        ),
     }
 }
 
-fn disabled_entry(label: &'static str, reason: &'static str) -> Ui {
+fn entry_button(label: &'static str, badge: Option<Ui>) -> iced::widget::Button<'static, Message> {
+    let mut content = row![text(label).width(Length::Fill)]
+        .spacing(8)
+        .align_y(Vertical::Center);
+    if let Some(badge) = badge {
+        content = content.push(badge);
+    }
+    button(content).width(Length::Fill).padding(12)
+}
+
+fn disabled_entry(label: &'static str, badge: String, tone: Tone, reason: String) -> Ui {
     column![
-        button(text(label)).width(Length::Fill),
+        entry_button(label, Some(style::badge_label::<Message>(badge, tone)))
+            .style(style::secondary_button),
         text(reason).size(12),
     ]
-    .spacing(2)
+    .spacing(4)
     .into()
 }
 
@@ -264,10 +311,13 @@ fn edition_picker(current: Edition) -> Ui {
 
 fn version_picker(form: &Form) -> Ui {
     match &form.load {
-        Load::Loading => text(strings::LOADING).into(),
+        Load::Idle | Load::Loading => text(strings::LOADING).into(),
         Load::Failed(reason) => column![
             text(format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
-            button(text(strings::RELOAD)).on_press(Message::Reload),
+            button(text(strings::RELOAD))
+                .padding(BUTTON_PADDING)
+                .style(style::secondary_button)
+                .on_press(Message::Reload),
         ]
         .spacing(6)
         .into(),
@@ -277,6 +327,9 @@ fn version_picker(form: &Form) -> Ui {
             form.selected.clone(),
             Message::VersionSelected,
         )
+        .padding(INPUT_PADDING)
+        .width(Length::Fill)
+        .style(style::dropdown)
         .into(),
     }
 }

@@ -1,57 +1,121 @@
-use iced::widget::{button, column, progress_bar, row, scrollable, text};
+use iced::alignment::Vertical;
+use iced::widget::{column, container, progress_bar, row, scrollable, text};
 use iced::{Element, Length};
-use launcher_core::{TaskInfo, TaskState};
+use launcher_core::{Progress, TaskInfo, TaskState};
 
 use crate::strings;
+use crate::style::{self, Tone};
 
-type Ui = Element<'static, Message>;
+const BYTES_PER_MIB: f64 = 1_048_576.0;
 
-#[derive(Debug, Clone)]
-pub enum Message {
-    Back,
-}
-
-pub fn view(tasks: &[TaskInfo]) -> Ui {
-    let rows: Vec<Ui> = tasks.iter().rev().map(task_row).collect();
-    let list: Ui = if rows.is_empty() {
-        text(strings::NO_TASKS).into()
+pub fn view<M: Clone + 'static>(tasks: &[TaskInfo]) -> Element<'static, M> {
+    let list: Element<'static, M> = if tasks.is_empty() {
+        container(text(strings::NO_TASKS))
+            .padding(style::PADDING)
+            .width(Length::Fill)
+            .style(style::card)
+            .into()
     } else {
-        column(rows).spacing(10).into()
+        column(tasks.iter().rev().map(task_card))
+            .spacing(style::GAP)
+            .into()
     };
     column![
-        button(text(strings::BACK)).on_press(Message::Back),
-        text(strings::TASKS).size(22),
+        text(strings::TAB_TASKS).size(24),
         scrollable(list).height(Length::Fill),
     ]
-    .spacing(10)
-    .padding(12)
+    .spacing(style::GAP)
     .into()
 }
 
 pub fn state_label(state: &TaskState) -> String {
     match state {
         TaskState::Queued => strings::QUEUED.to_owned(),
-        TaskState::Running { done, total } => format!("{} {done}/{total}", strings::RUNNING),
+        TaskState::Running { done, total, .. } => {
+            format!("{} {done}/{total}", strings::RUNNING)
+        }
         TaskState::Succeeded => strings::SUCCEEDED.to_owned(),
         TaskState::Failed { .. } => strings::FAILED.to_owned(),
     }
 }
 
-fn task_row(task: &TaskInfo) -> Ui {
+/// `state_label`, or the byte progress while a download is running.
+pub fn detail_label(state: &TaskState) -> String {
+    match state {
+        TaskState::Running {
+            transfer: Some(progress),
+            ..
+        } => transfer_label(*progress),
+        _ => state_label(state),
+    }
+}
+
+fn transfer_label(progress: Progress) -> String {
+    match progress.total {
+        Some(total) if total > 0 => format!(
+            "{} / {} ({}%)",
+            mib(progress.done),
+            mib(total),
+            progress.done.min(total) * 100 / total
+        ),
+        _ => mib(progress.done),
+    }
+}
+
+fn mib(bytes: u64) -> String {
+    format!("{:.1} MiB", bytes as f64 / BYTES_PER_MIB)
+}
+
+const fn tone(state: &TaskState) -> Tone {
+    match state {
+        TaskState::Queued => Tone::Secondary,
+        TaskState::Running { .. } => Tone::Primary,
+        TaskState::Succeeded => Tone::Success,
+        TaskState::Failed { .. } => Tone::Danger,
+    }
+}
+
+fn task_card<M: Clone + 'static>(task: &TaskInfo) -> Element<'static, M> {
     let head = row![
-        text(task.title.clone()).width(Length::Fill),
-        text(state_label(&task.state)),
+        text(task.title.clone()).size(16).width(Length::Fill),
+        style::badge_label::<M>(state_label(&task.state), tone(&task.state)),
     ]
-    .spacing(8);
-    let mut item = column![head].spacing(4);
+    .spacing(style::GAP)
+    .align_y(Vertical::Center);
+    let mut body = column![head].spacing(8);
     match &task.state {
-        TaskState::Running { done, total } => {
-            item = item.push(progress_bar(0.0..=f32::from(*total), f32::from(*done)));
+        TaskState::Running {
+            done,
+            total,
+            transfer,
+        } => {
+            body = match transfer {
+                Some(progress) => body.push(transfer_bar(*progress)),
+                None => body.push(
+                    progress_bar(0.0..=f32::from(*total), f32::from(*done)).style(style::bar),
+                ),
+            };
         }
         TaskState::Failed { reason } => {
-            item = item.push(text(reason.trim_end().to_owned()).size(12));
+            body = body.push(text(reason.trim_end().to_owned()).size(12));
         }
         TaskState::Queued | TaskState::Succeeded => {}
     }
-    item.into()
+    container(body)
+        .padding(style::PADDING)
+        .width(Length::Fill)
+        .style(style::card)
+        .into()
+}
+
+fn transfer_bar<M: 'static>(progress: Progress) -> Element<'static, M> {
+    let bar = match progress.total {
+        Some(total) if total > 0 => {
+            progress_bar(0.0..=total as f32, progress.done as f32).style(style::bar)
+        }
+        _ => progress_bar(0.0..=1.0, 0.0).style(style::bar),
+    };
+    column![bar, text(transfer_label(progress)).size(12)]
+        .spacing(4)
+        .into()
 }

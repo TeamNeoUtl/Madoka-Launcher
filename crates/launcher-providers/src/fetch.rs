@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use launcher_core::{Error, Fetcher, is_allowed_url};
+use launcher_core::{Error, Fetcher, Progress, ProgressSink, is_allowed_url};
 use reqwest::redirect::Policy;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
@@ -45,7 +45,12 @@ impl ReqwestFetcher {
 }
 
 impl Fetcher for ReqwestFetcher {
-    async fn fetch(&self, url: &Url, dest: &Path) -> Result<(), Error> {
+    async fn fetch(
+        &self,
+        url: &Url,
+        dest: &Path,
+        progress: &dyn ProgressSink,
+    ) -> Result<(), Error> {
         let fail = |message: String| Error::Fetch {
             url: url.to_string(),
             message,
@@ -67,10 +72,12 @@ impl Fetcher for ReqwestFetcher {
         if !status.is_success() {
             return Err(fail(format!("status {}", status.as_u16())));
         }
+        let total = response.content_length();
         let mut file = tokio::fs::File::create(dest)
             .await
             .map_err(|e| fail(e.to_string()))?;
         let mut written: u64 = 0;
+        progress.report(Progress { done: 0, total });
         let mut next_report = PROGRESS_STEP;
         while let Some(chunk) = response.chunk().await.map_err(|e| {
             warn!(%url, written, error = %describe(&e), "fetch body failed");
@@ -80,6 +87,10 @@ impl Fetcher for ReqwestFetcher {
                 .await
                 .map_err(|e| fail(e.to_string()))?;
             written += chunk.len() as u64;
+            progress.report(Progress {
+                done: written,
+                total,
+            });
             if written >= next_report {
                 debug!(%url, written, elapsed_ms = started.elapsed().as_millis(), "fetch progress");
                 next_report += PROGRESS_STEP;

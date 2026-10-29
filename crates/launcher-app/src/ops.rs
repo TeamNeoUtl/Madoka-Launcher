@@ -55,6 +55,8 @@ pub struct CreateRequest {
 pub struct Services {
     pub host: Host,
     pub board: TaskBoard,
+    root: PathBuf,
+    theme: Option<String>,
     store: InstanceStore,
     installer: Arc<Installer<ReqwestFetcher>>,
     http: ReqwestHttp,
@@ -67,6 +69,7 @@ impl Services {
         let user_agent = format!("MLAYN-Launcher/{}", env!("CARGO_PKG_VERSION"));
         let token = config.github_token.filter(|token| !token.trim().is_empty());
         let config_has_token = token.is_some();
+        let theme = config.theme;
         let http = ReqwestHttp::new(&user_agent, token).map_err(ProviderError::from)?;
         let fetcher = ReqwestFetcher::new(&user_agent)?;
         info!(
@@ -78,11 +81,28 @@ impl Services {
         Ok(Self {
             host: Host::current(),
             board: TaskBoard::default(),
+            theme,
             store: InstanceStore::new(&root),
+            root: root.clone(),
             installer: Arc::new(Installer::new(root, fetcher)),
             http,
             locks: InstanceLocks::default(),
         })
+    }
+
+    /// Name of the theme stored in `config.toml`.
+    pub fn theme_name(&self) -> Option<&str> {
+        self.theme.as_deref()
+    }
+
+    pub async fn save_theme(self, name: String) -> Result<(), OpError> {
+        let root = self.root.clone();
+        blocking(move || {
+            let mut config = Config::load(&root)?;
+            config.theme = Some(name);
+            config.save(&root)
+        })
+        .await
     }
 
     pub async fn list(self) -> Result<Loaded, OpError> {
@@ -191,7 +211,7 @@ impl Services {
         let id = instance.config.id;
         let _guard = self.locks.lock(id).await;
         handle.running(1, CREATE_STEPS);
-        if let Err(error) = self.installer.install_app(id, &artifacts).await {
+        if let Err(error) = self.installer.install_app(id, &artifacts, handle).await {
             warn!(%id, %error, "install failed, deleting the instance");
             if let Err(cleanup) = self.store.delete(id) {
                 error!(%id, error = %cleanup, "instance cleanup failed");

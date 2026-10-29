@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use launcher_core::{
     Artifact, Edition, Error, Fetcher, Hash, HashAlgo, Host, Installer, Instance, InstanceStore,
-    Kind, NewInstance, Package, PackageSource,
+    Kind, NewInstance, NoProgress, Package, PackageSource, Progress, ProgressSink,
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -30,12 +30,28 @@ impl FakeFetcher {
 }
 
 impl Fetcher for FakeFetcher {
-    async fn fetch(&self, _url: &Url, dest: &Path) -> Result<(), Error> {
+    async fn fetch(
+        &self,
+        _url: &Url,
+        dest: &Path,
+        progress: &dyn ProgressSink,
+    ) -> Result<(), Error> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        fs::write(dest, &*self.body.lock().unwrap()).map_err(|source| Error::Fetch {
+        let body = self.body.lock().unwrap().clone();
+        let size = body.len() as u64;
+        progress.report(Progress {
+            done: 0,
+            total: Some(size),
+        });
+        fs::write(dest, &body).map_err(|source| Error::Fetch {
             url: dest.display().to_string(),
             message: source.to_string(),
-        })
+        })?;
+        progress.report(Progress {
+            done: size,
+            total: Some(size),
+        });
+        Ok(())
     }
 }
 
@@ -151,6 +167,7 @@ async fn install_ymme(
             &package(repo),
             version,
             &artifact(&format!("{repo}.ymme"), &bytes),
+            &NoProgress,
         )
         .await
 }
@@ -164,7 +181,11 @@ async fn install_app_extracts_tree() {
     ]);
     f.installer.fetcher().set(bytes.clone());
     f.installer
-        .install_app(f.instance.config.id, &[artifact("app.zip", &bytes)])
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &NoProgress,
+        )
         .await
         .unwrap();
 
@@ -186,7 +207,11 @@ async fn install_app_zip_slip_fails_without_writes() {
     f.installer.fetcher().set(bytes.clone());
     let result = f
         .installer
-        .install_app(f.instance.config.id, &[artifact("app.zip", &bytes)])
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &NoProgress,
+        )
         .await;
 
     assert!(matches!(result, Err(Error::UnsafePath(_))));
@@ -250,6 +275,7 @@ async fn install_package_rejects_symlink_entry() {
             &package("repo"),
             "1.0",
             &artifact("repo.ymme", &bytes),
+            &NoProgress,
         )
         .await;
 
@@ -336,6 +362,7 @@ async fn hash_mismatch_fails_and_leaves_no_download() {
             &package("repo"),
             "1.0",
             &artifact("repo.ymme", b"other"),
+            &NoProgress,
         )
         .await;
 
@@ -351,7 +378,13 @@ async fn host_outside_allow_list_is_rejected_before_fetch() {
     let plain = artifact_with_hash("repo.ymme", "example.com", Some(sha256_hex(&bytes)));
     let result = f
         .installer
-        .install_package(f.instance.config.id, &package("repo"), "1.0", &plain)
+        .install_package(
+            f.instance.config.id,
+            &package("repo"),
+            "1.0",
+            &plain,
+            &NoProgress,
+        )
         .await;
 
     assert!(matches!(result, Err(Error::HostNotAllowed(_))));
@@ -378,6 +411,7 @@ async fn download_without_hash_leaves_no_cache_file() {
             &package("repo"),
             "1.0",
             &artifact_with_hash("repo.ymme", "github.com", None),
+            &NoProgress,
         )
         .await
         .unwrap();
@@ -392,4 +426,147 @@ async fn package_install_is_unsupported_for_other_kinds() {
         result,
         Err(Error::PluginUnsupported(Kind::Neoutl))
     ));
+}
+
+#[derive(Default)]
+struct Recorder(Mutex<Vec<Progress>>);
+
+impl ProgressSink for Recorder {
+    fn report(&self, progress: Progress) {
+        self.0.lock().unwrap().push(progress);
+    }
+}
+
+#[tokio::test]
+async fn install_app_forwards_download_progress() {
+    let f = fixture(Kind::Ymm4);
+    let bytes = zip_bytes(&[("a.txt", b"a")]);
+    f.installer.fetcher().set(bytes.clone());
+    let recorder = Recorder::default();
+    f.installer
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &recorder,
+        )
+        .await
+        .unwrap();
+
+    let size = bytes.len() as u64;
+    assert_eq!(
+        *recorder.0.lock().unwrap(),
+        [
+            Progress {
+                done: 0,
+                total: Some(size)
+            },
+            Progress {
+                done: size,
+                total: Some(size)
+            },
+        ]
+    );
+}
+
+async fn install_repo(
+    f: &Fixture,
+    target: &Artifact,
+    progress: &dyn ProgressSink,
+) -> Result<launcher_core::PluginRecord, Error> {
+    f.installer
+        .install_package(
+            f.instance.config.id,
+            &package("repo"),
+            "1.0",
+            target,
+            progress,
+        )
+        .await
+}
+
+#[tokio::test]
+async fn cached_download_reports_completed_progress() {
+    let f = fixture(Kind::Ymm4);
+    let bytes = zip_bytes(&[("a.dll", b"a")]);
+    f.installer.fetcher().set(bytes.clone());
+    let target = artifact("repo.ymme", &bytes);
+    install_repo(&f, &target, &NoProgress).await.unwrap();
+
+    let recorder = Recorder::default();
+    install_repo(&f, &target, &recorder).await.unwrap();
+
+    let size = bytes.len() as u64;
+    assert_eq!(
+        *recorder.0.lock().unwrap(),
+        [Progress {
+            done: size,
+            total: Some(size)
+        }]
+    );
+    assert_eq!(f.installer.fetcher().calls(), 1);
+}
+
+#[cfg(unix)]
+fn zip_with_modes(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, data, mode) in entries {
+        let options = SimpleFileOptions::default().unix_permissions(*mode);
+        writer.start_file(*name, options).unwrap();
+        writer.write_all(data).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_keeps_executable_bits_from_the_zip() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(Kind::Neoutl);
+    let bytes = zip_with_modes(&[
+        ("run", b"#!/bin/sh\n", 0o755),
+        ("lib/helper", b"bin", 0o700),
+        ("data.txt", b"text", 0o644),
+        ("secret.txt", b"text", 0o600),
+    ]);
+    f.installer.fetcher().set(bytes.clone());
+    f.installer
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &NoProgress,
+        )
+        .await
+        .unwrap();
+
+    let app = f.instance.app_dir();
+    let mode = |name: &str| fs::metadata(app.join(name)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode("run"), 0o755);
+    assert_eq!(mode("lib/helper"), 0o755);
+    assert_eq!(mode("data.txt"), 0o644);
+    assert_eq!(mode("secret.txt"), 0o644);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_without_zip_modes_leaves_files_non_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(Kind::Neoutl);
+    let bytes = zip_bytes(&[("NeoUtl", b"bin")]);
+    f.installer.fetcher().set(bytes.clone());
+    f.installer
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &NoProgress,
+        )
+        .await
+        .unwrap();
+
+    let mode = fs::metadata(f.instance.app_dir().join("NeoUtl"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0);
 }

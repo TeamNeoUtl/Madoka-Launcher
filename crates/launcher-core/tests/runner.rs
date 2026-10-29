@@ -71,3 +71,47 @@ fn freya_accepts_each_candidate_stem() {
         assert_eq!(found, dir.path().join(format!("{stem}.exe")));
     }
 }
+
+/// One test, so that no other thread forks while a script is open for writing (ETXTBSY).
+#[cfg(unix)]
+#[test]
+fn spawn_sets_the_executable_bit_and_reports_the_exit_status() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use launcher_core::{Edition, InstanceStore, Launched, NewInstance};
+
+    let dir = tempdir().unwrap();
+    let instance = InstanceStore::new(dir.path())
+        .create(
+            NewInstance {
+                name: "n".to_owned(),
+                kind: Kind::Neoutl,
+                edition: Edition::Normal,
+                app_version: "1".to_owned(),
+                group: None,
+            },
+            Host::Linux,
+        )
+        .unwrap();
+    let exe = instance.app_dir().join("NeoUtl");
+    let write_script = |script: &str| {
+        fs::write(&exe, script).unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o644)).unwrap();
+    };
+    let spawn = || Launched::spawn(&instance, Host::Linux).unwrap();
+
+    write_script("#!/bin/sh\nexit 0\n");
+    spawn().confirm(Duration::from_secs(5)).unwrap();
+    assert_ne!(fs::metadata(&exe).unwrap().permissions().mode() & 0o111, 0);
+
+    write_script("#!/bin/sh\necho boom >&2\nexit 3\n");
+    let error = spawn().confirm(Duration::from_secs(5)).unwrap_err();
+    assert!(matches!(
+        &error,
+        Error::LaunchFailed { status, log, .. } if status.contains('3') && log.contains("boom")
+    ));
+
+    write_script("#!/bin/sh\nsleep 2\n");
+    spawn().confirm(Duration::from_millis(200)).unwrap();
+}

@@ -3,6 +3,7 @@ mod logging;
 mod ops;
 mod screen;
 mod strings;
+mod style;
 
 use std::process::ExitCode;
 
@@ -32,6 +33,7 @@ fn main() -> ExitCode {
     };
     let result = iced::application(move || App::new(services.clone()), App::update, App::view)
         .title(strings::APP_TITLE)
+        .theme(App::theme)
         .subscription(App::subscription)
         .run();
     match result {

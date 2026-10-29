@@ -10,7 +10,7 @@ use crate::archive::{Archive, Layout};
 use crate::model::ensure_single_component;
 use crate::{
     Artifact, Error, Fetcher, Hash, InstanceId, InstanceStore, Kind, Package, PackageSource,
-    PluginRecord, is_allowed_url,
+    PluginRecord, Progress, ProgressSink, is_allowed_url,
 };
 
 const DOWNLOADS_DIR: &str = "cache/downloads";
@@ -51,11 +51,16 @@ impl<F: Fetcher> Installer<F> {
     }
 
     /// Extracts each artifact into `<instance>/app/`.
-    pub async fn install_app(&self, id: InstanceId, artifacts: &[Artifact]) -> Result<(), Error> {
+    pub async fn install_app(
+        &self,
+        id: InstanceId,
+        artifacts: &[Artifact],
+        progress: &dyn ProgressSink,
+    ) -> Result<(), Error> {
         let instance = self.store.load(id)?;
         info!(%id, artifacts = artifacts.len(), "install app");
         for artifact in artifacts {
-            let download = self.download(artifact).await?;
+            let download = self.download(artifact, progress).await?;
             let mut archive = Archive::open(&download.path, Layout::Tree)?;
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&instance.app_dir())?;
@@ -72,11 +77,12 @@ impl<F: Fetcher> Installer<F> {
         package: &Package,
         version: &str,
         artifact: &Artifact,
+        progress: &dyn ProgressSink,
     ) -> Result<PluginRecord, Error> {
         let mut instance = self.store.load(id)?;
         let plugin_dir = plugin_dir(instance.config.kind, package)?;
         info!(%id, package = %package.id, version, "install package");
-        let download = self.download(artifact).await?;
+        let download = self.download(artifact, progress).await?;
         let mut archive = Archive::open(&download.path, Layout::Flat)?;
         let app_dir = instance.app_dir();
 
@@ -117,7 +123,11 @@ impl<F: Fetcher> Installer<F> {
         self.store.save(&instance)
     }
 
-    async fn download(&self, artifact: &Artifact) -> Result<Downloaded, Error> {
+    async fn download(
+        &self,
+        artifact: &Artifact,
+        progress: &dyn ProgressSink,
+    ) -> Result<Downloaded, Error> {
         debug!(name = %artifact.name, url = %artifact.url, hashed = artifact.hash.is_some(), "download requested");
         if !is_allowed_url(&artifact.url) {
             return Err(Error::HostNotAllowed(artifact.url.to_string()));
@@ -132,13 +142,18 @@ impl<F: Fetcher> Installer<F> {
                 path,
                 temporary: true,
             };
-            self.fetch_timed(artifact, &download.path).await?;
+            self.fetch_timed(artifact, &download.path, progress).await?;
             return Ok(download);
         };
 
         let cached = dir.join(&expected.hex);
         if verify(&cached, expected, &artifact.name).is_ok() {
             info!(name = %artifact.name, path = %cached.display(), "download cache hit");
+            let size = fs::metadata(&cached).map_or(0, |meta| meta.len());
+            progress.report(Progress {
+                done: size,
+                total: Some(size),
+            });
             return Ok(Downloaded {
                 path: cached,
                 temporary: false,
@@ -148,7 +163,7 @@ impl<F: Fetcher> Installer<F> {
             path: dir.join(format!("{}{PART_SUFFIX}", expected.hex)),
             temporary: true,
         };
-        self.fetch_timed(artifact, &part.path).await?;
+        self.fetch_timed(artifact, &part.path, progress).await?;
         verify(&part.path, expected, &artifact.name)?;
         debug!(name = %artifact.name, sha256 = %expected.hex, "hash verified");
         fs::rename(&part.path, &cached).map_err(|e| Error::io(&cached, e))?;
@@ -160,9 +175,14 @@ impl<F: Fetcher> Installer<F> {
 }
 
 impl<F: Fetcher> Installer<F> {
-    async fn fetch_timed(&self, artifact: &Artifact, dest: &Path) -> Result<(), Error> {
+    async fn fetch_timed(
+        &self,
+        artifact: &Artifact,
+        dest: &Path,
+        progress: &dyn ProgressSink,
+    ) -> Result<(), Error> {
         let started = Instant::now();
-        self.fetcher.fetch(&artifact.url, dest).await?;
+        self.fetcher.fetch(&artifact.url, dest, progress).await?;
         info!(
             name = %artifact.name,
             bytes = fs::metadata(dest).map_or(0, |meta| meta.len()),

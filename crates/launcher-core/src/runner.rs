@@ -98,6 +98,7 @@ pub struct Launched {
 impl Launched {
     pub fn spawn(instance: &Instance, host: Host) -> Result<Self, Error> {
         let exe = find_executable(&instance.app_dir(), instance.config.kind, host)?;
+        ensure_executable(&exe)?;
         let log = instance.dir.join(LOG_FILE);
         let out = File::create(&log).map_err(|e| Error::io(&log, e))?;
         let err = out.try_clone().map_err(|e| Error::io(&log, e))?;
@@ -144,6 +145,28 @@ impl Launched {
             }
         }
     }
+}
+
+/// Adds the executable bits to a file that has none. The launcher has selected this file
+/// as the executable of the instance, so the bits are set at launch.
+#[cfg(unix)]
+fn ensure_executable(path: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::metadata(path).map_err(|e| Error::io(path, e))?;
+    let mut permissions = metadata.permissions();
+    let mode = permissions.mode();
+    if mode & 0o111 == 0 {
+        permissions.set_mode(mode | 0o111);
+        fs::set_permissions(path, permissions).map_err(|e| Error::io(path, e))?;
+        info!(exe = %path.display(), "executable bit set");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_executable(_path: &Path) -> Result<(), Error> {
+    Ok(())
 }
 
 /// Opens `dir` in the file manager of `host`.

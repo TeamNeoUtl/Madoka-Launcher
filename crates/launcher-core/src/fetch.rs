@@ -21,7 +21,31 @@ pub fn is_allowed_url(url: &Url) -> bool {
             .is_some_and(|host| ALLOWED_HOSTS.contains(&host))
 }
 
-/// Writes the body of `url` to `dest`. Implementations apply `is_allowed_url` to every redirect target.
+/// Bytes received so far. `total` is `None` when the server does not report a length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub done: u64,
+    pub total: Option<u64>,
+}
+
+pub trait ProgressSink: Send + Sync {
+    fn report(&self, progress: Progress);
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoProgress;
+
+impl ProgressSink for NoProgress {
+    fn report(&self, _progress: Progress) {}
+}
+
+/// Writes the body of `url` to `dest` and reports progress after the response header and after
+/// every received chunk. Implementations apply `is_allowed_url` to every redirect target.
 pub trait Fetcher: Send + Sync {
-    fn fetch(&self, url: &Url, dest: &Path) -> impl Future<Output = Result<(), Error>> + Send;
+    fn fetch(
+        &self,
+        url: &Url,
+        dest: &Path,
+        progress: &dyn ProgressSink,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 }

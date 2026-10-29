@@ -1,24 +1,26 @@
 use std::collections::BTreeMap;
 
+use iced::alignment::Vertical;
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use launcher_core::{Instance, InstanceId, Kind, TaskInfo};
 
-use super::tasks::state_label;
+use super::tasks::detail_label;
 use crate::strings;
+use crate::style;
 
 type Ui = Element<'static, Message>;
 type ButtonStyle = fn(&Theme, button::Status) -> button::Style;
 
 const COLUMNS: usize = 3;
-const TILE_WIDTH: f32 = 200.0;
-const SIDEBAR_WIDTH: f32 = 240.0;
+const TILE_WIDTH: f32 = 210.0;
+const SIDEBAR_WIDTH: f32 = 280.0;
+const BUTTON_PADDING: [u16; 2] = [8, 16];
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select(InstanceId),
     ShowNew,
-    ShowTasks,
     Refresh,
     Launch,
     OpenFolder,
@@ -36,17 +38,19 @@ pub struct Props<'a> {
 }
 
 pub fn view(props: &Props<'_>) -> Ui {
-    let active = props
-        .tasks
-        .iter()
-        .filter(|task| task.state.is_active())
-        .count();
-    let toolbar = row![
-        button(text(strings::ADD_INSTANCE)).on_press(Message::ShowNew),
-        button(text(strings::REFRESH)).on_press(Message::Refresh),
-        button(text(format!("{} ({active})", strings::TASKS))).on_press(Message::ShowTasks),
+    let header = row![
+        text(strings::TAB_INSTANCES).size(24).width(Length::Fill),
+        button(text(strings::REFRESH))
+            .padding(BUTTON_PADDING)
+            .style(style::secondary_button)
+            .on_press(Message::Refresh),
+        button(text(strings::ADD_INSTANCE))
+            .padding(BUTTON_PADDING)
+            .style(style::primary_button)
+            .on_press(Message::ShowNew),
     ]
-    .spacing(8);
+    .spacing(8)
+    .align_y(Vertical::Center);
 
     let selected = props.selected.and_then(|id| {
         props
@@ -61,12 +65,17 @@ pub fn view(props: &Props<'_>) -> Ui {
             .height(Length::Fill),
         sidebar(selected, confirming),
     ]
-    .spacing(12)
+    .spacing(style::GAP)
     .height(Length::Fill);
 
-    let mut page = column![toolbar].spacing(12).padding(12);
+    let mut page = column![header].spacing(style::GAP);
     if let Some(notice) = props.notice {
-        page = page.push(text(notice.to_owned()).size(12));
+        page = page.push(
+            container(text(notice.to_owned()).size(12))
+                .padding(style::GAP)
+                .width(Length::Fill)
+                .style(style::card),
+        );
     }
     page.push(body)
         .push(text(status_line(props.tasks)).size(12))
@@ -75,7 +84,11 @@ pub fn view(props: &Props<'_>) -> Ui {
 
 fn grid(instances: &[Instance], selected: Option<InstanceId>) -> Ui {
     if instances.is_empty() {
-        return text(strings::NO_INSTANCES).into();
+        return container(text(strings::NO_INSTANCES))
+            .padding(style::PADDING)
+            .width(Length::Fill)
+            .style(style::card)
+            .into();
     }
     let mut named: BTreeMap<&str, Vec<&Instance>> = BTreeMap::new();
     let mut ungrouped: Vec<&Instance> = Vec::new();
@@ -92,7 +105,7 @@ fn grid(instances: &[Instance], selected: Option<InstanceId>) -> Ui {
     if !ungrouped.is_empty() {
         sections.push(section(strings::UNGROUPED, &ungrouped, selected));
     }
-    column(sections).spacing(20).into()
+    column(sections).spacing(style::GAP).into()
 }
 
 fn section(title: &str, list: &[&Instance], selected: Option<InstanceId>) -> Ui {
@@ -103,35 +116,37 @@ fn section(title: &str, list: &[&Instance], selected: Option<InstanceId>) -> Ui 
                 .iter()
                 .map(|instance| tile(instance, selected == Some(instance.config.id)))
                 .collect();
-            row(tiles).spacing(8).into()
+            row(tiles).spacing(style::GAP).into()
         })
         .collect();
-    column![text(title.to_owned()).size(18), column(rows).spacing(8)]
-        .spacing(8)
-        .into()
+    container(
+        column![
+            text(title.to_owned()).size(18),
+            column(rows).spacing(style::GAP)
+        ]
+        .spacing(style::GAP),
+    )
+    .padding(style::PADDING)
+    .width(Length::Fill)
+    .style(style::card)
+    .into()
 }
 
 fn tile(instance: &Instance, selected: bool) -> Ui {
     let config = &instance.config;
-    let label = column![
-        text(config.name.clone()).size(16),
-        text(format!(
-            "{} {}",
+    let content = column![
+        style::badge_label::<Message>(
             strings::kind_label(config.kind),
-            config.app_version
-        ))
-        .size(12),
+            style::kind_tone(config.kind)
+        ),
+        text(config.name.clone()).size(17),
+        text(config.app_version.clone()).size(12),
     ]
-    .spacing(4);
-    button(label)
+    .spacing(6);
+    button(content)
         .width(Length::Fixed(TILE_WIDTH))
-        .style(move |theme, status| {
-            if selected {
-                button::primary(theme, status)
-            } else {
-                button::secondary(theme, status)
-            }
-        })
+        .padding(14)
+        .style(style::tile(selected))
         .on_press(Message::Select(config.id))
         .into()
 }
@@ -143,7 +158,9 @@ fn sidebar(instance: Option<&Instance>, confirming: bool) -> Ui {
     };
     container(content)
         .width(Length::Fixed(SIDEBAR_WIDTH))
-        .padding(12)
+        .height(Length::Fill)
+        .padding(style::PADDING)
+        .style(style::card)
         .into()
 }
 
@@ -151,9 +168,12 @@ fn details(instance: &Instance, confirming: bool) -> Ui {
     let config = &instance.config;
     let mut lines = column![
         text(config.name.clone()).size(20),
-        field(strings::KIND, strings::kind_label(config.kind)),
+        style::badge_label::<Message>(
+            strings::kind_label(config.kind),
+            style::kind_tone(config.kind)
+        ),
     ]
-    .spacing(6);
+    .spacing(8);
     if config.kind == Kind::Ymm4 {
         lines = lines.push(field(
             strings::EDITION,
@@ -172,20 +192,28 @@ fn details(instance: &Instance, confirming: bool) -> Ui {
         vec![
             action(
                 strings::DELETE_CONFIRM,
-                button::danger,
+                style::danger_button,
                 Message::ConfirmDelete,
             ),
-            action(strings::CANCEL, button::secondary, Message::CancelDelete),
+            action(
+                strings::CANCEL,
+                style::secondary_button,
+                Message::CancelDelete,
+            ),
         ]
     } else {
         vec![
-            action(strings::LAUNCH, button::primary, Message::Launch),
-            action(strings::OPEN_FOLDER, button::secondary, Message::OpenFolder),
-            action(strings::DELETE, button::danger, Message::Delete),
+            action(strings::LAUNCH, style::primary_button, Message::Launch),
+            action(
+                strings::OPEN_FOLDER,
+                style::secondary_button,
+                Message::OpenFolder,
+            ),
+            action(strings::DELETE, style::danger_button, Message::Delete),
         ]
     };
-    column![lines, column(actions).spacing(6)]
-        .spacing(16)
+    column![lines, column(actions).spacing(8)]
+        .spacing(style::PADDING)
         .into()
 }
 
@@ -196,17 +224,24 @@ fn field(label: &str, value: &str) -> Ui {
 fn action(label: &'static str, style: ButtonStyle, message: Message) -> Ui {
     button(text(label))
         .width(Length::Fill)
+        .padding(BUTTON_PADDING)
         .style(style)
         .on_press(message)
         .into()
 }
 
 fn status_line(tasks: &[TaskInfo]) -> String {
-    let active = tasks.iter().filter(|task| task.state.is_active()).count();
-    if active > 0 {
-        return format!("{}: {active}", strings::ACTIVE_TASKS);
+    let active: Vec<&TaskInfo> = tasks.iter().filter(|task| task.state.is_active()).collect();
+    if let Some(latest) = active.last() {
+        return format!(
+            "{}: {} | {}: {}",
+            strings::ACTIVE_TASKS,
+            active.len(),
+            latest.title,
+            detail_label(&latest.state)
+        );
     }
     tasks.last().map_or_else(String::new, |task| {
-        format!("{}: {}", task.title, state_label(&task.state))
+        format!("{}: {}", task.title, detail_label(&task.state))
     })
 }

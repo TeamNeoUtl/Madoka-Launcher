@@ -1,11 +1,15 @@
-use launcher_core::{Edition, Kind};
+use launcher_core::{Edition, Host, Kind};
 
 pub const APP_TITLE: &str = "MLAYN Launcher";
 
+pub const TAB_INSTANCES: &str = "インスタンス";
+pub const TAB_NEW: &str = "新規作成";
+pub const TAB_TASKS: &str = "タスク";
+pub const MENU_SETTINGS: &str = "設定";
+pub const MENU_THEME: &str = "テーマ";
+
 pub const ADD_INSTANCE: &str = "インスタンス追加";
 pub const REFRESH: &str = "更新";
-pub const TASKS: &str = "タスク";
-pub const BACK: &str = "戻る";
 pub const LAUNCH: &str = "起動";
 pub const OPEN_FOLDER: &str = "フォルダを開く";
 pub const DELETE: &str = "削除";
@@ -33,8 +37,8 @@ pub const RELOAD: &str = "再取得";
 pub const NO_VERSION: &str = "導入可能なバージョンなし";
 pub const PRERELEASE: &str = "プレリリース";
 
-pub const UNSUPPORTED_HOST: &str = "この OS では動作しません";
 pub const NO_PROVIDER: &str = "このバージョンでは未対応です";
+pub const PLANNED: &str = "準備中";
 
 pub const TASK_CREATE: &str = "作成";
 pub const TASK_DELETE: &str = "削除";
@@ -60,4 +64,19 @@ pub const fn edition_label(edition: Edition) -> &'static str {
         Edition::Normal => "通常版",
         Edition::Lite => "Lite 版",
     }
+}
+
+pub const fn host_label(host: Host) -> &'static str {
+    match host {
+        Host::Windows => "Windows",
+        Host::Linux => "Linux",
+    }
+}
+
+pub fn unsupported_host_badge(host: Host) -> String {
+    format!("{} 未対応", host_label(host))
+}
+
+pub fn unsupported_host_reason(host: Host) -> String {
+    format!("{} では動作しません", host_label(host))
 }

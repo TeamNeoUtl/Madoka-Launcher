@@ -123,14 +123,15 @@ Wine を使用しない。すべて直接 spawn。
 - 非対応の Kind は New Instance 画面で選択不可。理由を 1 行表示する。
 - Freya NLE は GPU アダプタを必須とする。起動失敗時にログを表示する。
 - Runner (`launcher_core::Launched`): `<instance>/app/` の深さ 2 までを探索し、Kind ごとの実行ファイル名 (大文字小文字無視) に一致する最初のファイルを `current_dir` を親ディレクトリに設定して spawn する。stdout / stderr は `<instance>/launch.log` へ書き込む。起動後 5 秒以内に失敗ステータスで終了した場合は `Failed` とし、ログ末尾 4096 byte を理由に含める。
+- 実行権限 (Unix): `Archive::extract` は zip の実行ビットを持つエントリを `0o755`、それ以外を `0o644` で作成する。Runner は spawn 前に、実行ビットを持たない実行ファイルへ `mode | 0o111` を設定する。
 
 ### 5.4 タスク
 
 - すべてのネットワーク処理・ファイル展開を `Task` として実行する。
-- `Task` の状態: `Queued` / `Running{done,total}` / `Succeeded` / `Failed{reason}`。
+- `Task` の状態: `Queued` / `Running{done,total,transfer}` / `Succeeded` / `Failed{reason}`。
 - UI は `iced::Subscription` で状態を受信する。
 - 同一 Instance への書き込みタスク (作成・削除・起動前の読込) は `InstanceLocks` (Instance 単位の `tokio::sync::Mutex`) で直列化する。`Installer` は排他制御を持たない。呼び出し側が `InstanceLocks::lock` を取得する。
-- `Running{done,total}` の単位は手順数 (`u16`)。状態は `TaskBoard` (共有リスト) に保持し、UI は進行中タスクがある間だけ 250 ms 周期の `Subscription` で再描画する。
+- `Running{done,total}` の単位は手順数 (`u16`)。`transfer` は現在の手順のダウンロード進捗 (`Progress{done,total}` のバイト数。`total` は未報告の場合 `None`)。`Fetcher::fetch` は `&dyn ProgressSink` を受け取り、応答ヘッダ受信後と各チャンク受信後に報告する。`TaskHandle` が `ProgressSink` を実装する。状態は `TaskBoard` (共有リスト) に保持し、UI は進行中タスクがある間だけ 250 ms 周期の `Subscription` で再描画する。
 
 ### 5.5 YMM4 索引のパース
 
@@ -160,7 +161,8 @@ Wine を使用しない。すべて直接 spawn。
 
 | 画面 | 内容 |
 |---|---|
-| Main | ツールバー (インスタンス追加 / 設定 / 更新 / タスク)。Group 見出し付きのインスタンスグリッド (アイコン + 名前)。右サイドバー (選択中のインスタンスの 起動 / 編集 / フォルダを開く / 削除 / 複製)。右クリックメニュー。ステータスバー (進行中タスク) |
+| 共通 | メニューバー (設定 > テーマ。`iced::Theme` の全組込テーマを系統別に表示。選択は `config.toml` の `theme` に保存)。タブバー (インスタンス / 新規作成 / タスク。進行中タスク数を表示) |
+| Main | ツールバー (インスタンス追加 / 更新)。Group 見出し付きのインスタンスグリッド (アイコン + 名前)。右サイドバー (選択中のインスタンスの 起動 / 編集 / フォルダを開く / 削除 / 複製)。右クリックメニュー。ステータスバー (進行中タスク) |
 | New Instance | 左のリスト: Kind (YMM4 / AviUtl / AviUtl2 / NeoUtl / Freya NLE)。右: 名前・Group・本体バージョン (YMM4 は Edition)。非対応 Kind は選択不可で理由を表示 |
 | Edit Instance | 左のタブ: バージョン / プラグイン / 設定。プラグインタブ: 導入済み一覧 + ダウンロード (カタログ検索) |
 | Tasks | 進行中・完了タスク一覧 |
@@ -170,6 +172,13 @@ Wine を使用しない。すべて直接 spawn。
 
 - `App` 1 つの `State`。`Message` enum は画面ごとにネスト (`Message::Main(..)`, `Message::Instance(..)`)。
 - 副作用はすべて `Task` / `Subscription` 経由。`update` 内でブロッキング処理を行わない。
+
+### 7.2.1 見た目
+
+- 角丸は 16 px (カード、ボタン、入力欄、進捗バー)。メニュー項目は 8 px。
+- 区画はカード (背景: テーマの `background.weak`、枠: `background.strong`) で分ける。インスタンス、サイドバー、フォーム、タスクはカード。
+- バッジ (`iced_aw::Badge`): Kind、未対応 OS (`<OS> 未対応`)、提供元の準備中 (`準備中`)、タスクの状態、プレリリース。
+- `iced_aw` の使用範囲: `TabBar` / `MenuBar` / `Badge` (feature: `tab_bar` `menu` `badge`)。
 
 ### 7.3 カタログ表示
 
@@ -186,9 +195,9 @@ Wine を使用しない。すべて直接 spawn。
 | 1 | `launcher-core`: モデル、`instance.toml` 読み書き、Instance CRUD | 完了。`cargo test` 8 件成功 (作成→保存→読込→削除、パス検証、一覧、Kind×Host) |
 | 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わずに、索引のパース規則 (§5.5) と asset 選択規則を検証して成功 |
 | 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
-| 4 | UI: Main (ツールバー: 追加 / 更新 / タスク、Group 別グリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance / Tasks | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
+| 4 | UI: メニューバー (テーマ) / タブバー / Main (Group 別カードグリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance (未対応バッジ) / Tasks (バイト進捗) | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。実行権限の付与、バイト進捗、iced_aw による UI 刷新を追加 (ローカル検証待ち)。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
 | 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
-| 6 | Linux 対応 (展開後の実行権限付与を含む。`Archive::extract` は Unix mode を設定しない) | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
+| 6 | Linux 対応 | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
 | 7 | 配布: GitHub Actions で 2 OS ビルド、リリース成果物生成 | tag push で Windows と Linux の成果物が Release に添付される |
 
 各 Phase は 1 PR。Phase 完了時点で `main` はビルドとテストが成功している状態を保つ。
@@ -209,7 +218,7 @@ Wine を使用しない。すべて直接 spawn。
 
 | 用途 | クレート |
 |---|---|
-| UI | iced |
+| UI | iced, iced_aw |
 | 非同期 | tokio |
 | HTTP | reqwest (rustls) |
 | 直列化 | serde, serde_json, toml |
@@ -238,4 +247,4 @@ Wine を使用しない。すべて直接 spawn。
 | 5 | APM データ (CC BY-NC-SA 4.0)、NeoUtl (AGPL)、各索引の同梱 | 同梱しない。実行時に取得 (決定済) |
 | 6 | macOS | 対象外 (決定済) |
 | 7 | AviUtl2 のインスタンス分離 | `instances/<id>/` 内で完全に独立。共有しない (決定済)。ポータブル ZIP のデータ配置は Phase 5 で確認 |
-| 8 | ダウンロードのバイト進捗 | 表示しない。`Running` は手順数。`Fetcher` への進捗通知は未定 |
+| 8 | ダウンロードのバイト進捗 | 表示する (決定済)。`Fetcher::fetch` が `ProgressSink` へ報告する (§5.4) |

@@ -1,19 +1,24 @@
 use std::time::Duration;
 
-use iced::{Element, Subscription, Task};
-use launcher_core::{AppSelection, AppVersion, Instance, InstanceId, Kind};
+use iced::widget::{column, container};
+use iced::{Element, Length, Subscription, Task, Theme};
+use iced_aw::{TabBar, TabLabel};
+use launcher_core::{AppSelection, AppVersion, Instance, InstanceId, Kind, TaskInfo};
 
 use crate::ops::{Loaded, Services};
-use crate::screen::{main_screen, new_instance, tasks};
-use crate::strings;
+use crate::screen::{main_screen, menu_bar, new_instance, tasks};
+use crate::{strings, style};
 
 const REDRAW_INTERVAL: Duration = Duration::from_millis(250);
+const TAB_WIDTH: f32 = 160.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Main(main_screen::Message),
     New(new_instance::Message),
-    Tasks(tasks::Message),
+    TabSelected(Screen),
+    ThemeSelected(Theme),
+    Saved(Result<(), String>),
     Loaded(Result<Loaded, String>),
     VersionsLoaded(Kind, Result<Vec<AppVersion>, String>),
     Created(Option<InstanceId>),
@@ -23,7 +28,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Screen {
+pub enum Screen {
     Main,
     NewInstance,
     Tasks,
@@ -31,6 +36,7 @@ enum Screen {
 
 pub struct App {
     services: Services,
+    theme: Theme,
     screen: Screen,
     instances: Vec<Instance>,
     selected: Option<InstanceId>,
@@ -41,9 +47,14 @@ pub struct App {
 
 impl App {
     pub fn new(services: Services) -> (Self, Task<Message>) {
+        let theme = services
+            .theme_name()
+            .and_then(style::theme_by_name)
+            .unwrap_or(Theme::Dark);
         let form = new_instance::Form::new(services.host);
         let app = Self {
             services,
+            theme,
             screen: Screen::Main,
             instances: Vec::new(),
             selected: None,
@@ -55,12 +66,26 @@ impl App {
         (app, load)
     }
 
+    pub fn theme(&self) -> Theme {
+        self.theme.clone()
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Main(message) => self.update_main(message),
             Message::New(message) => self.update_new(message),
-            Message::Tasks(tasks::Message::Back) => {
-                self.screen = Screen::Main;
+            Message::TabSelected(screen) => self.select_screen(screen),
+            Message::ThemeSelected(theme) => {
+                let name = theme.to_string();
+                self.theme = theme;
+                Task::perform(self.services.clone().save_theme(name), |result| {
+                    Message::Saved(result.map_err(|error| error.to_string()))
+                })
+            }
+            Message::Saved(result) => {
+                if let Err(reason) = result {
+                    self.notice = Some(reason);
+                }
                 Task::none()
             }
             Message::Loaded(result) => {
@@ -93,7 +118,7 @@ impl App {
 
     pub fn view(&self) -> Element<'_, Message> {
         let board = self.services.board.snapshot();
-        match self.screen {
+        let content: Element<'_, Message> = match self.screen {
             Screen::Main => main_screen::view(&main_screen::Props {
                 instances: &self.instances,
                 selected: self.selected,
@@ -105,8 +130,17 @@ impl App {
             Screen::NewInstance => {
                 new_instance::view(&self.form, self.services.host).map(Message::New)
             }
-            Screen::Tasks => tasks::view(&board).map(Message::Tasks),
-        }
+            Screen::Tasks => tasks::view(&board),
+        };
+        column![
+            menu_bar::view(&self.theme).map(Message::ThemeSelected),
+            self.tab_bar(&board),
+            container(content)
+                .padding(style::PADDING)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        ]
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -115,6 +149,37 @@ impl App {
         } else {
             Subscription::none()
         }
+    }
+
+    fn tab_bar(&self, board: &[TaskInfo]) -> Element<'static, Message> {
+        let active = board.iter().filter(|task| task.state.is_active()).count();
+        let tasks_label = if active > 0 {
+            format!("{} ({active})", strings::TAB_TASKS)
+        } else {
+            strings::TAB_TASKS.to_owned()
+        };
+        TabBar::new(Message::TabSelected)
+            .push(
+                Screen::Main,
+                TabLabel::Text(strings::TAB_INSTANCES.to_owned()),
+            )
+            .push(
+                Screen::NewInstance,
+                TabLabel::Text(strings::TAB_NEW.to_owned()),
+            )
+            .push(Screen::Tasks, TabLabel::Text(tasks_label))
+            .set_active_tab(&self.screen)
+            .tab_width(Length::Fixed(TAB_WIDTH))
+            .into()
+    }
+
+    fn select_screen(&mut self, screen: Screen) -> Task<Message> {
+        self.screen = screen;
+        if screen == Screen::NewInstance && self.form.needs_load() {
+            self.form.begin_load();
+            return self.load_versions();
+        }
+        Task::none()
     }
 
     fn update_main(&mut self, message: main_screen::Message) -> Task<Message> {
@@ -127,15 +192,7 @@ impl App {
                 self.selected = Some(id);
                 Task::none()
             }
-            M::ShowNew => {
-                self.form = new_instance::Form::new(self.services.host);
-                self.screen = Screen::NewInstance;
-                self.load_versions()
-            }
-            M::ShowTasks => {
-                self.screen = Screen::Tasks;
-                Task::none()
-            }
+            M::ShowNew => self.select_screen(Screen::NewInstance),
             M::Refresh => {
                 self.notice = None;
                 self.reload()
@@ -224,6 +281,7 @@ impl App {
                 };
                 let title = format!("{}: {}", strings::TASK_CREATE, request.name);
                 let handle = self.services.board.add(title);
+                self.form = new_instance::Form::new(self.services.host);
                 self.screen = Screen::Main;
                 Task::perform(
                     self.services.clone().create(handle, request),

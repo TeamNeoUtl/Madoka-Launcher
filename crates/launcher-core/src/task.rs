@@ -3,16 +3,25 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tracing::debug;
 
+use crate::{Progress, ProgressSink};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(u64);
 
 /// `Running` counts steps of one task: `done` of `total`.
+/// `transfer` is the byte progress of the download in the current step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskState {
     Queued,
-    Running { done: u16, total: u16 },
+    Running {
+        done: u16,
+        total: u16,
+        transfer: Option<Progress>,
+    },
     Succeeded,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 impl TaskState {
@@ -74,6 +83,14 @@ impl TaskBoard {
         }
     }
 
+    fn set_transfer(&self, id: TaskId, progress: Progress) {
+        if let Some(task) = self.lock().tasks.iter_mut().find(|task| task.id == id)
+            && let TaskState::Running { transfer, .. } = &mut task.state
+        {
+            *transfer = Some(progress);
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, Entries> {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -87,7 +104,14 @@ pub struct TaskHandle {
 
 impl TaskHandle {
     pub fn running(&self, done: u16, total: u16) {
-        self.board.set(self.id, TaskState::Running { done, total });
+        self.board.set(
+            self.id,
+            TaskState::Running {
+                done,
+                total,
+                transfer: None,
+            },
+        );
     }
 
     pub fn finish<T, E: Display>(self, result: &Result<T, E>) {
@@ -98,5 +122,12 @@ impl TaskHandle {
             },
         };
         self.board.set(self.id, state);
+    }
+}
+
+/// Records the download progress of the current step. Ignored unless the task is running.
+impl ProgressSink for TaskHandle {
+    fn report(&self, progress: Progress) {
+        self.board.set_transfer(self.id, progress);
     }
 }
