@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use iced::widget::{button, container, pick_list, progress_bar, text, text_input};
-use iced::{Background, Border, Element, Theme};
+use iced::{Background, Border, Color, Element, Theme};
 use iced_aw::Badge;
-use iced_aw::style::badge;
+use iced_aw::style::status::Status;
+use iced_aw::style::{badge, sidebar};
 use launcher_core::Kind;
 
 pub const RADIUS: f32 = 16.0;
@@ -102,6 +103,25 @@ pub fn menu_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
             button::text(theme, status)
         };
         rounded(base, MENU_RADIUS)
+    }
+}
+
+/// Style of the tabs of `SidebarWithContent`. The selected tab uses the primary color and the
+/// others follow the card color. `Disabled` is the status that a tab which is not selected gets.
+pub fn sidebar_tab(theme: &Theme, status: Status) -> sidebar::Style {
+    let palette = theme.extended_palette();
+    let pair = match status {
+        Status::Active => palette.primary.base,
+        Status::Hovered => palette.background.strong,
+        _ => palette.background.weak,
+    };
+    sidebar::Style {
+        tab_label_background: Background::Color(pair.color),
+        tab_label_border_color: Color::TRANSPARENT,
+        tab_label_border_width: 0.0,
+        icon_color: pair.text,
+        text_color: pair.text,
+        ..sidebar::Style::default()
     }
 }
 

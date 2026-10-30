@@ -37,7 +37,6 @@ pub const RELOAD: &str = "再取得";
 pub const NO_VERSION: &str = "導入可能なバージョンなし";
 pub const PRERELEASE: &str = "プレリリース";
 
-pub const NO_PROVIDER: &str = "このバージョンでは未対応です";
 pub const PLANNED: &str = "準備中";
 
 pub const TASK_CREATE: &str = "作成";
@@ -75,8 +74,4 @@ pub const fn host_label(host: Host) -> &'static str {
 
 pub fn unsupported_host_badge(host: Host) -> String {
     format!("{} 未対応", host_label(host))
-}
-
-pub fn unsupported_host_reason(host: Host) -> String {
-    format!("{} では動作しません", host_label(host))
 }

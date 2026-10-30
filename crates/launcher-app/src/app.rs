@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use iced::widget::{column, container};
+use iced::widget::{Column, column, container};
 use iced::{Element, Length, Subscription, Task, Theme};
-use iced_aw::{TabBar, TabLabel};
+use iced_aw::sidebar::{SidebarPosition, SidebarWithContent, TabLabel};
 use launcher_core::{AppSelection, AppVersion, Instance, InstanceId, Kind, TaskInfo};
 
 use crate::ops::{Loaded, Services};
@@ -10,7 +10,9 @@ use crate::screen::{main_screen, menu_bar, new_instance, tasks};
 use crate::{strings, style};
 
 const REDRAW_INTERVAL: Duration = Duration::from_millis(250);
-const TAB_WIDTH: f32 = 160.0;
+const SIDEBAR_WIDTH: f32 = 160.0;
+const SIDEBAR_TAB_PADDING: f32 = 8.0;
+const SIDEBAR_TAB_SPACING: f32 = 4.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -132,14 +134,15 @@ impl App {
             }
             Screen::Tasks => tasks::view(&board),
         };
+        let content = container(content)
+            .padding(style::PADDING)
+            .width(Length::Fill)
+            .height(Length::Fill);
         column![
             menu_bar::view(&self.theme).map(Message::ThemeSelected),
-            self.tab_bar(&board),
-            container(content)
-                .padding(style::PADDING)
-                .width(Length::Fill)
-                .height(Length::Fill),
+            self.sidebar(&board, content.into()),
         ]
+        .spacing(8)
         .into()
     }
 
@@ -151,25 +154,53 @@ impl App {
         }
     }
 
-    fn tab_bar(&self, board: &[TaskInfo]) -> Element<'static, Message> {
+    /// The content of the selected screen is placed next to the sidebar.
+    /// The other screens get an empty element, because only the selected one is shown.
+    fn sidebar<'a>(
+        &self,
+        board: &[TaskInfo],
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
         let active = board.iter().filter(|task| task.state.is_active()).count();
         let tasks_label = if active > 0 {
             format!("{} ({active})", strings::TAB_TASKS)
         } else {
             strings::TAB_TASKS.to_owned()
         };
-        TabBar::new(Message::TabSelected)
+        let mut content = Some(content);
+        let mut content_of = |screen: Screen| -> Element<'a, Message> {
+            match content.take() {
+                Some(element) if self.screen == screen => element,
+                other => {
+                    content = other;
+                    Column::new().into()
+                }
+            }
+        };
+        SidebarWithContent::new(Message::TabSelected)
             .push(
                 Screen::Main,
                 TabLabel::Text(strings::TAB_INSTANCES.to_owned()),
+                content_of(Screen::Main),
             )
             .push(
                 Screen::NewInstance,
                 TabLabel::Text(strings::TAB_NEW.to_owned()),
+                content_of(Screen::NewInstance),
             )
-            .push(Screen::Tasks, TabLabel::Text(tasks_label))
+            .push(
+                Screen::Tasks,
+                TabLabel::Text(tasks_label),
+                content_of(Screen::Tasks),
+            )
             .set_active_tab(&self.screen)
-            .tab_width(Length::Fixed(TAB_WIDTH))
+            .sidebar_style(Box::new(style::sidebar_tab))
+            .sidebar_position(SidebarPosition::Start)
+            .sidebar_width(Length::Fixed(SIDEBAR_WIDTH))
+            .tab_label_padding(SIDEBAR_TAB_PADDING)
+            .tab_label_spacing(SIDEBAR_TAB_SPACING)
+            // The default height is `Shrink`, which collapses the `Fill` children of the content.
+            .height(Length::Fill)
             .into()
     }
 

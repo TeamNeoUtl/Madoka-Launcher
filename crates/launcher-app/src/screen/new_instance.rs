@@ -252,18 +252,12 @@ fn kind_entry(kind: Kind, current: Kind, host: Host) -> Ui {
             .style(style::tile(kind == current))
             .on_press(Message::KindSelected(kind))
             .into(),
-        Availability::UnsupportedHost => disabled_entry(
-            label,
-            strings::unsupported_host_badge(host),
-            Tone::Danger,
-            strings::unsupported_host_reason(host),
-        ),
-        Availability::NoProvider => disabled_entry(
-            label,
-            strings::PLANNED.to_owned(),
-            Tone::Warning,
-            strings::NO_PROVIDER.to_owned(),
-        ),
+        Availability::UnsupportedHost => {
+            disabled_entry(label, strings::unsupported_host_badge(host), Tone::Danger)
+        }
+        Availability::NoProvider => {
+            disabled_entry(label, strings::PLANNED.to_owned(), Tone::Warning)
+        }
     }
 }
 
@@ -277,14 +271,10 @@ fn entry_button(label: &'static str, badge: Option<Ui>) -> iced::widget::Button<
     button(content).width(Length::Fill).padding(12)
 }
 
-fn disabled_entry(label: &'static str, badge: String, tone: Tone, reason: String) -> Ui {
-    column![
-        entry_button(label, Some(style::badge_label::<Message>(badge, tone)))
-            .style(style::secondary_button),
-        text(reason).size(12),
-    ]
-    .spacing(4)
-    .into()
+fn disabled_entry(label: &'static str, badge: String, tone: Tone) -> Ui {
+    entry_button(label, Some(style::badge_label::<Message>(badge, tone)))
+        .style(style::secondary_button)
+        .into()
 }
 
 fn labeled(label: &'static str, input: impl Into<Ui>) -> Ui {

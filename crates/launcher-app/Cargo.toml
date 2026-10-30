@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio"] }
-iced_aw = { version = "0.14", default-features = false, features = ["badge", "menu", "tab_bar"] }
+iced_aw = { version = "0.14", default-features = false, features = ["badge", "menu", "sidebar"] }
 launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }
 thiserror = "2"
