@@ -1,6 +1,8 @@
 use iced::alignment::Vertical;
-use iced::widget::{column, container, progress_bar, row, scrollable, text};
+use iced::widget::{column, row, scrollable, text};
 use iced::{Element, Length};
+use iced_m3::theme::{ColorScheme, Theme};
+use iced_m3::widget::{self, card, progress_bar};
 use launcher_core::{Progress, TaskInfo, TaskState};
 
 use crate::strings;
@@ -8,21 +10,24 @@ use crate::style::{self, Tone};
 
 const BYTES_PER_MIB: f64 = 1_048_576.0;
 
-pub fn view<M: Clone + 'static>(tasks: &[TaskInfo]) -> Element<'static, M> {
+pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'static, M> {
     let list: Element<'static, M> = if tasks.is_empty() {
-        container(text(strings::NO_TASKS))
-            .padding(style::PADDING)
-            .width(Length::Fill)
-            .style(style::card)
-            .into()
+        widget::card(
+            card::Style::filled(theme),
+            style::label(theme, strings::NO_TASKS),
+        )
+        .width(Length::Fill)
+        .into()
     } else {
-        column(tasks.iter().rev().map(task_card))
+        column(tasks.iter().rev().map(|task| task_card(task, theme)))
             .spacing(style::GAP)
             .into()
     };
     column![
-        text(strings::TAB_TASKS).size(24),
-        scrollable(list).height(Length::Fill),
+        style::label(theme, strings::TAB_TASKS).size(24),
+        scrollable(list)
+            .height(Length::Fill)
+            .style(style::scroll(*theme)),
     ]
     .spacing(style::GAP)
     .into()
@@ -70,15 +75,17 @@ const fn tone(state: &TaskState) -> Tone {
     match state {
         TaskState::Queued => Tone::Secondary,
         TaskState::Running { .. } => Tone::Primary,
-        TaskState::Succeeded => Tone::Success,
-        TaskState::Failed { .. } => Tone::Danger,
+        TaskState::Succeeded => Tone::Tertiary,
+        TaskState::Failed { .. } => Tone::Error,
     }
 }
 
-fn task_card<M: Clone + 'static>(task: &TaskInfo) -> Element<'static, M> {
+fn task_card<M: Clone + 'static>(task: &TaskInfo, theme: &Theme) -> Element<'static, M> {
     let head = row![
-        text(task.title.clone()).size(16).width(Length::Fill),
-        style::badge_label::<M>(state_label(&task.state), tone(&task.state)),
+        style::label(theme, task.title.clone())
+            .size(16)
+            .width(Length::Fill),
+        style::chip::<M>(theme, state_label(&task.state), tone(&task.state)),
     ]
     .spacing(style::GAP)
     .align_y(Vertical::Center);
@@ -90,32 +97,42 @@ fn task_card<M: Clone + 'static>(task: &TaskInfo) -> Element<'static, M> {
             transfer,
         } => {
             body = match transfer {
-                Some(progress) => body.push(transfer_bar(*progress)),
-                None => body.push(
-                    progress_bar(0.0..=f32::from(*total), f32::from(*done)).style(style::bar),
-                ),
+                Some(progress) => body.push(transfer_bar(theme, *progress)),
+                None => body.push(bar(
+                    theme,
+                    Some(f32::from(*done) / f32::from(*total).max(1.0)),
+                )),
             };
         }
         TaskState::Failed { reason } => {
-            body = body.push(text(reason.trim_end().to_owned()).size(12));
+            body = body.push(
+                text(reason.trim_end().to_owned())
+                    .size(12)
+                    .color(theme.error()),
+            );
         }
         TaskState::Queued | TaskState::Succeeded => {}
     }
-    container(body)
-        .padding(style::PADDING)
+    widget::card(card::Style::filled(theme), body)
         .width(Length::Fill)
-        .style(style::card)
         .into()
 }
 
-fn transfer_bar<M: 'static>(progress: Progress) -> Element<'static, M> {
-    let bar = match progress.total {
-        Some(total) if total > 0 => {
-            progress_bar(0.0..=total as f32, progress.done as f32).style(style::bar)
-        }
-        _ => progress_bar(0.0..=1.0, 0.0).style(style::bar),
-    };
-    column![bar, text(transfer_label(progress)).size(12)]
-        .spacing(4)
+fn bar<M: 'static>(theme: &Theme, progress: Option<f32>) -> Element<'static, M> {
+    widget::progress_bar(progress_bar::Style::new(theme))
+        .progress_maybe(progress)
         .into()
+}
+
+fn transfer_bar<M: 'static>(theme: &Theme, progress: Progress) -> Element<'static, M> {
+    let fraction = progress
+        .total
+        .filter(|total| *total > 0)
+        .map(|total| progress.done.min(total) as f32 / total as f32);
+    column![
+        bar(theme, fraction),
+        style::label(theme, transfer_label(progress)).size(12)
+    ]
+    .spacing(4)
+    .into()
 }

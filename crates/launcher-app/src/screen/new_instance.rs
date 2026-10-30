@@ -1,8 +1,12 @@
 use std::fmt;
 
 use iced::alignment::Vertical;
-use iced::widget::{button, column, container, pick_list, radio, row, text, text_input};
-use iced::{Element, Length};
+use iced::widget::{column, row, scrollable};
+use iced::{Element, Length, Padding};
+use iced_m3::theme::{Accent, Theme};
+use iced_m3::widget::button_group::connected;
+use iced_m3::widget::text_input::TextInput;
+use iced_m3::widget::{self as m3, OnPress, button, card};
 use launcher_core::{AppVersion, Edition, Host, Kind};
 use launcher_providers::has_provider;
 
@@ -10,11 +14,10 @@ use crate::ops::CreateRequest;
 use crate::strings;
 use crate::style::{self, Tone};
 
-type Ui = Element<'static, Message>;
-
 const KIND_LIST_WIDTH: f32 = 300.0;
-const BUTTON_PADDING: [u16; 2] = [8, 16];
-const INPUT_PADDING: u16 = 10;
+const VERSION_LIST_HEIGHT: f32 = 220.0;
+const ENTRY_PADDING: [f32; 2] = [8.0, 16.0];
+const INPUT_PADDING: f32 = 12.0;
 
 pub const KINDS: [Kind; 5] = [
     Kind::Ymm4,
@@ -181,145 +184,155 @@ impl Form {
     }
 }
 
-pub fn view(form: &Form, host: Host) -> Ui {
-    let kinds: Vec<Ui> = KINDS
+pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Message> {
+    let kinds: Vec<Element<'a, Message>> = KINDS
         .iter()
-        .map(|kind| kind_entry(*kind, form.kind, host))
+        .map(|kind| kind_entry(theme, *kind, form.kind, host))
         .collect();
-    let kind_card = container(
+    let kind_card = m3::card(
+        card::Style::filled(theme),
         column![
-            text(strings::KIND).size(18),
+            style::label(theme, strings::KIND).size(18),
             column(kinds).spacing(style::GAP)
         ]
         .spacing(style::GAP),
     )
-    .width(Length::Fixed(KIND_LIST_WIDTH))
-    .padding(style::PADDING)
-    .style(style::card);
+    .width(Length::Fixed(KIND_LIST_WIDTH));
+
+    let form_style = card::Style::filled(theme);
+    let name_input = TextInput::new("", &form.name, theme)
+        .with_label_text(strings::NAME, form_style.container_color)
+        .on_input(Message::NameChanged)
+        .padding(INPUT_PADDING);
+    let group_input = TextInput::new(strings::GROUP_HINT, &form.group, theme)
+        .with_label_text(strings::GROUP, form_style.container_color)
+        .on_input(Message::GroupChanged)
+        .padding(INPUT_PADDING);
 
     let mut fields = column![
-        text(strings::kind_label(form.kind)).size(22),
-        labeled(
-            strings::NAME,
-            text_input(strings::NAME_HINT, &form.name)
-                .on_input(Message::NameChanged)
-                .padding(INPUT_PADDING)
-                .style(style::input),
-        ),
-        labeled(
-            strings::GROUP,
-            text_input(strings::GROUP_HINT, &form.group)
-                .on_input(Message::GroupChanged)
-                .padding(INPUT_PADDING)
-                .style(style::input),
-        ),
+        style::label(theme, strings::kind_label(form.kind)).size(22),
+        name_input,
+        group_input,
     ]
     .spacing(style::GAP);
     if form.kind == Kind::Ymm4 {
-        fields = fields.push(edition_picker(form.edition));
+        fields = fields.push(edition_picker(theme, form.edition));
     }
-    fields = fields.push(labeled(strings::VERSION, version_picker(form)));
+    fields = fields.push(labeled(
+        theme,
+        strings::VERSION,
+        version_picker(form, theme),
+    ));
 
-    let actions = row![
-        button(text(strings::CREATE))
-            .padding(BUTTON_PADDING)
-            .style(style::primary_button)
-            .on_press_maybe(form.can_submit().then_some(Message::Submit)),
-        button(text(strings::CANCEL))
-            .padding(BUTTON_PADDING)
-            .style(style::secondary_button)
-            .on_press(Message::Cancel),
-    ]
-    .spacing(8);
+    let submit = m3::button(
+        button::Style::filled(theme, Accent::Primary),
+        button::Content::Label(strings::CREATE.into()),
+    )
+    .on_press_maybe(form.can_submit().then_some(Message::Submit));
+    let cancel = m3::button(
+        button::Style::tonal(theme, Accent::Primary),
+        button::Content::Label(strings::CANCEL.into()),
+    )
+    .on_press(Message::Cancel);
+    let actions = row![submit, cancel].spacing(8);
 
-    let form_card = container(column![fields, actions].spacing(style::PADDING))
-        .width(Length::Fill)
-        .padding(style::PADDING)
-        .style(style::card);
+    let form_card =
+        m3::card(form_style, column![fields, actions].spacing(style::PADDING)).width(Length::Fill);
 
     column![
-        text(strings::TAB_NEW).size(24),
+        style::label(theme, strings::TAB_NEW).size(24),
         row![kind_card, form_card].spacing(style::GAP),
     ]
     .spacing(style::GAP)
     .into()
 }
 
-fn kind_entry(kind: Kind, current: Kind, host: Host) -> Ui {
+fn kind_entry<'a>(theme: &Theme, kind: Kind, current: Kind, host: Host) -> Element<'a, Message> {
     let label = strings::kind_label(kind);
-    match availability(kind, host) {
-        Availability::Available => entry_button(label, None)
-            .style(style::tile(kind == current))
-            .on_press(Message::KindSelected(kind))
-            .into(),
-        Availability::UnsupportedHost => {
-            disabled_entry(label, strings::unsupported_host_badge(host), Tone::Danger)
-        }
-        Availability::NoProvider => {
-            disabled_entry(label, strings::PLANNED.to_owned(), Tone::Warning)
-        }
-    }
-}
-
-fn entry_button(label: &'static str, badge: Option<Ui>) -> iced::widget::Button<'static, Message> {
-    let mut content = row![text(label).width(Length::Fill)]
+    let (interaction, badge) = match availability(kind, host) {
+        Availability::Available => (
+            card::Interaction::Press(OnPress::Direct(Message::KindSelected(kind))),
+            None,
+        ),
+        Availability::UnsupportedHost => (
+            card::Interaction::Disabled,
+            Some((strings::unsupported_host_badge(host), Tone::Error)),
+        ),
+        Availability::NoProvider => (
+            card::Interaction::Disabled,
+            Some((strings::PLANNED.to_owned(), Tone::Tertiary)),
+        ),
+    };
+    let selected = badge.is_none() && kind == current;
+    let color = style::tile_content(theme, selected);
+    let mut content = row![iced::widget::text(label).color(color).width(Length::Fill)]
         .spacing(8)
         .align_y(Vertical::Center);
-    if let Some(badge) = badge {
-        content = content.push(badge);
+    if let Some((text, tone)) = badge {
+        content = content.push(style::chip::<Message>(theme, text, tone));
     }
-    button(content).width(Length::Fill).padding(12)
-}
-
-fn disabled_entry(label: &'static str, badge: String, tone: Tone) -> Ui {
-    entry_button(label, Some(style::badge_label::<Message>(badge, tone)))
-        .style(style::secondary_button)
+    m3::card(style::tile_card(theme, selected), content)
+        .interaction(interaction)
+        .width(Length::Fill)
         .into()
 }
 
-fn labeled(label: &'static str, input: impl Into<Ui>) -> Ui {
-    column![text(label).size(14), input.into()]
+fn labeled<'a>(
+    theme: &Theme,
+    label: &'static str,
+    input: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    column![style::label(theme, label).size(14), input.into()]
         .spacing(4)
         .into()
 }
 
-fn edition_picker(current: Edition) -> Ui {
-    let option = |edition: Edition| -> Ui {
-        radio(
-            strings::edition_label(edition),
-            edition,
-            Some(current),
-            Message::EditionSelected,
-        )
-        .into()
+fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
+    let entry = |edition: Edition| connected::Button {
+        content: button::Content::Label(strings::edition_label(edition).into()),
+        on_press: Some(Message::EditionSelected(edition)),
+        selected: current == edition,
     };
-    labeled(
-        strings::EDITION,
-        row![option(Edition::Normal), option(Edition::Lite)].spacing(16),
-    )
+    let group = m3::connected_button_group(
+        button::Style::tonal(theme, Accent::Primary),
+        vec![entry(Edition::Normal), entry(Edition::Lite)],
+    );
+    labeled(theme, strings::EDITION, group)
 }
 
-fn version_picker(form: &Form) -> Ui {
+fn version_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
     match &form.load {
-        Load::Idle | Load::Loading => text(strings::LOADING).into(),
+        Load::Idle | Load::Loading => style::label(theme, strings::LOADING).into(),
         Load::Failed(reason) => column![
-            text(format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
-            button(text(strings::RELOAD))
-                .padding(BUTTON_PADDING)
-                .style(style::secondary_button)
-                .on_press(Message::Reload),
+            style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+            m3::button(
+                button::Style::tonal(theme, Accent::Primary),
+                button::Content::Label(strings::RELOAD.into()),
+            )
+            .on_press(Message::Reload),
         ]
         .spacing(6)
         .into(),
-        Load::Ready if form.choices.is_empty() => text(strings::NO_VERSION).into(),
-        Load::Ready => pick_list(
-            form.choices.clone(),
-            form.selected.clone(),
-            Message::VersionSelected,
-        )
-        .padding(INPUT_PADDING)
-        .width(Length::Fill)
-        .style(style::dropdown)
-        .into(),
+        Load::Ready if form.choices.is_empty() => style::label(theme, strings::NO_VERSION).into(),
+        Load::Ready => {
+            let entries = form.choices.iter().map(|choice| {
+                let selected = form.selected.as_ref() == Some(choice);
+                m3::card(
+                    style::tile_card(theme, selected),
+                    style::label(theme, choice.to_string())
+                        .color(style::tile_content(theme, selected)),
+                )
+                .interaction(card::Interaction::Press(OnPress::Direct(
+                    Message::VersionSelected(choice.clone()),
+                )))
+                .padding(Padding::from(ENTRY_PADDING))
+                .width(Length::Fill)
+                .into()
+            });
+            scrollable(column(entries).spacing(4))
+                .height(Length::Fixed(VERSION_LIST_HEIGHT))
+                .style(style::scroll(*theme))
+                .into()
+        }
     }
 }

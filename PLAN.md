@@ -161,7 +161,7 @@ Wine を使用しない。すべて直接 spawn。
 
 | 画面 | 内容 |
 |---|---|
-| 共通 | メニューバー (設定 > テーマ。`iced::Theme` の全組込テーマを系統別に表示。選択は `config.toml` の `theme` に保存)。左サイドバー (インスタンス / 新規作成 / タスク。進行中タスク数を表示。`iced_aw::sidebar::SidebarWithContent`) |
+| 共通 | ヘッダー (タイトル、ダークモードのスイッチ。`Light` / `Dark` を `config.toml` の `theme` に保存)。左 Navigation Rail (インスタンス / 新規作成 / タスク。進行中タスク数をバッジで表示。`iced_m3::widget::navrail`) |
 | Main | ツールバー (インスタンス追加 / 更新)。Group 見出し付きのインスタンスグリッド (アイコン + 名前)。右サイドバー (選択中のインスタンスの 起動 / 編集 / フォルダを開く / 削除 / 複製)。右クリックメニュー。ステータスバー (進行中タスク) |
 | New Instance | 左のリスト: Kind (YMM4 / AviUtl / AviUtl2 / NeoUtl / Freya NLE)。右: 名前・Group・本体バージョン (YMM4 は Edition)。非対応 Kind は選択不可で理由を表示 |
 | Edit Instance | 左のタブ: バージョン / プラグイン / 設定。プラグインタブ: 導入済み一覧 + ダウンロード (カタログ検索) |
@@ -177,8 +177,9 @@ Wine を使用しない。すべて直接 spawn。
 
 - 角丸は 16 px (カード、ボタン、入力欄、進捗バー)。メニュー項目は 8 px。
 - 区画はカード (背景: テーマの `background.weak`、枠: `background.strong`) で分ける。インスタンス、サイドバー、フォーム、タスクはカード。
-- バッジ (`iced_aw::Badge`): Kind、未対応 OS (`<OS> 未対応`)、提供元の準備中 (`準備中`)、タスクの状態、プレリリース。
-- `iced_aw` の使用範囲: `SidebarWithContent` / `MenuBar` / `Badge` (feature: `sidebar` `menu` `badge`)。
+- チップ (非操作の `iced_m3::widget::card`): Kind、未対応 OS (`<OS> 未対応`)、提供元の準備中 (`準備中`)、タスクの状態。
+- ウィジェットは `iced_m3` (`tpaau/iced_m3`、git 依存、コミット固定、feature: `expressive-defaults`) を使用する。使用範囲: `button` / `card` / `navrail` / `text_input` / `progress_bar` / `switch` / `connected_button_group`。iced 標準は配置 (`column` `row` `container` `scrollable` `text`) のみ。
+- 配色は `iced_m3::theme::Theme` (`Light` / `Dark`)。アイコンは Material Symbols Rounded (`crates/launcher-app/assets/fonts/`)。
 - 非対応の Kind はバッジ (`<OS> 未対応` / `準備中`) のみで示し、説明文は重ねない。
 
 ### 7.3 カタログ表示
@@ -196,7 +197,7 @@ Wine を使用しない。すべて直接 spawn。
 | 1 | `launcher-core`: モデル、`instance.toml` 読み書き、Instance CRUD | 完了。`cargo test` 8 件成功 (作成→保存→読込→削除、パス検証、一覧、Kind×Host) |
 | 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わずに、索引のパース規則 (§5.5) と asset 選択規則を検証して成功 |
 | 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
-| 4 | UI: メニューバー (テーマ) / サイドバー / Main (Group 別カードグリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance (未対応バッジ) / Tasks (バイト進捗) | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。実行権限の付与、バイト進捗、iced_aw による UI 刷新を追加 (ローカル検証待ち)。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
+| 4 | UI: ヘッダー (ダークモード) / Navigation Rail / Main (Group 別カードグリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance (未対応バッジ) / Tasks (バイト進捗) | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。実行権限の付与、バイト進捗、`iced_m3` への UI 置換を追加 (ローカル検証待ち)。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
 | 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
 | 6 | Linux 対応 | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
 | 7 | 配布: GitHub Actions で 2 OS ビルド、リリース成果物生成 | tag push で Windows と Linux の成果物が Release に添付される |
@@ -219,7 +220,7 @@ Wine を使用しない。すべて直接 spawn。
 
 | 用途 | クレート |
 |---|---|
-| UI | iced, iced_aw |
+| UI | iced, iced_m3 (git) |
 | 非同期 | tokio |
 | HTTP | reqwest (rustls) |
 | 直列化 | serde, serde_json, toml |

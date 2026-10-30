@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio"] }
-iced_aw = { version = "0.14", default-features = false, features = ["badge", "menu", "sidebar"] }
+iced_m3 = { git = "https://github.com/tpaau/iced_m3.git", rev = "89e45c811b7a603d8aecdbfc9d04909b8f7a95a4", default-features = false, features = ["expressive-defaults"] }
 launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }
 thiserror = "2"

@@ -5,8 +5,7 @@ pub const APP_TITLE: &str = "MLAYN Launcher";
 pub const TAB_INSTANCES: &str = "インスタンス";
 pub const TAB_NEW: &str = "新規作成";
 pub const TAB_TASKS: &str = "タスク";
-pub const MENU_SETTINGS: &str = "設定";
-pub const MENU_THEME: &str = "テーマ";
+pub const DARK_MODE: &str = "ダークモード";
 
 pub const ADD_INSTANCE: &str = "インスタンス追加";
 pub const REFRESH: &str = "更新";
@@ -28,7 +27,6 @@ pub const VERSION: &str = "本体バージョン";
 pub const GROUP: &str = "グループ";
 pub const PLUGINS: &str = "プラグイン";
 pub const NAME: &str = "名前";
-pub const NAME_HINT: &str = "インスタンス名";
 pub const GROUP_HINT: &str = "空欄: 未分類";
 
 pub const LOADING: &str = "取得中";

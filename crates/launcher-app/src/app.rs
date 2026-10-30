@@ -1,25 +1,28 @@
 use std::time::Duration;
 
-use iced::widget::{Column, column, container};
-use iced::{Element, Length, Subscription, Task, Theme};
-use iced_aw::sidebar::{SidebarPosition, SidebarWithContent, TabLabel};
+use iced::widget::{column, container, row};
+use iced::{Alignment, Element, Length, Subscription, Task};
+use iced_m3::theme::{Mode, Theme};
+use iced_m3::widget::hybrid_icon::Icon;
+use iced_m3::widget::{self as m3, Badge, navrail, switch};
 use launcher_core::{AppSelection, AppVersion, Instance, InstanceId, Kind, TaskInfo};
 
 use crate::ops::{Loaded, Services};
-use crate::screen::{main_screen, menu_bar, new_instance, tasks};
+use crate::screen::{main_screen, new_instance, tasks};
 use crate::{strings, style};
 
 const REDRAW_INTERVAL: Duration = Duration::from_millis(250);
-const SIDEBAR_WIDTH: f32 = 160.0;
-const SIDEBAR_TAB_PADDING: f32 = 8.0;
-const SIDEBAR_TAB_SPACING: f32 = 4.0;
+const ICON_INSTANCES: &str = "\u{e5c3}";
+const ICON_NEW: &str = "\u{e145}";
+const ICON_TASKS: &str = "\u{e6b1}";
+const HEADER_PADDING: [f32; 2] = [8.0, 16.0];
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Main(main_screen::Message),
     New(new_instance::Message),
     TabSelected(Screen),
-    ThemeSelected(Theme),
+    ThemeToggled,
     Saved(Result<(), String>),
     Loaded(Result<Loaded, String>),
     VersionsLoaded(Kind, Result<Vec<AppVersion>, String>),
@@ -49,14 +52,11 @@ pub struct App {
 
 impl App {
     pub fn new(services: Services) -> (Self, Task<Message>) {
-        let theme = services
-            .theme_name()
-            .and_then(style::theme_by_name)
-            .unwrap_or(Theme::Dark);
+        let mode = services.theme_name().map_or(Mode::Dark, style::mode_of);
         let form = new_instance::Form::new(services.host);
         let app = Self {
             services,
-            theme,
+            theme: Theme::default(mode),
             screen: Screen::Main,
             instances: Vec::new(),
             selected: None,
@@ -68,8 +68,8 @@ impl App {
         (app, load)
     }
 
-    pub fn theme(&self) -> Theme {
-        self.theme.clone()
+    pub fn theme(&self) -> iced::Theme {
+        style::iced_theme(self.theme.mode)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -77,9 +77,12 @@ impl App {
             Message::Main(message) => self.update_main(message),
             Message::New(message) => self.update_new(message),
             Message::TabSelected(screen) => self.select_screen(screen),
-            Message::ThemeSelected(theme) => {
-                let name = theme.to_string();
-                self.theme = theme;
+            Message::ThemeToggled => {
+                self.theme.mode = match self.theme.mode {
+                    Mode::Light => Mode::Dark,
+                    Mode::Dark => Mode::Light,
+                };
+                let name = style::mode_name(self.theme.mode).to_owned();
                 Task::perform(self.services.clone().save_theme(name), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
@@ -122,6 +125,7 @@ impl App {
         let board = self.services.board.snapshot();
         let content: Element<'_, Message> = match self.screen {
             Screen::Main => main_screen::view(&main_screen::Props {
+                theme: &self.theme,
                 instances: &self.instances,
                 selected: self.selected,
                 pending_delete: self.pending_delete,
@@ -130,20 +134,20 @@ impl App {
             })
             .map(Message::Main),
             Screen::NewInstance => {
-                new_instance::view(&self.form, self.services.host).map(Message::New)
+                new_instance::view(&self.form, &self.theme, self.services.host).map(Message::New)
             }
-            Screen::Tasks => tasks::view(&board),
+            Screen::Tasks => tasks::view(&board, &self.theme),
         };
         let content = container(content)
             .padding(style::PADDING)
             .width(Length::Fill)
             .height(Length::Fill);
-        column![
-            menu_bar::view(&self.theme).map(Message::ThemeSelected),
-            self.sidebar(&board, content.into()),
-        ]
-        .spacing(8)
-        .into()
+        let body = row![self.rail(&board), content].height(Length::Fill);
+        container(column![self.header(), body])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(style::page(&self.theme))
+            .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -154,53 +158,39 @@ impl App {
         }
     }
 
-    /// The content of the selected screen is placed next to the sidebar.
-    /// The other screens get an empty element, because only the selected one is shown.
-    fn sidebar<'a>(
-        &self,
-        board: &[TaskInfo],
-        content: Element<'a, Message>,
-    ) -> Element<'a, Message> {
+    fn header(&self) -> Element<'_, Message> {
+        container(
+            row![
+                style::label(&self.theme, strings::APP_TITLE)
+                    .size(20)
+                    .width(Length::Fill),
+                style::label(&self.theme, strings::DARK_MODE),
+                switch(&self.theme, self.theme.mode == Mode::Dark).on_toggle(Message::ThemeToggled),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding(HEADER_PADDING)
+        .into()
+    }
+
+    fn rail(&self, board: &[TaskInfo]) -> Element<'_, Message> {
         let active = board.iter().filter(|task| task.state.is_active()).count();
-        let tasks_label = if active > 0 {
-            format!("{} ({active})", strings::TAB_TASKS)
-        } else {
-            strings::TAB_TASKS.to_owned()
-        };
-        let mut content = Some(content);
-        let mut content_of = |screen: Screen| -> Element<'a, Message> {
-            match content.take() {
-                Some(element) if self.screen == screen => element,
-                other => {
-                    content = other;
-                    Column::new().into()
-                }
-            }
-        };
-        SidebarWithContent::new(Message::TabSelected)
-            .push(
-                Screen::Main,
-                TabLabel::Text(strings::TAB_INSTANCES.to_owned()),
-                content_of(Screen::Main),
-            )
-            .push(
-                Screen::NewInstance,
-                TabLabel::Text(strings::TAB_NEW.to_owned()),
-                content_of(Screen::NewInstance),
-            )
-            .push(
+        let items = vec![
+            nav_item(ICON_INSTANCES, strings::TAB_INSTANCES, None, Screen::Main),
+            nav_item(ICON_NEW, strings::TAB_NEW, None, Screen::NewInstance),
+            nav_item(
+                ICON_TASKS,
+                strings::TAB_TASKS,
+                (active > 0).then(|| active.to_string()),
                 Screen::Tasks,
-                TabLabel::Text(tasks_label),
-                content_of(Screen::Tasks),
-            )
-            .set_active_tab(&self.screen)
-            .sidebar_style(Box::new(style::sidebar_tab))
-            .sidebar_position(SidebarPosition::Start)
-            .sidebar_width(Length::Fixed(SIDEBAR_WIDTH))
-            .tab_label_padding(SIDEBAR_TAB_PADDING)
-            .tab_label_spacing(SIDEBAR_TAB_SPACING)
-            // The default height is `Shrink`, which collapses the `Fill` children of the content.
+            ),
+        ];
+        let rail =
+            m3::navrail(navrail::Style::new(&self.theme), items).active(self.screen as usize);
+        container(rail)
             .height(Length::Fill)
+            .style(style::rail_background(&self.theme))
             .into()
     }
 
@@ -377,5 +367,26 @@ impl App {
         self.instances
             .iter()
             .find(|instance| instance.config.id == id)
+    }
+}
+
+fn nav_item(
+    glyph: &'static str,
+    label: &'static str,
+    badge: Option<String>,
+    screen: Screen,
+) -> navrail::Item<'static, Message> {
+    let icon = Icon::Text {
+        text: glyph.into(),
+        font: Some(style::ICON_FONT),
+    };
+    navrail::Item {
+        icon_active: icon.clone(),
+        icon_inactive: icon,
+        badge: badge.map(|count| Badge {
+            label: Some(count.into()),
+        }),
+        label: label.into(),
+        on_press: Message::TabSelected(screen),
     }
 }
