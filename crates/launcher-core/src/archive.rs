@@ -12,6 +12,8 @@ use crate::model::ensure_relative_path;
 pub(crate) enum Layout {
     /// Entries may sit in sub-directories.
     Tree,
+    /// Like `Tree`. When one directory holds every entry, that directory is dropped from the paths.
+    TreeWithoutRoot,
     /// Entries sit directly under the destination.
     Flat,
 }
@@ -22,14 +24,15 @@ struct Entry {
     is_dir: bool,
 }
 
+/// Files and directories that a task created, in creation order.
 #[derive(Default)]
-struct Created {
-    files: Vec<PathBuf>,
+pub(crate) struct Created {
+    pub(crate) files: Vec<PathBuf>,
     dirs: Vec<PathBuf>,
 }
 
 impl Created {
-    fn roll_back(self) {
+    pub(crate) fn roll_back(self) {
         for file in self.files {
             let _ = fs::remove_file(file);
         }
@@ -68,6 +71,9 @@ impl Archive {
                 return Err(Error::UnsafePath(name));
             }
             entries.push(Entry { index, rel, is_dir });
+        }
+        if layout == Layout::TreeWithoutRoot {
+            strip_common_root(&mut entries);
         }
         Ok(Self {
             path: path.to_owned(),
@@ -122,6 +128,29 @@ impl Archive {
     }
 }
 
+/// Removes the first path component of every entry when one directory holds all entries.
+fn strip_common_root(entries: &mut Vec<Entry>) {
+    let Some(root) = entries
+        .first()
+        .and_then(|entry| entry.rel.split('/').next())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let prefix = format!("{root}/");
+    let all_inside = entries
+        .iter()
+        .all(|entry| (entry.is_dir && entry.rel == root) || entry.rel.starts_with(&prefix));
+    let has_child = entries.iter().any(|entry| entry.rel.starts_with(&prefix));
+    if !(all_inside && has_child) {
+        return;
+    }
+    entries.retain(|entry| entry.rel != root);
+    for entry in entries.iter_mut() {
+        entry.rel = entry.rel[prefix.len()..].to_owned();
+    }
+}
+
 /// Sets 0o755 on entries that carry an executable bit in the zip, 0o644 on the others.
 #[cfg(unix)]
 fn set_mode(path: &Path, zip_mode: Option<u32>) -> Result<(), Error> {
@@ -137,7 +166,7 @@ fn set_mode(_path: &Path, _zip_mode: Option<u32>) -> Result<(), Error> {
     Ok(())
 }
 
-fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {
+pub(crate) fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {
     let mut missing = Vec::new();
     let mut current = Some(path);
     while let Some(dir) = current {
@@ -151,5 +180,25 @@ fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {
         fs::create_dir(&dir).map_err(|e| Error::io(&dir, e))?;
         created.dirs.push(dir);
     }
+    Ok(())
+}
+
+/// Copies `source` to `target` with `create_new`, creating the missing parent directories.
+/// Fails with `AlreadyExists` when `target` exists.
+pub(crate) fn copy_file(source: &Path, target: &Path, created: &mut Created) -> Result<(), Error> {
+    if let Some(parent) = target.parent() {
+        make_dirs(parent, created)?;
+    }
+    let mut input = File::open(source).map_err(|e| Error::io(source, e))?;
+    let mut out = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists => Error::AlreadyExists(target.to_owned()),
+            _ => Error::io(target, e),
+        })?;
+    created.files.push(target.to_owned());
+    io::copy(&mut input, &mut out).map_err(|e| Error::io(target, e))?;
     Ok(())
 }

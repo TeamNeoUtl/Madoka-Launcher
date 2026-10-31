@@ -1,5 +1,5 @@
 use launcher_core::Kind;
-use launcher_providers::{AnyProvider, Http, HttpError, Provider, ProviderError, has_provider};
+use launcher_providers::{AnyProvider, Http, HttpError, Provider, has_provider};
 use url::Url;
 
 struct NoHttp;
@@ -23,17 +23,9 @@ const ALL_KINDS: [Kind; 5] = [
 
 #[test]
 fn provider_kind_matches_requested_kind() {
-    for kind in [Kind::Ymm4, Kind::Neoutl, Kind::Freya] {
+    for kind in ALL_KINDS {
         let provider = AnyProvider::for_kind(kind, NoHttp).expect("provider exists");
         assert_eq!(provider.kind(), kind);
-    }
-}
-
-#[test]
-fn aviutl_kinds_have_no_provider() {
-    for kind in [Kind::Aviutl, Kind::Aviutl2] {
-        let result = AnyProvider::for_kind(kind, NoHttp);
-        assert!(matches!(result, Err(ProviderError::NoProvider(k)) if k == kind));
     }
 }
 

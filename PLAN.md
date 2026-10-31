@@ -96,7 +96,7 @@ pub trait Provider: Send + Sync {
 }
 ```
 
-`InstallPlan` は `Download(Vec<Artifact>)` と `OpenInBrowser(Url)` の 2 値。
+`InstallPlan` は `Download(Vec<Artifact>)` (YMM4 の `.ymme`)、`Staged(StagedPlan)` (AviUtl / AviUtl2: 1 アーカイブ + `Step` 列 + `FileCheck` 列)、`OpenInBrowser(Url)` の 3 値。カタログ項目は `PackageSource::Recipe` に手順を持つ。`Step::Extract` は tmp へ展開、`Copy` は `{tmp}`/`{dataDir}` 等の `Location` 間コピー、`Place` は APM の `files[]` を `<App>/<filename>` へ配置する。`delete` / `run` / `run_auo_setup` / `extract_sfx` / 未知のプレースホルダを含む項目は `OpenInBrowser`。
 導入処理は `core` の `Installer` が実行する。Provider は計画のみ返す。
 `core` は `Fetcher` trait (URL → ファイル書込) を定義し、`launcher-providers` の `ReqwestFetcher` が実装する。
 
@@ -148,7 +148,7 @@ Wine を使用しない。すべて直接 spawn。
 - `#![forbid(unsafe_code)]` を全 crate に設定する。unsafe は 0 件。
 - zip 展開: 各エントリの正規化後パスが展開先ディレクトリの配下であることを検証する。違反時はタスク全体を `Failed` にし、書き込み済みファイルを削除する。
 - ハッシュ: GitHub asset は `digest` (sha256)、APM は sha384、AviUtl2 索引は XXH3-128 を検証する。APM の `core.json` は URL が `http` のため、sha384 検証を必須とし、不一致は `Failed`。ハッシュを持たない項目は導入前に警告を 1 行表示する。提供しない場合は取得後に計算して `instance.toml` に記録しない (記録先が `files` のみのため)。
-- ダウンロード先ホスト許可リスト (`launcher_core::ALLOWED_HOSTS`、`https` のみ): `github.com`, `api.github.com`, `codeberg.org`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`。リダイレクト先も `ReqwestFetcher` が同じ関数で検証する。`spring-fragrance.mints.ne.jp` (`http`) とカタログ Provider が指定するホストは Phase 5 で追加する。
+- ダウンロード先ホスト許可リスト (`launcher_core::ALLOWED_HOSTS`、`https` のみ): `github.com`, `api.github.com`, `codeberg.org`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `spring-fragrance.mints.ne.jp`。`http` を許すホストは `HTTP_HOSTS` (`spring-fragrance.mints.ne.jp`) のみで、ハッシュなしの `http` ダウンロードは `HashRequired` で拒否する。リダイレクト先も `ReqwestFetcher` が同じ関数で検証する。許可リスト外ホストの項目は `OpenInBrowser`。
 - AviUtl2 本体: セットアップ実行ファイルを使用しない。ポータブル ZIP を `<instance>/app/` へ展開する。インスタンス間でファイル・設定・データを共有しない。
 - 索引の `run` アクション: 実行前に `path` と `args` を表示して確認を取る。`elevate = true` はランチャーでは昇格せず、確認ダイアログに表示する。
 - HTTP: `reqwest` + `rustls`。User-Agent は `MLAYN-Launcher/<version>`。GitHub API は未認証 60 req/h。ETag で条件付き取得し、`config.toml` の任意トークンで上限を引き上げる。
@@ -198,7 +198,7 @@ Wine を使用しない。すべて直接 spawn。
 | 2 | Provider: YMM4 + NeoUtl + Freya NLE (本体取得とカタログ) | `cargo test` で実ネットワークを使わずに、索引のパース規則 (§5.5) と asset 選択規則を検証して成功 |
 | 3 | Installer: ダウンロード、展開、ファイル記録、削除 | 完了。`launcher-core` の `cargo test` 23 件成功 (Installer 15 件: zip-slip は `Failed` かつ書込 0 件、正常 fixture は `files` 全件記録、書込失敗時のロールバック、再導入時の旧ファイル削除、ハッシュ不一致、許可リスト外ホスト、キャッシュ再利用) |
 | 4 | UI: ヘッダー (ダークモード) / Navigation Rail / Main (Group 別カードグリッド、サイドバー: 起動 / フォルダを開く / 削除、ステータスバー) / New Instance (未対応バッジ) / Tasks (バイト進捗) | 完了 (ユーザー判断)。`clippy --all-targets -D warnings` 警告 0 件、`cargo test` 成功 (core 34 件、providers 22 件)。Linux (NeoUtl): 作成は成功 (ZIP 約 114 MB の取得 74 秒、展開 1 秒)。起動は実行権限なしで `Permission denied` となり Phase 6 の範囲。実行権限の付与、バイト進捗、`iced_m3` への UI 置換を追加 (ローカル検証待ち)。Windows 実機での作成・起動、YMM4 / Freya NLE の確認は未実施 |
-| 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | 4 Kind すべてでカタログ表示とプラグイン導入が成功 |
+| 5 | UI: Browse / Plugins / Edit Instance / Settings、Main の複製・右クリックメニュー、Provider: AviUtl2 + AviUtl 無印 | カタログを持つ 3 Kind (YMM4 / AviUtl2 / AviUtl) でカタログ表示とプラグイン導入が成功 (NeoUtl / Freya は索引なし) |
 | 6 | Linux 対応 | Linux 上で NeoUtl と Freya NLE のインスタンスを作成して起動できる |
 | 7 | 配布: GitHub Actions で 2 OS ビルド、リリース成果物生成 | tag push で Windows と Linux の成果物が Release に添付される |
 

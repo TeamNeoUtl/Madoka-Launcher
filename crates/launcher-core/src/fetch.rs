@@ -5,20 +5,30 @@ use url::Url;
 
 use crate::Error;
 
-pub const ALLOWED_HOSTS: [&str; 5] = [
+/// Hosts that `https` downloads may use.
+pub const ALLOWED_HOSTS: [&str; 6] = [
     "github.com",
     "api.github.com",
     "codeberg.org",
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
+    "spring-fragrance.mints.ne.jp",
 ];
 
-/// Accepts `https` URLs whose host is listed in `ALLOWED_HOSTS`.
+/// Hosts that `http` downloads may use. The installer requires a hash for such a download.
+pub const HTTP_HOSTS: [&str; 1] = ["spring-fragrance.mints.ne.jp"];
+
+/// Accepts `https` URLs whose host is listed in `ALLOWED_HOSTS`
+/// and `http` URLs whose host is listed in `HTTP_HOSTS`.
 pub fn is_allowed_url(url: &Url) -> bool {
-    url.scheme() == "https"
-        && url
-            .host_str()
-            .is_some_and(|host| ALLOWED_HOSTS.contains(&host))
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    match url.scheme() {
+        "https" => ALLOWED_HOSTS.contains(&host),
+        "http" => HTTP_HOSTS.contains(&host),
+        _ => false,
+    }
 }
 
 /// Bytes received so far. `total` is `None` when the server does not report a length.

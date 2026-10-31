@@ -1,3 +1,4 @@
+use crate::{Http, HttpError};
 use launcher_core::{AppVersion, Artifact, Hash};
 use serde::Deserialize;
 use url::Url;
@@ -77,6 +78,7 @@ impl Release {
             prerelease,
             published_at,
             artifacts,
+            checks: Vec::new(),
         }))
     }
 }
@@ -94,4 +96,20 @@ pub(crate) fn app_versions_from_json(
 
 pub(crate) fn parse_url(text: &str) -> Result<Url, ProviderError> {
     Url::parse(text).map_err(|_| ProviderError::InvalidUrl(text.to_owned()))
+}
+
+/// Artifacts of the latest release of `owner/repo`. `None` when the repository has no release.
+pub(crate) async fn latest_artifacts<H: Http>(
+    http: &H,
+    owner: &str,
+    repo: &str,
+) -> Result<Option<Vec<Artifact>>, ProviderError> {
+    let url = parse_url(&format!(
+        "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    ))?;
+    match http.get(&url).await {
+        Ok(bytes) => Ok(Some(Release::from_json(&bytes)?.into_artifacts()?)),
+        Err(HttpError::Status { status: 404, .. }) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }

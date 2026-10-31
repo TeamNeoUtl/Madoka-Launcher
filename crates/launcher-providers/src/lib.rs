@@ -1,18 +1,25 @@
+mod aviutl;
+mod aviutl2;
+mod cache;
 mod error;
 mod fetch;
 mod freya;
 mod http;
 mod neoutl;
 mod provider;
+mod recipe;
 mod registry;
 mod release;
 mod ymm4;
 
+pub use aviutl::{AviutlProvider, parse_apm_packages, parse_aviutl_app};
+pub use aviutl2::{Aviutl2Provider, parse_aviutl2_app, parse_aviutl2_catalog};
+pub use cache::{CACHE_TTL, load_any, load_fresh, store as store_catalog};
 pub use error::ProviderError;
 pub use fetch::ReqwestFetcher;
 pub use freya::FreyaProvider;
 pub use http::{Http, HttpError, ReqwestHttp};
 pub use neoutl::NeoutlProvider;
 pub use provider::Provider;
-pub use registry::{AnyProvider, has_provider};
+pub use registry::{AnyProvider, has_catalog, has_provider};
 pub use ymm4::{Ymm4Provider, parse_ymm4_catalog};

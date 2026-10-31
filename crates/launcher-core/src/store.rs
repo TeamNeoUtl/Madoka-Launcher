@@ -87,6 +87,46 @@ impl InstanceStore {
         fs::rename(&temp, &path).map_err(|e| Error::io(&path, e))
     }
 
+    /// Changes the name and the group. The group is removed when `group` is `None`.
+    pub fn update(
+        &self,
+        id: InstanceId,
+        name: String,
+        group: Option<String>,
+    ) -> Result<Instance, Error> {
+        let mut instance = self.load(id)?;
+        instance.config.name = name;
+        instance.config.group = group;
+        self.save(&instance)?;
+        Ok(instance)
+    }
+
+    /// Copies the instance directory, except the launch log, under a new id and name.
+    pub fn duplicate(&self, id: InstanceId, name: String) -> Result<Instance, Error> {
+        let source = self.load(id)?;
+        let mut config = source.config.clone();
+        config.id = InstanceId::generate();
+        config.name = name;
+        config.created_at = OffsetDateTime::now_utc();
+        config.validate()?;
+        let instance = Instance {
+            dir: self.dir_of(config.id),
+            config,
+        };
+        let copied = copy_dir(&source.dir, &instance.dir).and_then(|()| self.save(&instance));
+        if let Err(error) = copied {
+            let _ = fs::remove_dir_all(&instance.dir);
+            return Err(error);
+        }
+        info!(
+            from = %id,
+            id = %instance.config.id,
+            dir = %instance.dir.display(),
+            "instance duplicated"
+        );
+        Ok(instance)
+    }
+
     pub fn delete(&self, id: InstanceId) -> Result<(), Error> {
         let dir = self.dir_of(id);
         if !dir.is_dir() {
@@ -146,4 +186,30 @@ impl InstanceStore {
         config.validate()?;
         Ok(Instance { dir, config })
     }
+}
+
+const SKIPPED_ON_COPY: [&str; 2] = ["launch.log", "instance.toml.tmp"];
+
+/// Copies files and directories. Symbolic links are left out.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), Error> {
+    fs::create_dir_all(to).map_err(|e| Error::io(to, e))?;
+    for entry in fs::read_dir(from).map_err(|e| Error::io(from, e))? {
+        let entry = entry.map_err(|e| Error::io(from, e))?;
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .is_some_and(|name| SKIPPED_ON_COPY.contains(&name))
+        {
+            continue;
+        }
+        let source = entry.path();
+        let target = to.join(&name);
+        let file_type = entry.file_type().map_err(|e| Error::io(&source, e))?;
+        if file_type.is_dir() {
+            copy_dir(&source, &target)?;
+        } else if file_type.is_file() {
+            fs::copy(&source, &target).map_err(|e| Error::io(&target, e))?;
+        }
+    }
+    Ok(())
 }

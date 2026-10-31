@@ -36,6 +36,14 @@ pub enum Error {
         expected: String,
         actual: String,
     },
+    #[error("download from {0} requires a hash")]
+    HashRequired(String),
+    #[error("{0} exists already")]
+    AlreadyExists(PathBuf),
+    #[error("archive has no entry for {0}")]
+    EntryNotFound(String),
+    #[error("archive has several entries for {0}")]
+    EntryAmbiguous(String),
     #[error("fetch failed for {url}: {message}")]
     Fetch { url: String, message: String },
     #[error("zip error at {path}: {message}")]

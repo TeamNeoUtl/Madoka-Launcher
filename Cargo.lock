@@ -2003,12 +2003,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
 name = "launcher-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "directories",
  "serde",
  "sha2",
@@ -2020,6 +2022,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "xxhash-rust",
  "zip",
 ]
 
@@ -2028,6 +2031,7 @@ name = "launcher-providers"
 version = "0.1.0"
 dependencies = [
  "launcher-core",
+ "percent-encoding",
  "regex",
  "reqwest",
  "serde",
@@ -4516,6 +4520,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -5426,6 +5431,12 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yazi"

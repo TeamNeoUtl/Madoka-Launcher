@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use iced::alignment::Vertical;
-use iced::widget::{column, row, scrollable, text};
+use iced::widget::{column, mouse_area, row, scrollable, text};
 use iced::{Element, Length};
 use iced_m3::theme::{Accent, Theme};
 use iced_m3::widget::{self as m3, OnPress, button, card};
@@ -25,6 +25,10 @@ pub enum Message {
     Refresh,
     Launch,
     OpenFolder,
+    Edit,
+    Duplicate,
+    ContextOpen(InstanceId),
+    ContextClose,
     Delete,
     ConfirmDelete,
     CancelDelete,
@@ -35,6 +39,7 @@ pub struct Props<'a> {
     pub instances: &'a [Instance],
     pub selected: Option<InstanceId>,
     pub pending_delete: Option<InstanceId>,
+    pub context: Option<InstanceId>,
     pub notice: Option<&'a str>,
     pub tasks: &'a [TaskInfo],
 }
@@ -67,7 +72,7 @@ pub fn view(props: &Props<'_>) -> Ui {
     });
     let confirming = props.pending_delete.is_some() && props.pending_delete == props.selected;
     let body = row![
-        scrollable(grid(theme, props.instances, props.selected))
+        scrollable(grid(theme, props.instances, props.selected, props.context))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::scroll(*theme)),
@@ -91,7 +96,12 @@ pub fn view(props: &Props<'_>) -> Ui {
         .into()
 }
 
-fn grid(theme: &Theme, instances: &[Instance], selected: Option<InstanceId>) -> Ui {
+fn grid(
+    theme: &Theme,
+    instances: &[Instance],
+    selected: Option<InstanceId>,
+    context: Option<InstanceId>,
+) -> Ui {
     if instances.is_empty() {
         return m3::card(
             card::Style::filled(theme),
@@ -110,21 +120,40 @@ fn grid(theme: &Theme, instances: &[Instance], selected: Option<InstanceId>) -> 
     }
     let mut sections: Vec<Ui> = named
         .into_iter()
-        .map(|(name, list)| section(theme, name, &list, selected))
+        .map(|(name, list)| section(theme, name, &list, selected, context))
         .collect();
     if !ungrouped.is_empty() {
-        sections.push(section(theme, strings::UNGROUPED, &ungrouped, selected));
+        sections.push(section(
+            theme,
+            strings::UNGROUPED,
+            &ungrouped,
+            selected,
+            context,
+        ));
     }
     column(sections).spacing(style::GAP).into()
 }
 
-fn section(theme: &Theme, title: &str, list: &[&Instance], selected: Option<InstanceId>) -> Ui {
+fn section(
+    theme: &Theme,
+    title: &str,
+    list: &[&Instance],
+    selected: Option<InstanceId>,
+    context: Option<InstanceId>,
+) -> Ui {
     let rows: Vec<Ui> = list
         .chunks(COLUMNS)
         .map(|chunk| {
             let tiles: Vec<Ui> = chunk
                 .iter()
-                .map(|instance| tile(theme, instance, selected == Some(instance.config.id)))
+                .map(|instance| {
+                    let id = instance.config.id;
+                    if context == Some(id) {
+                        context_menu(theme)
+                    } else {
+                        tile(theme, instance, selected == Some(id))
+                    }
+                })
                 .collect();
             row(tiles).spacing(style::GAP).into()
         })
@@ -154,10 +183,52 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
         text(config.app_version.clone()).size(12).color(color),
     ]
     .spacing(6);
-    m3::card(style::tile_card(theme, selected), content)
+    let tile = m3::card(style::tile_card(theme, selected), content)
         .interaction(card::Interaction::Press(OnPress::Direct(Message::Select(
             config.id,
         ))))
+        .padding(TILE_PADDING.into())
+        .width(Length::Fixed(TILE_WIDTH));
+    mouse_area(tile)
+        .on_right_press(Message::ContextOpen(config.id))
+        .into()
+}
+
+/// Replaces the tile of the selected instance. The entries act on the selected instance.
+fn context_menu(theme: &Theme) -> Ui {
+    let entries: Vec<Ui> = vec![
+        action(
+            strings::LAUNCH,
+            button::Style::tonal(theme, Accent::Primary),
+            Message::Launch,
+        ),
+        action(
+            strings::EDIT,
+            button::Style::tonal(theme, Accent::Primary),
+            Message::Edit,
+        ),
+        action(
+            strings::OPEN_FOLDER,
+            button::Style::tonal(theme, Accent::Primary),
+            Message::OpenFolder,
+        ),
+        action(
+            strings::DUPLICATE,
+            button::Style::tonal(theme, Accent::Primary),
+            Message::Duplicate,
+        ),
+        action(
+            strings::DELETE,
+            style::danger_button(theme),
+            Message::Delete,
+        ),
+        action(
+            strings::CLOSE,
+            button::Style::tonal(theme, Accent::Primary),
+            Message::ContextClose,
+        ),
+    ];
+    m3::card(card::Style::filled(theme), column(entries).spacing(4))
         .padding(TILE_PADDING.into())
         .width(Length::Fixed(TILE_WIDTH))
         .into()
@@ -224,6 +295,16 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
                 strings::LAUNCH,
                 button::Style::filled(theme, Accent::Primary),
                 Message::Launch,
+            ),
+            action(
+                strings::EDIT,
+                button::Style::tonal(theme, Accent::Primary),
+                Message::Edit,
+            ),
+            action(
+                strings::DUPLICATE,
+                button::Style::tonal(theme, Accent::Primary),
+                Message::Duplicate,
             ),
             action(
                 strings::OPEN_FOLDER,

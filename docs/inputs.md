@@ -294,7 +294,7 @@ Action = download | extract | extract_sfx | copy{from,to} | delete{path} | run{p
 `ReleaseData { version, integrity: { archive, file: [{ target, hash }] } }`。`integrity` は全 783 件が `sha384-<base64>`。
 
 - `filename`: インストール先 (`aviutl.exe` のあるフォルダ) からの相対パス。
-- `archivePath`: アーカイブ内の相対パス。2 例 (`SigColorFastAviUtl.auf` + `SigColorFastAviUtl/`、`plugins/SortEffect.auf` + `plugins/`) が単一の解釈で整合しない。未確認。
+- `archivePath`: アーカイブ内の相対パス。2 例 (`SigColorFastAviUtl.auf` + `SigColorFastAviUtl/`、`plugins/SortEffect.auf` + `plugins/`) は「アーカイブ内ディレクトリ + `filename` の最終要素」の解釈で整合する。`check-update.ts` の断片 (`resolve(unzippedPath, targetFileArchivePath, ...)`) とも矛盾しない。暫定採用 (`Step::Place`)。不在時は末尾一致、最終要素一致の順に探索する。
 - ダウンロードの直接 URL を持つ項目は `directURL` のみ (2 件)。
 - 285 件中 71 件は `releases` を持たず、ハッシュ検証ができない。
 
@@ -457,3 +457,14 @@ macOS: ランチャーの対象外 (README: Windows 11 と Linux)。
 | 7 | APM 生成物 (`v3/*.json`) の実体 | Phase 2 で `cdn.jsdelivr.net` から取得 | 5 |
 | 8 | APM の GitHub パッケージ 78 件のうち `archive-name-pattern.json` に一致しない件数 | Phase 5 で全件走査 | 5 |
 | 9 | 実行ファイル名と展開後の階層。実装の探索対象: YMM4 `YukkuriMovieMaker.exe`、NeoUtl `NeoUtl` / `NeoUtl.exe`、Freya NLE `freya-nle` `freya` `aviqtl` (候補。確認なし)。探索深さ 2 | Phase 4 のローカル検証で ZIP の実物を確認し、`Kind::executable_stems` を確定 | 4 |
+
+## 6. Phase 5 で確認した事項
+
+| 項目 | 内容 | 区分 |
+|---|---|---|
+| AviUtl2 ポータブル | `aviutl2.exe` の隣に `data` フォルダがあるとき、そこを設定領域とする。`aviutl2-cli` の `find_aviutl2_data_dir` も同じ | 確認済 |
+| AviUtl2 ZIP | 公式サイトの `aviutl2_v<version>.zip`。setup と同じディレクトリ。`index.json` の本体エントリの `direct` URL の末尾を差し替えて導出 | 推定 (URL 形式は配布ページの記述から) |
+| AviUtl2 本体のハッシュ | `version[].file[]` の `aviutl2.exe` の XXH3-128 を ZIP 展開後に照合。setup 内の exe と ZIP 内の exe が同一である前提 | 未確認 |
+| `copy` の `to` | 常にディレクトリ (`aviutl2-cli` の実装)。`from` がディレクトリのとき内容のマージとして扱う | 確認済 / 推定 |
+| APM の件数 | `list.json` の `packages[]` は開発者ごとのファイル (約 48) | 確認済 |
+| zip のエントリ名 | UTF-8 でない名前 (CP932) の zip は展開に失敗する | 既知の制約 |

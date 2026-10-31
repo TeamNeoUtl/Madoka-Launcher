@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -5,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, info, warn};
+use url::Url;
 
 use crate::{Error, Host, Instance, Kind};
 
@@ -171,15 +173,28 @@ fn ensure_executable(_path: &Path) -> Result<(), Error> {
 
 /// Opens `dir` in the file manager of `host`.
 pub fn open_directory(dir: &Path, host: Host) -> Result<(), Error> {
+    debug!(dir = %dir.display(), "open directory");
+    open_with_shell(dir.as_os_str(), host, dir)
+}
+
+/// Opens an `http` or `https` URL in the default browser of `host`.
+pub fn open_url(url: &Url, host: Host) -> Result<(), Error> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(Error::UnsafePath(url.to_string()));
+    }
+    debug!(%url, "open url");
+    open_with_shell(OsStr::new(url.as_str()), host, Path::new(url.as_str()))
+}
+
+fn open_with_shell(target: &OsStr, host: Host, error_path: &Path) -> Result<(), Error> {
     let program = match host {
         Host::Windows => "explorer",
         Host::Linux => "xdg-open",
     };
-    debug!(program, dir = %dir.display(), "open directory");
     let child = Command::new(program)
-        .arg(dir)
+        .arg(target)
         .spawn()
-        .map_err(|e| Error::io(dir, e))?;
+        .map_err(|e| Error::io(error_path, e))?;
     reap(child);
     Ok(())
 }
