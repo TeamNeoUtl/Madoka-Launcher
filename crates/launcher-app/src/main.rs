@@ -34,6 +34,7 @@ fn main() -> ExitCode {
     let result = iced::application(move || App::new(services.clone()), App::update, App::view)
         .title(strings::APP_TITLE)
         .font(style::ICON_FONT_BYTES)
+        .default_font(style::UI_FONT)
         .theme(App::theme)
         .subscription(App::subscription)
         .run();

@@ -4,7 +4,7 @@ use iced::alignment::Vertical;
 use iced::widget::{column, mouse_area, row, scrollable, text};
 use iced::{Element, Length};
 use iced_m3::theme::{Accent, Theme};
-use iced_m3::widget::{self as m3, OnPress, button, card};
+use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{Instance, InstanceId, Kind, TaskInfo};
 
 use super::tasks::detail_label;
@@ -184,10 +184,10 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
     ]
     .spacing(6);
     let tile = m3::card(style::tile_card(theme, selected), content)
-        .interaction(card::Interaction::Press(OnPress::Direct(Message::Select(
+        .interaction(card::Interaction::Press(Action::Direct(Message::Select(
             config.id,
         ))))
-        .padding(TILE_PADDING.into())
+        .padding(TILE_PADDING)
         .width(Length::Fixed(TILE_WIDTH));
     mouse_area(tile)
         .on_right_press(Message::ContextOpen(config.id))
@@ -229,7 +229,7 @@ fn context_menu(theme: &Theme) -> Ui {
         ),
     ];
     m3::card(card::Style::filled(theme), column(entries).spacing(4))
-        .padding(TILE_PADDING.into())
+        .padding(TILE_PADDING)
         .width(Length::Fixed(TILE_WIDTH))
         .into()
 }

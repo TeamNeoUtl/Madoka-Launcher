@@ -3,7 +3,7 @@ use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Padding};
 use iced_m3::theme::{Accent, Theme};
 use iced_m3::widget::text_input::TextInput;
-use iced_m3::widget::{self as m3, OnPress, button, card};
+use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{InstallPlan, Instance, InstanceId, Kind, Package, PackageSource};
 use launcher_providers::has_catalog;
 
@@ -198,7 +198,7 @@ fn tab_entry<'a>(
         style::tile_card(theme, selected),
         text(label).color(style::tile_content(theme, selected)),
     )
-    .interaction(card::Interaction::Press(OnPress::Direct(
+    .interaction(card::Interaction::Press(Action::Direct(
         Message::TabSelected(tab),
     )))
     .padding(Padding::from(ENTRY_PADDING))
@@ -367,7 +367,7 @@ fn category_bar<'a>(
                 .size(13)
                 .color(style::tile_content(theme, selected)),
         )
-        .interaction(card::Interaction::Press(OnPress::Direct(
+        .interaction(card::Interaction::Press(Action::Direct(
             Message::CategorySelected(value),
         )))
         .padding(Padding::from([4.0, 12.0]))

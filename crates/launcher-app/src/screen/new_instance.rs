@@ -6,7 +6,7 @@ use iced::{Element, Length, Padding};
 use iced_m3::theme::{Accent, Theme};
 use iced_m3::widget::button_group::connected;
 use iced_m3::widget::text_input::TextInput;
-use iced_m3::widget::{self as m3, OnPress, button, card};
+use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{AppVersion, Edition, Host, Kind};
 use launcher_providers::has_provider;
 
@@ -251,7 +251,7 @@ fn kind_entry<'a>(theme: &Theme, kind: Kind, current: Kind, host: Host) -> Eleme
     let label = strings::kind_label(kind);
     let (interaction, badge) = match availability(kind, host) {
         Availability::Available => (
-            card::Interaction::Press(OnPress::Direct(Message::KindSelected(kind))),
+            card::Interaction::Press(Action::Direct(Message::KindSelected(kind))),
             None,
         ),
         Availability::UnsupportedHost => (
@@ -322,7 +322,7 @@ fn version_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
                     style::label(theme, choice.to_string())
                         .color(style::tile_content(theme, selected)),
                 )
-                .interaction(card::Interaction::Press(OnPress::Direct(
+                .interaction(card::Interaction::Press(Action::Direct(
                     Message::VersionSelected(choice.clone()),
                 )))
                 .padding(Padding::from(ENTRY_PADDING))
