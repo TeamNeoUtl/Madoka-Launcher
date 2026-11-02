@@ -21,6 +21,7 @@ const ICON_INSTANCES: &str = "\u{e5c3}";
 const ICON_NEW: &str = "\u{e145}";
 const ICON_TASKS: &str = "\u{e6b1}";
 const ICON_SETTINGS: &str = "\u{e8b8}";
+const RAIL_VERTICAL_PADDING: f32 = 16.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -282,7 +283,7 @@ impl App {
         ];
         let rail = m3::navrail(navrail::Style::new(&self.theme), items)
             .item_alignment(navrail::ItemAlignment::Top)
-            .container_vertical_padding(0.0)
+            .container_vertical_padding(RAIL_VERTICAL_PADDING)
             .active(self.screen.rail_index());
         container(rail)
             .height(Length::Fill)
