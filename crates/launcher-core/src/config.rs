@@ -16,6 +16,9 @@ pub struct Config {
     /// Name of an `iced::Theme`, as printed by its `Display` implementation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// Family name of the UI font. `None` selects the iced default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
 }
 
 impl Config {

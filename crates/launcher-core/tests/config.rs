@@ -30,6 +30,7 @@ fn save_then_load_returns_the_same_value() {
     let config = Config {
         github_token: Some("abc".to_owned()),
         theme: Some("Tokyo Night".to_owned()),
+        font: Some("Noto Sans".to_owned()),
     };
     config.save(dir.path()).unwrap();
     assert_eq!(Config::load(dir.path()).unwrap(), config);

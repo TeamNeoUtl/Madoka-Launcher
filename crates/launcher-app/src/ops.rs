@@ -62,6 +62,7 @@ pub struct Services {
     pub board: TaskBoard,
     root: PathBuf,
     theme: Option<String>,
+    font: Option<String>,
     token: Option<String>,
     user_agent: Arc<str>,
     store: InstanceStore,
@@ -77,6 +78,7 @@ impl Services {
         let token = config.github_token.filter(|token| !token.trim().is_empty());
         let config_has_token = token.is_some();
         let theme = config.theme;
+        let font = config.font;
         let http = ReqwestHttp::new(&user_agent, token.clone()).map_err(ProviderError::from)?;
         let fetcher = ReqwestFetcher::new(&user_agent)?;
         info!(
@@ -89,6 +91,7 @@ impl Services {
             host: Host::current(),
             board: TaskBoard::default(),
             theme,
+            font,
             token,
             user_agent: user_agent.into(),
             store: InstanceStore::new(&root),
@@ -118,6 +121,22 @@ impl Services {
     /// Name of the theme stored in `config.toml`.
     pub fn theme_name(&self) -> Option<&str> {
         self.theme.as_deref()
+    }
+
+    /// Family name of the font stored in `config.toml`.
+    pub fn font_name(&self) -> Option<&str> {
+        self.font.as_deref()
+    }
+
+    /// Writes the font family to `config.toml`. It applies at the next start.
+    pub async fn save_font(self, name: Option<String>) -> Result<(), OpError> {
+        let root = self.root.clone();
+        blocking(move || {
+            let mut config = Config::load(&root)?;
+            config.font = name;
+            config.save(&root)
+        })
+        .await
     }
 
     pub async fn save_theme(self, name: String) -> Result<(), OpError> {
@@ -445,6 +464,23 @@ fn log_outcome<T>(task: &str, result: &Result<T, OpError>) {
         Ok(_) => info!(task, "task succeeded"),
         Err(error) => error!(task, %error, "task failed"),
     }
+}
+
+/// Sorted family names of the fonts installed on the OS.
+pub async fn installed_fonts() -> Result<Vec<String>, OpError> {
+    tokio::task::spawn_blocking(|| {
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        let mut families: Vec<String> = database
+            .faces()
+            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+            .collect();
+        families.sort();
+        families.dedup();
+        families
+    })
+    .await
+    .map_err(|error| OpError::Worker(error.to_string()))
 }
 
 async fn blocking<T, F>(work: F) -> Result<T, OpError>

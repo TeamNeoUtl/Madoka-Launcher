@@ -8,14 +8,13 @@ use launcher_core::Kind;
 
 pub const GAP: f32 = 12.0;
 pub const PADDING: f32 = 16.0;
-/// Japanese glyph set of each OS. Family::SansSerif resolves to a Simplified Chinese face on some systems.
-#[cfg(target_os = "windows")]
-const UI_FAMILY: &str = "Yu Gothic UI";
-#[cfg(target_os = "macos")]
-const UI_FAMILY: &str = "Hiragino Sans";
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const UI_FAMILY: &str = "Noto Sans CJK JP";
-pub const UI_FONT: Font = Font::with_name(UI_FAMILY);
+/// Font of the family `name`, or the iced default.
+/// The name is leaked once per process: `Font` holds `&'static str` and the app sets one font at start.
+pub fn font_of(name: Option<&str>) -> Font {
+    name.map_or(Font::DEFAULT, |name| {
+        Font::with_name(Box::leak(name.to_owned().into_boxed_str()))
+    })
+}
 pub const ICON_FONT: Font = Font::with_name("Material Symbols Rounded");
 pub const ICON_FONT_BYTES: &[u8] =
     include_bytes!("../assets/fonts/MaterialSymbolsRounded-Regular.ttf");

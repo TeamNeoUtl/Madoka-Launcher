@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use iced::widget::{column, container, row};
-use iced::{Alignment, Element, Length, Subscription, Task};
+use iced::{Element, Length, Subscription, Task};
 use iced_m3::theme::{Mode, Theme};
 use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
-use iced_m3::widget::{self as m3, Badge, navrail, switch};
+use iced_m3::widget::{self as m3, Badge, navrail};
 use launcher_core::{
     AppSelection, AppVersion, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo,
 };
@@ -21,7 +21,6 @@ const ICON_INSTANCES: &str = "\u{e5c3}";
 const ICON_NEW: &str = "\u{e145}";
 const ICON_TASKS: &str = "\u{e6b1}";
 const ICON_SETTINGS: &str = "\u{e8b8}";
-const HEADER_PADDING: [f32; 2] = [8.0, 16.0];
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -32,6 +31,7 @@ pub enum Message {
     TabSelected(Screen),
     ThemeToggled,
     Saved(Result<(), String>),
+    FontsLoaded(Result<Vec<String>, String>),
     Loaded(Result<Loaded, String>),
     VersionsLoaded(Kind, Result<Vec<AppVersion>, String>),
     CatalogLoaded(InstanceId, Result<Vec<Package>, String>),
@@ -84,6 +84,8 @@ impl App {
         let form = new_instance::Form::new(services.host);
         let settings = settings::Form {
             token: services.token().unwrap_or_default().to_owned(),
+            font: services.font_name().map(str::to_owned),
+            fonts: Vec::new(),
         };
         let app = Self {
             services,
@@ -98,7 +100,12 @@ impl App {
             edit: None,
             settings,
         };
-        let load = app.reload();
+        let load = Task::batch([
+            app.reload(),
+            Task::perform(crate::ops::installed_fonts(), |result| {
+                Message::FontsLoaded(result.map_err(|error| error.to_string()))
+            }),
+        ]);
         (app, load)
     }
 
@@ -122,6 +129,13 @@ impl App {
                 Task::perform(self.services.clone().save_theme(name), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
+            }
+            Message::FontsLoaded(result) => {
+                match result {
+                    Ok(fonts) => self.settings.fonts = fonts,
+                    Err(reason) => self.notice = Some(reason),
+                }
+                Task::none()
             }
             Message::Saved(result) => {
                 if let Err(reason) = result {
@@ -206,7 +220,7 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
         let body = row![self.rail(&board), content].height(Length::Fill);
-        container(column![self.header(), body])
+        container(body)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::page(&self.theme))
@@ -253,22 +267,6 @@ impl App {
         }
     }
 
-    fn header(&self) -> Element<'_, Message> {
-        container(
-            row![
-                style::label(&self.theme, strings::APP_TITLE)
-                    .size(20)
-                    .width(Length::Fill),
-                style::label(&self.theme, strings::DARK_MODE),
-                switch(&self.theme, self.theme.mode == Mode::Dark).on_toggle(Message::ThemeToggled),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .padding(HEADER_PADDING)
-        .into()
-    }
-
     fn rail(&self, board: &[TaskInfo]) -> Element<'_, Message> {
         let active = board.iter().filter(|task| task.state.is_active()).count();
         let items = vec![
@@ -282,8 +280,10 @@ impl App {
             ),
             nav_item(ICON_SETTINGS, strings::TAB_SETTINGS, None, Screen::Settings),
         ];
-        let rail =
-            m3::navrail(navrail::Style::new(&self.theme), items).active(self.screen.rail_index());
+        let rail = m3::navrail(navrail::Style::new(&self.theme), items)
+            .item_alignment(navrail::ItemAlignment::Top)
+            .container_vertical_padding(0.0)
+            .active(self.screen.rail_index());
         container(rail)
             .height(Length::Fill)
             .style(style::rail_background(&self.theme))
@@ -555,6 +555,14 @@ impl App {
                     .save_token(self.settings.token.clone()),
                 |result| Message::Saved(result.map_err(|error| error.to_string())),
             ),
+            M::ThemeToggled => self.update(Message::ThemeToggled),
+            M::FontSelected(name) => {
+                self.settings.font.clone_from(&name);
+                self.notice = Some(strings::FONT_RESTART.to_owned());
+                Task::perform(self.services.clone().save_font(name), |result| {
+                    Message::Saved(result.map_err(|error| error.to_string()))
+                })
+            }
             M::OpenDataDirectory => {
                 let dir = self.services.root().to_path_buf();
                 Task::perform(self.services.clone().open_folder(dir), |result| {

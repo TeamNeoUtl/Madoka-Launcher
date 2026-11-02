@@ -31,10 +31,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let font = style::font_of(services.font_name());
     let result = iced::application(move || App::new(services.clone()), App::update, App::view)
         .title(strings::APP_TITLE)
         .font(style::ICON_FONT_BYTES)
-        .default_font(style::UI_FONT)
+        .default_font(font)
         .theme(App::theme)
         .subscription(App::subscription)
         .run();
