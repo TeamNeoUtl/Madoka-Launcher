@@ -1,0 +1,21 @@
+[package]
+name = "launcher-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Embedded browser window of Motoyori Launcher."
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "Motoyori-Browser"
+path = "src/main.rs"
+
+[dependencies]
+tao = "0.37"
+wry = "0.57"

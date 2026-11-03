@@ -25,7 +25,7 @@ pub struct Ymm4Provider<H> {
 }
 
 impl<H: Http> Ymm4Provider<H> {
-    pub fn new(http: H) -> Self {
+    pub const fn new(http: H) -> Self {
         Self { http }
     }
 }
@@ -53,7 +53,7 @@ struct RawEntry {
     is_enabled: bool,
 }
 
-fn enabled_by_default() -> bool {
+const fn enabled_by_default() -> bool {
     true
 }
 
@@ -72,6 +72,10 @@ fn shape_changed(message: impl Into<String>) -> ProviderError {
     ProviderError::CatalogShapeChanged(message.into())
 }
 
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected YAML,
+/// holds no entry, or an entry has an invalid URL.
 pub fn parse_ymm4_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
     let entries: Vec<RawEntry> =
         serde_yaml_ng::from_slice(bytes).map_err(|e| shape_changed(e.to_string()))?;

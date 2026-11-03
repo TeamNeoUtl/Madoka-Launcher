@@ -5,7 +5,7 @@ use url::Url;
 const FALLBACK_NAME: &str = "download";
 
 /// Artifact for a URL that names the file in its last path segment.
-pub(crate) fn direct_artifact(url: &Url) -> Artifact {
+pub fn direct_artifact(url: &Url) -> Artifact {
     let segment = url
         .path_segments()
         .and_then(|mut segments| segments.next_back())
@@ -26,7 +26,7 @@ pub(crate) fn direct_artifact(url: &Url) -> Artifact {
 
 /// Builds the plan of `recipe` for the resolved `artifact`.
 /// The browser opens instead when the host is not allowed or an `http` URL has no hash.
-pub(crate) fn finish(package: &Package, recipe: &Recipe, mut artifact: Artifact) -> InstallPlan {
+pub fn finish(package: &Package, recipe: &Recipe, mut artifact: Artifact) -> InstallPlan {
     artifact.hash = recipe.hash.clone().or(artifact.hash);
     let plain_http_without_hash = artifact.url.scheme() == "http" && artifact.hash.is_none();
     if !is_allowed_url(&artifact.url) || plain_http_without_hash {

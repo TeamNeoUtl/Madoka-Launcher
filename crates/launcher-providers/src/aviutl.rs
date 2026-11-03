@@ -135,7 +135,7 @@ fn release_of<'a>(releases: &'a [RawRelease], version: &str) -> Option<&'a RawRe
     releases.iter().find(|release| release.version == version)
 }
 
-/// Archive of the latest version of AviUtl or the extended editing plugin.
+/// Archive of the latest version of `AviUtl` or the extended editing plugin.
 fn program_artifact(program: &RawProgram) -> Result<(Artifact, Vec<FileCheck>), ProviderError> {
     let release = release_of(&program.releases, &program.latest_version)
         .ok_or_else(|| shape_changed("latest release is missing"))?;
@@ -152,7 +152,12 @@ fn program_artifact(program: &RawProgram) -> Result<(Artifact, Vec<FileCheck>), 
     Ok((artifact, checks_of(Some(release))))
 }
 
-/// AviUtl and the extended editing plugin of their latest versions form one app version.
+/// `AviUtl` and the extended editing plugin of their latest versions form one app version.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected JSON document
+/// or a release lacks a required field, and `ProviderError::InvalidUrl` for an invalid URL.
 pub fn parse_aviutl_app(bytes: &[u8]) -> Result<AppVersion, ProviderError> {
     let core: RawCore = serde_json::from_slice(bytes).map_err(|e| shape_changed(e.to_string()))?;
     let (aviutl, mut checks) = program_artifact(&core.aviutl)?;
@@ -184,18 +189,17 @@ fn github_release_repo(text: &str) -> Option<(String, String)> {
 }
 
 fn recipe(package: &RawPackage) -> Option<Recipe> {
-    let origin = match &package.direct_url {
-        Some(url) => Origin::Direct(Url::parse(url).ok()?),
-        None => {
-            let (owner, repo) = package
-                .download_urls
-                .iter()
-                .find_map(|url| github_release_repo(url))?;
-            Origin::GithubRelease {
-                owner,
-                repo,
-                pattern: None,
-            }
+    let origin = if let Some(url) = &package.direct_url {
+        Origin::Direct(Url::parse(url).ok()?)
+    } else {
+        let (owner, repo) = package
+            .download_urls
+            .iter()
+            .find_map(|url| github_release_repo(url))?;
+        Origin::GithubRelease {
+            owner,
+            repo,
+            pattern: None,
         }
     };
     let release = release_of(&package.releases, &package.latest_version);
@@ -226,6 +230,11 @@ fn recipe(package: &RawPackage) -> Option<Recipe> {
 }
 
 /// Packages of one developer file. Hidden packages are left out.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected JSON document
+/// or an entry lacks a required field, and `ProviderError::InvalidUrl` for an invalid URL.
 pub fn parse_apm_packages(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
     let raw: RawPackages =
         serde_json::from_slice(bytes).map_err(|e| shape_changed(e.to_string()))?;
@@ -259,7 +268,7 @@ pub struct AviutlProvider<H> {
 }
 
 impl<H: Http> AviutlProvider<H> {
-    pub fn new(http: H) -> Self {
+    pub const fn new(http: H) -> Self {
         Self { http }
     }
 

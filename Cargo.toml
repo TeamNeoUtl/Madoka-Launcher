@@ -4,12 +4,17 @@ members = [
     "crates/launcher-core",
     "crates/launcher-providers",
     "crates/launcher-app",
+    "crates/launcher-browser",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
+repository = "https://github.com/motoyori/launcher"
+readme = "README.md"
+keywords = ["aviutl", "ymm4", "launcher", "video-editing", "plugin-manager"]
+categories = ["multimedia::video", "development-tools"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

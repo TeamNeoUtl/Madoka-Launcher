@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -19,10 +20,18 @@ pub struct Config {
     /// Family name of the UI font. `None` selects the iced default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font: Option<String>,
+    /// DNS servers of the launcher requests. Empty selects the built-in default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dns: Vec<IpAddr>,
 }
 
 impl Config {
     /// Returns the default value when `<root>/config.toml` does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Io` when the file exists and cannot be read,
+    /// and `Error::Parse` when its content is not a valid `Config`.
     pub fn load(root: &Path) -> Result<Self, Error> {
         let path = root.join(CONFIG_FILE);
         let text = match fs::read_to_string(&path) {
@@ -34,6 +43,11 @@ impl Config {
     }
 
     /// Writes `<root>/config.toml` through a temporary file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Serialize` when the value cannot be encoded,
+    /// and `Error::Io` when the directory, the temporary file, or the rename fails.
     pub fn save(&self, root: &Path) -> Result<(), Error> {
         let text = toml::to_string_pretty(self)?;
         fs::create_dir_all(root).map_err(|e| Error::io(root, e))?;

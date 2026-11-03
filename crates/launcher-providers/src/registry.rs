@@ -6,6 +6,7 @@ use crate::{
 };
 
 /// Kinds for which `AnyProvider::for_kind` returns a provider.
+#[must_use]
 pub const fn has_provider(kind: Kind) -> bool {
     matches!(
         kind,
@@ -14,6 +15,7 @@ pub const fn has_provider(kind: Kind) -> bool {
 }
 
 /// Kinds whose `Provider::catalog` returns packages.
+#[must_use]
 pub const fn has_catalog(kind: Kind) -> bool {
     matches!(kind, Kind::Aviutl | Kind::Aviutl2 | Kind::Ymm4)
 }
@@ -28,7 +30,11 @@ pub enum AnyProvider<H> {
 }
 
 impl<H: Http> AnyProvider<H> {
-    pub fn for_kind(kind: Kind, http: H) -> Result<Self, ProviderError> {
+    /// # Errors
+    ///
+    /// Returns `ProviderError::NoProvider` when `kind` has no provider.
+    /// Every current `Kind` has one.
+    pub const fn for_kind(kind: Kind, http: H) -> Result<Self, ProviderError> {
         match kind {
             Kind::Aviutl => Ok(Self::Aviutl(AviutlProvider::new(http))),
             Kind::Aviutl2 => Ok(Self::Aviutl2(Aviutl2Provider::new(http))),

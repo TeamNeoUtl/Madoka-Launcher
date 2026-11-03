@@ -1,15 +1,19 @@
-use std::path::PathBuf;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use launcher_core::{
-    AppSelection, AppVersion, Config, Edition, Error, Host, InstallPlan, Installer, Instance,
-    InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW, Package,
-    TaskBoard, TaskHandle, open_directory, open_url,
+    AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
+    Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
+    Package, TaskBoard, TaskHandle, open_directory,
 };
 use launcher_providers::{
-    AnyProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any, load_fresh,
+    AnyProvider, Dns, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any, load_fresh,
     store_catalog,
 };
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -17,6 +21,16 @@ const CREATE_STEPS: u16 = 2;
 const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
 const WRITE_STEPS: u16 = 1;
+const BROWSER_EXE: &str = if cfg!(windows) {
+    "Motoyori-Browser.exe"
+} else {
+    "Motoyori-Browser"
+};
+const BROWSER_DOWNLOAD_PREFIX: &str = "download ";
+const BROWSED_DIR: &str = "downloads";
+const PART_SUFFIX: &str = ".part";
+const DEFAULT_FILE_NAME: &str = "download";
+const FORBIDDEN_FILE_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpError {
@@ -55,6 +69,41 @@ pub struct CreateRequest {
     pub version: AppVersion,
 }
 
+/// A download that started in the browser window.
+#[derive(Debug, Clone)]
+pub struct Browsed {
+    pub url: Url,
+    pub name: Option<String>,
+}
+
+impl Browsed {
+    /// File name that the browser reported, else the last segment of the URL path, else `download`.
+    fn file_name(&self) -> String {
+        let from_url = || {
+            let segment = self.url.path_segments()?.next_back()?;
+            Some(
+                percent_encoding::percent_decode_str(segment)
+                    .decode_utf8_lossy()
+                    .into_owned(),
+            )
+        };
+        let raw = self.name.clone().or_else(from_url).unwrap_or_default();
+        let name: String = Path::new(&raw)
+            .file_name()
+            .map(|name| name.to_string_lossy().replace(FORBIDDEN_FILE_CHARS, "_"))
+            .unwrap_or_default();
+        if name.is_empty() || name == ".." {
+            DEFAULT_FILE_NAME.to_owned()
+        } else {
+            name
+        }
+    }
+
+    pub fn label(&self) -> String {
+        self.file_name()
+    }
+}
+
 /// Everything a task needs. Clones share the task board, the locks and the installer.
 #[derive(Clone)]
 pub struct Services {
@@ -63,6 +112,9 @@ pub struct Services {
     root: PathBuf,
     theme: Option<String>,
     font: Option<String>,
+    dns_servers: Vec<IpAddr>,
+    dns: Dns,
+    browsed: Arc<ReqwestFetcher>,
     token: Option<String>,
     user_agent: Arc<str>,
     store: InstanceStore,
@@ -74,13 +126,17 @@ pub struct Services {
 impl Services {
     pub fn new(root: PathBuf) -> Result<Self, OpError> {
         let config = Config::load(&root)?;
-        let user_agent = format!("MLAYN-Launcher/{}", env!("CARGO_PKG_VERSION"));
+        let user_agent = format!("Motoyori-Launcher/{}", env!("CARGO_PKG_VERSION"));
         let token = config.github_token.filter(|token| !token.trim().is_empty());
         let config_has_token = token.is_some();
         let theme = config.theme;
         let font = config.font;
-        let http = ReqwestHttp::new(&user_agent, token.clone()).map_err(ProviderError::from)?;
-        let fetcher = ReqwestFetcher::new(&user_agent)?;
+        let dns_servers = config.dns;
+        let dns = Dns::new(&dns_servers);
+        let http = ReqwestHttp::with_dns(&user_agent, token.clone(), dns.clone())
+            .map_err(ProviderError::from)?;
+        let fetcher = ReqwestFetcher::with_dns(&user_agent, dns.clone())?;
+        let browsed = Arc::new(ReqwestFetcher::unrestricted(&user_agent, dns.clone())?);
         info!(
             root = %root.display(),
             host = ?Host::current(),
@@ -92,6 +148,9 @@ impl Services {
             board: TaskBoard::default(),
             theme,
             font,
+            dns_servers,
+            dns,
+            browsed,
             token,
             user_agent: user_agent.into(),
             store: InstanceStore::new(&root),
@@ -121,6 +180,22 @@ impl Services {
     /// Name of the theme stored in `config.toml`.
     pub fn theme_name(&self) -> Option<&str> {
         self.theme.as_deref()
+    }
+
+    /// DNS servers stored in `config.toml`. Empty selects the built-in default.
+    pub fn dns_servers(&self) -> &[IpAddr] {
+        &self.dns_servers
+    }
+
+    /// Writes the DNS servers to `config.toml`. They apply at the next start.
+    pub async fn save_dns(self, servers: Vec<IpAddr>) -> Result<(), OpError> {
+        let root = self.root.clone();
+        blocking(move || {
+            let mut config = Config::load(&root)?;
+            config.dns = servers;
+            config.save(&root)
+        })
+        .await
     }
 
     /// Family name of the font stored in `config.toml`.
@@ -160,7 +235,8 @@ impl Services {
             config.save(&root)
         })
         .await?;
-        let http = ReqwestHttp::new(&self.user_agent, token).map_err(ProviderError::from)?;
+        let http = ReqwestHttp::with_dns(&self.user_agent, token, self.dns.clone())
+            .map_err(ProviderError::from)?;
         *self.http.write().unwrap_or_else(PoisonError::into_inner) = http;
         Ok(())
     }
@@ -255,9 +331,87 @@ impl Services {
             .collect()
     }
 
-    pub async fn open_page(self, url: Url) -> Result<(), OpError> {
-        let host = self.host;
-        blocking(move || open_url(&url, host)).await
+    /// Shows `url` in the browser window and waits until the window closes.
+    /// Returns the download that started in the page. The window closes at that moment.
+    pub async fn browse(self, url: Url) -> Result<Option<Browsed>, OpError> {
+        ensure_web(&url)?;
+        let exe = std::env::current_exe()
+            .map_err(|error| OpError::Worker(error.to_string()))?
+            .with_file_name(BROWSER_EXE);
+        let worker = |error: std::io::Error| OpError::Worker(format!("{}: {error}", exe.display()));
+        let mut child = Command::new(&exe)
+            .arg(url.as_str())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(worker)?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| OpError::Worker("browser stdout is unavailable".to_owned()))?;
+        let mut lines = BufReader::new(stdout).lines();
+        let mut found = None;
+        while let Some(line) = lines.next_line().await.map_err(worker)? {
+            let Some((name, target)) = line
+                .strip_prefix(BROWSER_DOWNLOAD_PREFIX)
+                .and_then(|rest| rest.split_once('\t'))
+            else {
+                continue;
+            };
+            if let Ok(url) = Url::parse(target) {
+                found = Some(Browsed {
+                    url,
+                    name: Some(name.to_owned()).filter(|name| !name.is_empty()),
+                });
+                break;
+            }
+        }
+        if found.is_some() {
+            child.kill().await.map_err(worker)?;
+        } else {
+            child.wait().await.map_err(worker)?;
+        }
+        info!(%url, downloaded = found.is_some(), "browser closed");
+        Ok(found)
+    }
+
+    /// Saves the browsed download to `<root>/downloads/`.
+    pub async fn download_browsed(self, handle: TaskHandle, browsed: Browsed) {
+        info!(url = %browsed.url, "browsed download task start");
+        let result = self.download_browsed_inner(&handle, &browsed).await;
+        log_outcome("browsed download", &result);
+        handle.finish(&result);
+    }
+
+    async fn download_browsed_inner(
+        &self,
+        handle: &TaskHandle,
+        browsed: &Browsed,
+    ) -> Result<PathBuf, OpError> {
+        ensure_web(&browsed.url)?;
+        handle.running(0, WRITE_STEPS);
+        let dir = self.root.join(BROWSED_DIR);
+        let name = browsed.file_name();
+        let dest = blocking(move || {
+            std::fs::create_dir_all(&dir).map_err(|source| Error::Io {
+                path: dir.clone(),
+                source,
+            })?;
+            Ok(unique_path(&dir, &name))
+        })
+        .await?;
+        let mut part = dest.clone().into_os_string();
+        part.push(PART_SUFFIX);
+        let part = PathBuf::from(part);
+        if let Err(error) = self.browsed.fetch(&browsed.url, &part, handle).await {
+            let _ = std::fs::remove_file(&part);
+            return Err(error.into());
+        }
+        std::fs::rename(&part, &dest).map_err(|source| Error::Io {
+            path: dest.clone(),
+            source,
+        })?;
+        Ok(dest)
     }
 
     pub async fn open_folder(self, dir: PathBuf) -> Result<(), OpError> {
@@ -464,6 +618,37 @@ fn log_outcome<T>(task: &str, result: &Result<T, OpError>) {
         Ok(_) => info!(task, "task succeeded"),
         Err(error) => error!(task, %error, "task failed"),
     }
+}
+
+fn ensure_web(url: &Url) -> Result<(), OpError> {
+    if matches!(url.scheme(), "http" | "https") {
+        Ok(())
+    } else {
+        Err(Error::UnsafePath(url.to_string()).into())
+    }
+}
+
+/// `dir/name`, or the first free `dir/stem (n).ext`.
+fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let path = Path::new(name);
+    let stem = path.file_stem().map_or_else(
+        || name.to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned());
+    (1_u32..)
+        .map(|n| match &extension {
+            Some(extension) => dir.join(format!("{stem} ({n}).{extension}")),
+            None => dir.join(format!("{stem} ({n})")),
+        })
+        .find(|candidate| !candidate.exists())
+        .unwrap_or(first)
 }
 
 /// Sorted family names of the fonts installed on the OS.

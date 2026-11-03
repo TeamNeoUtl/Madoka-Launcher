@@ -20,6 +20,7 @@ pub const HTTP_HOSTS: [&str; 1] = ["spring-fragrance.mints.ne.jp"];
 
 /// Accepts `https` URLs whose host is listed in `ALLOWED_HOSTS`
 /// and `http` URLs whose host is listed in `HTTP_HOSTS`.
+#[must_use]
 pub fn is_allowed_url(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;

@@ -13,23 +13,22 @@ const RELEASES_URL: &str = "https://api.github.com/repos/GT-610/freya-nle/releas
 static WINDOWS_ASSET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^AviQtl-(MSVC|MSYS2-UCRT64)-x86_64\.zip$").expect("static regex")
 });
-static LINUX_ASSET: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^AviQtl-Arch-Linux-x86_64\.zip$").expect("static regex"));
+const LINUX_ASSET: &str = "AviQtl-Arch-Linux-x86_64.zip";
 
 pub struct FreyaProvider<H> {
     http: H,
 }
 
 impl<H: Http> FreyaProvider<H> {
-    pub fn new(http: H) -> Self {
+    pub const fn new(http: H) -> Self {
         Self { http }
     }
 }
 
-fn asset_pattern(host: Host) -> &'static Regex {
+fn is_asset_of(host: Host, name: &str) -> bool {
     match host {
-        Host::Windows => &WINDOWS_ASSET,
-        Host::Linux => &LINUX_ASSET,
+        Host::Windows => WINDOWS_ASSET.is_match(name),
+        Host::Linux => name == LINUX_ASSET,
     }
 }
 
@@ -42,12 +41,12 @@ impl<H: Http> Provider for FreyaProvider<H> {
         let url = parse_url(RELEASES_URL)?;
         let bytes = self.http.get(&url).await?;
         app_versions_from_json(&bytes, |name| {
-            WINDOWS_ASSET.is_match(name) || LINUX_ASSET.is_match(name)
+            is_asset_of(Host::Windows, name) || is_asset_of(Host::Linux, name)
         })
     }
 
-    async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {
-        Ok(Vec::new())
+    fn catalog(&self) -> impl Future<Output = Result<Vec<Package>, ProviderError>> + Send {
+        std::future::ready(Ok(Vec::new()))
     }
 
     fn plan_install_app(
@@ -55,11 +54,10 @@ impl<H: Http> Provider for FreyaProvider<H> {
         version: &AppVersion,
         selection: AppSelection,
     ) -> Result<Vec<Artifact>, ProviderError> {
-        let pattern = asset_pattern(selection.host);
         version
             .artifacts
             .iter()
-            .find(|artifact| pattern.is_match(&artifact.name))
+            .find(|artifact| is_asset_of(selection.host, &artifact.name))
             .cloned()
             .map(|artifact| vec![artifact])
             .ok_or_else(|| ProviderError::NoMatchingAsset {
@@ -67,7 +65,12 @@ impl<H: Http> Provider for FreyaProvider<H> {
             })
     }
 
-    async fn plan_install_package(&self, package: &Package) -> Result<InstallPlan, ProviderError> {
-        Ok(InstallPlan::OpenInBrowser(Url::clone(&package.page_url)))
+    fn plan_install_package(
+        &self,
+        package: &Package,
+    ) -> impl Future<Output = Result<InstallPlan, ProviderError>> + Send {
+        std::future::ready(Ok(InstallPlan::OpenInBrowser(Url::clone(
+            &package.page_url,
+        ))))
     }
 }

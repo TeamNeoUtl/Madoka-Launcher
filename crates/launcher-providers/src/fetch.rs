@@ -7,10 +7,12 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 use url::Url;
 
+use crate::dns::Dns;
 use crate::http::{CONNECT_TIMEOUT, describe};
 
 /// A transfer that receives no data for this long fails.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REDIRECTS: usize = 10;
 const PROGRESS_STEP: u64 = 8 * 1024 * 1024;
 
 /// Streams a response body to a file. Every redirect target must satisfy `is_allowed_url`.
@@ -19,7 +21,21 @@ pub struct ReqwestFetcher {
 }
 
 impl ReqwestFetcher {
+    /// Uses the default `Dns`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Fetch` when the HTTP client cannot be built.
     pub fn new(user_agent: &str) -> Result<Self, Error> {
+        Self::with_dns(user_agent, Dns::default())
+    }
+
+    /// Allows redirects to hosts that `is_allowed_url` accepts.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Fetch` when the HTTP client cannot be built.
+    pub fn with_dns(user_agent: &str, dns: Dns) -> Result<Self, Error> {
         let policy = Policy::custom(|attempt| {
             if is_allowed_url(attempt.url()) {
                 debug!(to = %attempt.url(), "redirect");
@@ -30,9 +46,23 @@ impl ReqwestFetcher {
                 attempt.error(message)
             }
         });
+        Self::build(user_agent, dns, policy)
+    }
+
+    /// Follows redirects to any host. The caller holds the user's consent for the first URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Fetch` when the HTTP client cannot be built.
+    pub fn unrestricted(user_agent: &str, dns: Dns) -> Result<Self, Error> {
+        Self::build(user_agent, dns, Policy::limited(MAX_REDIRECTS))
+    }
+
+    fn build(user_agent: &str, dns: Dns, policy: Policy) -> Result<Self, Error> {
         let client = reqwest::Client::builder()
             .user_agent(user_agent)
             .redirect(policy)
+            .dns_resolver(dns)
             .connect_timeout(CONNECT_TIMEOUT)
             .read_timeout(READ_TIMEOUT)
             .build()

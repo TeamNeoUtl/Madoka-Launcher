@@ -3,6 +3,8 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
+
+use crate::dns::Dns;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -18,11 +20,11 @@ pub trait Http: Send + Sync {
 }
 
 const GITHUB_API_HOST: &str = "api.github.com";
-pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Joins the message of `error` and of every error in its source chain.
-pub(crate) fn describe(error: &reqwest::Error) -> String {
+pub fn describe(error: &reqwest::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {
@@ -43,9 +45,28 @@ pub struct ReqwestHttp {
 }
 
 impl ReqwestHttp {
+    /// Uses the default `Dns`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HttpError::Transport` when the HTTP client cannot be built.
     pub fn new(user_agent: &str, github_token: Option<String>) -> Result<Self, HttpError> {
+        Self::with_dns(user_agent, github_token, Dns::default())
+    }
+
+    /// Resolves names through `dns`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HttpError::Transport` when the HTTP client cannot be built.
+    pub fn with_dns(
+        user_agent: &str,
+        github_token: Option<String>,
+        dns: Dns,
+    ) -> Result<Self, HttpError> {
         let client = reqwest::Client::builder()
             .user_agent(user_agent)
+            .dns_resolver(dns)
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()

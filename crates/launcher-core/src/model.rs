@@ -13,6 +13,7 @@ use crate::Error;
 pub struct InstanceId(Uuid);
 
 impl InstanceId {
+    #[must_use]
     pub fn generate() -> Self {
         Self(Uuid::new_v4())
     }
@@ -75,6 +76,11 @@ pub struct InstanceConfig {
 }
 
 impl InstanceConfig {
+    /// # Errors
+    ///
+    /// Returns `Error::EmptyName` for a blank name, `Error::InvalidEdition` for `Edition::Lite`
+    /// on a kind other than `Kind::Ymm4`, `Error::EmptyPluginId` for a blank plugin id,
+    /// and `Error::UnsafePath` for a plugin file path that leaves the app directory.
     pub fn validate(&self) -> Result<(), Error> {
         if self.name.trim().is_empty() {
             return Err(Error::EmptyName);
@@ -116,10 +122,12 @@ impl Instance {
     pub const CONFIG_FILE: &'static str = "instance.toml";
     pub const APP_DIR: &'static str = "app";
 
+    #[must_use]
     pub fn config_path(&self) -> PathBuf {
         self.dir.join(Self::CONFIG_FILE)
     }
 
+    #[must_use]
     pub fn app_dir(&self) -> PathBuf {
         self.dir.join(Self::APP_DIR)
     }
@@ -127,7 +135,7 @@ impl Instance {
 
 /// Accepts only paths made of normal components, so that joining the path
 /// onto an instance directory stays inside that directory.
-pub(crate) fn ensure_relative_path(path: &str) -> Result<(), Error> {
+pub fn ensure_relative_path(path: &str) -> Result<(), Error> {
     let normalized = path.replace('\\', "/");
     let all_normal = !normalized.is_empty()
         && Path::new(&normalized)
@@ -141,7 +149,7 @@ pub(crate) fn ensure_relative_path(path: &str) -> Result<(), Error> {
     }
 }
 
-pub(crate) fn ensure_single_component(name: &str) -> Result<(), Error> {
+pub fn ensure_single_component(name: &str) -> Result<(), Error> {
     ensure_relative_path(name)?;
     if name.contains(['/', '\\']) {
         return Err(Error::UnsafePath(name.to_owned()));

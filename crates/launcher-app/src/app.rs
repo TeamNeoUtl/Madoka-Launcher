@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::time::Duration;
 
 use iced::widget::{column, container, row};
@@ -11,7 +12,7 @@ use launcher_core::{
 };
 use url::Url;
 
-use crate::ops::{Loaded, Services};
+use crate::ops::{Browsed, Loaded, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
 use crate::screen::{main_screen, new_instance, settings, tasks};
 use crate::{strings, style};
@@ -41,6 +42,7 @@ pub enum Message {
     Created(Option<InstanceId>),
     Finished,
     Opened(Result<(), String>),
+    Browsed(Result<Option<Browsed>, String>),
     Redraw,
 }
 
@@ -87,6 +89,12 @@ impl App {
             token: services.token().unwrap_or_default().to_owned(),
             font: services.font_name().map(str::to_owned),
             fonts: Vec::new(),
+            dns: services
+                .dns_servers()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
         };
         let app = Self {
             services,
@@ -185,6 +193,14 @@ impl App {
                 }
                 Task::none()
             }
+            Message::Browsed(result) => match result {
+                Ok(Some(browsed)) => self.start_download(browsed),
+                Ok(None) => Task::none(),
+                Err(reason) => {
+                    self.notice = Some(reason);
+                    Task::none()
+                }
+            },
             Message::Redraw => Task::none(),
         }
     }
@@ -501,7 +517,7 @@ impl App {
                 let Some(url) = state.package(&package_id).map(|p| p.page_url.clone()) else {
                     return Task::none();
                 };
-                self.open_page(url)
+                self.browse(url)
             }
             M::ConfirmPending => {
                 let Some(Pending { package, plan }) = state.pending.take() else {
@@ -556,6 +572,27 @@ impl App {
                     .save_token(self.settings.token.clone()),
                 |result| Message::Saved(result.map_err(|error| error.to_string())),
             ),
+            M::DnsChanged(dns) => {
+                self.settings.dns = dns;
+                Task::none()
+            }
+            M::SaveDns => {
+                let parsed: Result<Vec<IpAddr>, _> = self
+                    .settings
+                    .dns
+                    .split([',', ' ', '\t'])
+                    .filter(|entry| !entry.is_empty())
+                    .map(str::parse)
+                    .collect();
+                let Ok(servers) = parsed else {
+                    self.notice = Some(strings::DNS_INVALID.to_owned());
+                    return Task::none();
+                };
+                self.notice = Some(strings::DNS_RESTART.to_owned());
+                Task::perform(self.services.clone().save_dns(servers), |result| {
+                    Message::Saved(result.map_err(|error| error.to_string()))
+                })
+            }
             M::ThemeToggled => self.update(Message::ThemeToggled),
             M::FontSelected(name) => {
                 self.settings.font.clone_from(&name);
@@ -586,7 +623,7 @@ impl App {
             }
         };
         match plan {
-            InstallPlan::OpenInBrowser(url) => self.open_page(url),
+            InstallPlan::OpenInBrowser(url) => self.browse(url),
             plan if plan.is_verified() => self.start_install(id, package, plan),
             plan => {
                 if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
@@ -608,10 +645,19 @@ impl App {
         )
     }
 
-    fn open_page(&self, url: Url) -> Task<Message> {
-        Task::perform(self.services.clone().open_page(url), |result| {
-            Message::Opened(result.map_err(|error| error.to_string()))
+    fn browse(&self, url: Url) -> Task<Message> {
+        Task::perform(self.services.clone().browse(url), |result| {
+            Message::Browsed(result.map_err(|error| error.to_string()))
         })
+    }
+
+    fn start_download(&self, browsed: Browsed) -> Task<Message> {
+        let title = format!("{}: {}", strings::TASK_DOWNLOAD, browsed.label());
+        let handle = self.services.board.add(title);
+        Task::perform(
+            self.services.clone().download_browsed(handle, browsed),
+            |()| Message::Finished,
+        )
     }
 
     fn load_catalog(&self, refresh: bool) -> Task<Message> {

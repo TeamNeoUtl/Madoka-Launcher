@@ -16,6 +16,8 @@ const FONT_LIST_HEIGHT: f32 = 220.0;
 pub enum Message {
     TokenChanged(String),
     SaveToken,
+    DnsChanged(String),
+    SaveDns,
     ThemeToggled,
     FontSelected(Option<String>),
     OpenDataDirectory,
@@ -23,6 +25,7 @@ pub enum Message {
 
 pub struct Form {
     pub token: String,
+    pub dns: String,
     pub font: Option<String>,
     pub fonts: Vec<String>,
 }
@@ -33,6 +36,15 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: String) -> Element<'
         .with_label_text(strings::GITHUB_TOKEN, background)
         .on_input(Message::TokenChanged)
         .padding(INPUT_PADDING);
+    let dns = TextInput::new(strings::DNS_HINT, &form.dns, theme)
+        .with_label_text(strings::DNS, background)
+        .on_input(Message::DnsChanged)
+        .padding(INPUT_PADDING);
+    let save_dns = m3::button(
+        button::Style::filled(theme, Accent::Primary),
+        button::Content::Label(strings::SAVE.into()),
+    )
+    .on_press(Message::SaveDns);
     let save = m3::button(
         button::Style::filled(theme, Accent::Primary),
         button::Content::Label(strings::SAVE.into()),
@@ -63,6 +75,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: String) -> Element<'
         .spacing(8)
         .align_y(Vertical::Center),
         row![token, save].spacing(8).align_y(Vertical::Center),
+        row![dns, save_dns].spacing(8).align_y(Vertical::Center),
         style::label(
             theme,
             format!("{}: {}", strings::LANGUAGE, strings::LANGUAGE_VALUE)

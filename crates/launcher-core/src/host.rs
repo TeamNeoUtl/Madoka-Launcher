@@ -7,6 +7,7 @@ pub enum Host {
 }
 
 impl Host {
+    #[must_use]
     pub const fn current() -> Self {
         if cfg!(windows) {
             Self::Windows
@@ -17,6 +18,7 @@ impl Host {
 }
 
 impl Kind {
+    #[must_use]
     pub const fn supported_on(self, host: Host) -> bool {
         match host {
             Host::Windows => true,

@@ -16,6 +16,7 @@ const SHA384_SRI_PREFIX: &str = "sha384-";
 const SHA384_BYTES: usize = 48;
 const XXH3_128_HEX_DIGITS: usize = 32;
 const READ_CHUNK: usize = 64 * 1024;
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HashAlgo {
@@ -33,6 +34,7 @@ pub struct Hash {
 
 impl Hash {
     /// Parses the `sha256:<64 hex digits>` form that GitHub reports per release asset.
+    #[must_use]
     pub fn parse_digest(digest: &str) -> Option<Self> {
         let hex = digest.strip_prefix(SHA256_DIGEST_PREFIX)?;
         let valid = hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit());
@@ -43,6 +45,7 @@ impl Hash {
     }
 
     /// Parses the `sha384-<base64>` Subresource Integrity form of the APM data.
+    #[must_use]
     pub fn parse_sri(text: &str) -> Option<Self> {
         let encoded = text.strip_prefix(SHA384_SRI_PREFIX)?;
         let bytes = STANDARD.decode(encoded).ok()?;
@@ -53,6 +56,7 @@ impl Hash {
     }
 
     /// Parses the 32 hexadecimal digits of an XXH3-128 value.
+    #[must_use]
     pub fn parse_xxh3_128(text: &str) -> Option<Self> {
         let valid =
             text.len() == XXH3_128_HEX_DIGITS && text.bytes().all(|b| b.is_ascii_hexdigit());
@@ -62,6 +66,9 @@ impl Hash {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns the `std::io::Error` of opening or reading `path`.
     pub fn of_file(algo: HashAlgo, path: &Path) -> std::io::Result<Self> {
         let mut file = File::open(path)?;
         let mut buffer = vec![0u8; READ_CHUNK];
@@ -87,7 +94,11 @@ impl Hash {
 }
 
 fn to_hex<'a>(bytes: impl Iterator<Item = &'a u8>) -> String {
-    bytes.map(|byte| format!("{byte:02x}")).collect()
+    bytes.fold(String::new(), |mut hex, &byte| {
+        hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
+        hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+        hex
+    })
 }
 
 fn read_chunks<R>(
@@ -180,6 +191,7 @@ pub enum Origin {
 }
 
 impl Origin {
+    #[must_use]
     pub fn label(&self) -> String {
         match self {
             Self::Direct(url) => url.to_string(),
@@ -213,6 +225,7 @@ pub enum PackageSource {
 }
 
 impl PackageSource {
+    #[must_use]
     pub fn label(&self) -> String {
         match self {
             Self::GithubRepo { owner, repo } => format!("github:{owner}/{repo}"),
@@ -237,6 +250,7 @@ pub struct Package {
 impl Package {
     /// Version string that `PluginRecord::version` holds after the installation.
     /// `None` when the catalog does not tell it.
+    #[must_use]
     pub fn latest_version(&self) -> Option<&str> {
         match &self.source {
             PackageSource::Recipe(recipe) => Some(&recipe.version),
@@ -264,6 +278,7 @@ pub enum InstallPlan {
 
 impl InstallPlan {
     /// `false` when the installation writes files that no hash covers.
+    #[must_use]
     pub fn is_verified(&self) -> bool {
         match self {
             Self::Download(artifacts) => artifacts.iter().all(|artifact| artifact.hash.is_some()),

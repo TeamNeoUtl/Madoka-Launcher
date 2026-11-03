@@ -9,7 +9,7 @@ use crate::Error;
 use crate::model::ensure_relative_path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Layout {
+pub enum Layout {
     /// Entries may sit in sub-directories.
     Tree,
     /// Like `Tree`. When one directory holds every entry, that directory is dropped from the paths.
@@ -26,7 +26,7 @@ struct Entry {
 
 /// Files and directories that a task created, in creation order.
 #[derive(Default)]
-pub(crate) struct Created {
+pub struct Created {
     pub(crate) files: Vec<PathBuf>,
     dirs: Vec<PathBuf>,
 }
@@ -42,7 +42,7 @@ impl Created {
     }
 }
 
-pub(crate) struct Archive {
+pub struct Archive {
     path: PathBuf,
     zip: ZipArchive<BufReader<File>>,
     entries: Vec<Entry>,
@@ -114,7 +114,6 @@ impl Archive {
                 .zip
                 .by_index(entry.index)
                 .map_err(|e| Error::zip(&self.path, e))?;
-            let mode = source.unix_mode();
             let mut out = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -122,7 +121,8 @@ impl Archive {
                 .map_err(|e| Error::io(&target, e))?;
             created.files.push(target.clone());
             io::copy(&mut source, &mut out).map_err(|e| Error::io(&target, e))?;
-            set_mode(&target, mode)?;
+            #[cfg(unix)]
+            set_mode(&target, source.unix_mode())?;
         }
         Ok(())
     }
@@ -161,12 +161,7 @@ fn set_mode(path: &Path, zip_mode: Option<u32>) -> Result<(), Error> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|e| Error::io(path, e))
 }
 
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _zip_mode: Option<u32>) -> Result<(), Error> {
-    Ok(())
-}
-
-pub(crate) fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {
+pub fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error> {
     let mut missing = Vec::new();
     let mut current = Some(path);
     while let Some(dir) = current {
@@ -185,7 +180,7 @@ pub(crate) fn make_dirs(path: &Path, created: &mut Created) -> Result<(), Error>
 
 /// Copies `source` to `target` with `create_new`, creating the missing parent directories.
 /// Fails with `AlreadyExists` when `target` exists.
-pub(crate) fn copy_file(source: &Path, target: &Path, created: &mut Created) -> Result<(), Error> {
+pub fn copy_file(source: &Path, target: &Path, created: &mut Created) -> Result<(), Error> {
     if let Some(parent) = target.parent() {
         make_dirs(parent, created)?;
     }

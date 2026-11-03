@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use launcher_core::{Kind, Package};
 
 /// A cache file younger than this is used without a request.
-pub const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+pub const CACHE_TTL: Duration = Duration::from_hours(24);
 
 const CATALOG_DIR: &str = "cache/catalog";
 
@@ -23,6 +23,7 @@ fn read(root: &Path, kind: Kind) -> Option<(Vec<Package>, SystemTime)> {
 }
 
 /// Packages of a cache file that is younger than `CACHE_TTL`.
+#[must_use]
 pub fn load_fresh(root: &Path, kind: Kind) -> Option<Vec<Package>> {
     let (packages, modified) = read(root, kind)?;
     let age = SystemTime::now().duration_since(modified).ok()?;
@@ -30,11 +31,17 @@ pub fn load_fresh(root: &Path, kind: Kind) -> Option<Vec<Package>> {
 }
 
 /// Packages of the cache file whatever its age.
+#[must_use]
 pub fn load_any(root: &Path, kind: Kind) -> Option<Vec<Package>> {
     read(root, kind).map(|(packages, _)| packages)
 }
 
 /// Writes through a temporary file, so that a failed write keeps the previous cache file.
+///
+/// # Errors
+///
+/// Returns the `std::io::Error` of creating the directory, writing the temporary file,
+/// or renaming it, and `ErrorKind::InvalidData` when `packages` cannot be encoded.
 pub fn store(root: &Path, kind: Kind, packages: &[Package]) -> std::io::Result<()> {
     let path = path_of(root, kind);
     if let Some(dir) = path.parent() {

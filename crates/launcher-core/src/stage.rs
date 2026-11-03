@@ -7,10 +7,10 @@ use crate::archive::{Archive, Created, Layout, copy_file, make_dirs};
 use crate::model::ensure_relative_path;
 use crate::{Error, FileCheck, Hash, Kind, Location, Root, Step, find_executable};
 
-pub(crate) const DATA_DIR: &str = "data";
+pub const DATA_DIR: &str = "data";
 
 /// Directories that `Location` values resolve against.
-pub(crate) struct Roots {
+pub struct Roots {
     tmp: Option<PathBuf>,
     pub(crate) app: PathBuf,
     pub(crate) data: PathBuf,
@@ -18,7 +18,7 @@ pub(crate) struct Roots {
 
 impl Roots {
     /// `App` is the directory of the executable below `app_dir`.
-    /// Only AviUtl and AviUtl2 have catalogs that address files by location.
+    /// Only `AviUtl` and `AviUtl2` have catalogs that address files by location.
     pub(crate) fn locate(kind: Kind, app_dir: &Path, tmp: Option<&Path>) -> Result<Self, Error> {
         if !matches!(kind, Kind::Aviutl | Kind::Aviutl2) {
             return Err(Error::PluginUnsupported(kind));
@@ -51,7 +51,7 @@ impl Roots {
 
 /// Runs `steps` in order. `download` is the downloaded archive.
 /// Every file and directory that a step creates is recorded in `created`.
-pub(crate) fn run(
+pub fn run(
     roots: &Roots,
     download: &Path,
     steps: &[Step],
@@ -88,7 +88,7 @@ pub(crate) fn run(
 }
 
 /// Compares the hash of every file in `checks` with the file on disk.
-pub(crate) fn verify(roots: &Roots, checks: &[FileCheck]) -> Result<(), Error> {
+pub fn verify(roots: &Roots, checks: &[FileCheck]) -> Result<(), Error> {
     for check in checks {
         let path = roots.resolve(&check.location)?;
         let actual = Hash::of_file(check.hash.algo, &path).map_err(|e| Error::io(&path, e))?;

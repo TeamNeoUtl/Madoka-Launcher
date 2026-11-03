@@ -20,7 +20,7 @@ pub const PROBE_WINDOW: Duration = Duration::from_secs(5);
 
 impl Kind {
     /// File stems accepted as the executable. Compared case-insensitively.
-    fn executable_stems(self) -> &'static [&'static str] {
+    const fn executable_stems(self) -> &'static [&'static str] {
         match self {
             Self::Aviutl => &["aviutl"],
             Self::Aviutl2 => &["aviutl2"],
@@ -58,6 +58,10 @@ fn is_executable_name(path: &Path, stems: &[&str], host: Host) -> bool {
 
 /// Searches `app_dir` and its sub-directories down to depth 2, shallowest level first.
 /// Within one level the smallest path wins.
+/// # Errors
+///
+/// Returns `Error::Io` when a directory cannot be read,
+/// and `Error::ExecutableNotFound` when no file name matches `kind`.
 pub fn find_executable(app_dir: &Path, kind: Kind, host: Host) -> Result<PathBuf, Error> {
     let stems = kind.executable_stems();
     let mut level = vec![app_dir.to_owned()];
@@ -98,8 +102,13 @@ pub struct Launched {
 }
 
 impl Launched {
+    /// # Errors
+    ///
+    /// Returns the errors of `find_executable`, and `Error::Io` when the executable bit,
+    /// the log file, or the process start fails.
     pub fn spawn(instance: &Instance, host: Host) -> Result<Self, Error> {
         let exe = find_executable(&instance.app_dir(), instance.config.kind, host)?;
+        #[cfg(unix)]
         ensure_executable(&exe)?;
         let log = instance.dir.join(LOG_FILE);
         let out = File::create(&log).map_err(|e| Error::io(&log, e))?;
@@ -117,6 +126,11 @@ impl Launched {
 
     /// Blocks up to `window`. Returns `LaunchFailed` with the log tail when the process
     /// exits with a failure status inside the window.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::LaunchFailed` for a failure exit status inside `window`,
+    /// and `Error::Io` when the process state cannot be read.
     pub fn confirm(self, window: Duration) -> Result<(), Error> {
         let Self {
             mut child,
@@ -166,18 +180,21 @@ fn ensure_executable(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn ensure_executable(_path: &Path) -> Result<(), Error> {
-    Ok(())
-}
-
 /// Opens `dir` in the file manager of `host`.
+///
+/// # Errors
+///
+/// Returns `Error::Io` when the file manager cannot start.
 pub fn open_directory(dir: &Path, host: Host) -> Result<(), Error> {
     debug!(dir = %dir.display(), "open directory");
     open_with_shell(dir.as_os_str(), host, dir)
 }
 
 /// Opens an `http` or `https` URL in the default browser of `host`.
+///
+/// # Errors
+///
+/// Returns `Error::UnsafePath` for another scheme, and `Error::Io` when the browser cannot start.
 pub fn open_url(url: &Url, host: Host) -> Result<(), Error> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(Error::UnsafePath(url.to_string()));

@@ -5,7 +5,7 @@ use launcher_providers::{FreyaProvider, NeoutlProvider, Provider, ReqwestHttp, Y
 
 fn http() -> ReqwestHttp {
     let token = std::env::var("GITHUB_TOKEN").ok();
-    ReqwestHttp::new("MLAYN-Launcher-test/0.1", token).unwrap()
+    ReqwestHttp::new("Motoyori-Launcher-test/0.1", token).unwrap()
 }
 
 fn selection(host: Host, edition: Edition) -> AppSelection {

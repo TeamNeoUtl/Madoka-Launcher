@@ -6,7 +6,7 @@
 
 | 項目 | 内容 | 決定日 |
 |---|---|---|
-| プロジェクト名 | `MLAYN-Launcher` | 10-27 |
+| プロジェクト名 | `Motoyori-Launcher` | 10-27 |
 | YMM4 本体の取得元 | GitHub Releases (`manju-summoner/YukkuriMovieMaker4`) | 10-27 |
 | 索引・データリポジトリ | 同梱しない。実行時に取得 | 10-27 |
 | `.ymme` | 階層を持つ `.ymme` は存在しない (ユーザー申告)。専用ディレクトリを作成し、全エントリを収集して配置 | 10-28 |

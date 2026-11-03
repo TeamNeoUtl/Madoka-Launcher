@@ -25,7 +25,8 @@ pub enum TaskState {
 }
 
 impl TaskState {
-    pub fn is_active(&self) -> bool {
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
         matches!(self, Self::Queued | Self::Running { .. })
     }
 }
@@ -68,10 +69,12 @@ impl TaskBoard {
         }
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> Vec<TaskInfo> {
         self.lock().tasks.clone()
     }
 
+    #[must_use]
     pub fn has_active(&self) -> bool {
         self.lock().tasks.iter().any(|task| task.state.is_active())
     }

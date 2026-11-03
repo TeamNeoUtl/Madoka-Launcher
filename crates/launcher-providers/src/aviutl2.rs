@@ -184,6 +184,11 @@ fn recipe(entry: &RawEntry) -> Option<Recipe> {
 }
 
 /// Entries other than the editor itself. Entries that `recipe` rejects open in the browser.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected document
+/// or holds no package entry, and `ProviderError::InvalidUrl` for an invalid page URL.
 pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
     let fallback =
         Url::parse(CATALOG_PAGE).map_err(|_| ProviderError::InvalidUrl(CATALOG_PAGE.to_owned()))?;
@@ -216,6 +221,12 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
 
 /// The portable ZIP lies beside the setup program: `aviutl2_<version>.zip`.
 /// The entry lists the hash of `aviutl2.exe`, which the ZIP holds as well.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected document,
+/// the editor entry is missing, or the entry has no direct URL,
+/// and `ProviderError::InvalidUrl` when the ZIP URL cannot be joined.
 pub fn parse_aviutl2_app(bytes: &[u8]) -> Result<AppVersion, ProviderError> {
     let entries = parse_entries(bytes)?;
     let entry = entries
@@ -260,7 +271,7 @@ pub struct Aviutl2Provider<H> {
 }
 
 impl<H: Http> Aviutl2Provider<H> {
-    pub fn new(http: H) -> Self {
+    pub const fn new(http: H) -> Self {
         Self { http }
     }
 

@@ -3,12 +3,17 @@ name = "launcher-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Desktop application of Motoyori Launcher."
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [[bin]]
-name = "MLAYN-Launcher"
+name = "Motoyori-Launcher"
 path = "src/main.rs"
 
 [dependencies]
@@ -17,8 +22,9 @@ iced_m3 = { git = "https://github.com/tpaau/iced_m3.git", default-features = fal
 launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }
 fontdb = "0.24"
+percent-encoding = "2"
 thiserror = "2"
-tokio = { version = "1.54.1", features = ["rt"] }
+tokio = { version = "1.54.1", features = ["rt", "process", "io-util"] }
 tracing = "0.1"
 url = "2.5.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

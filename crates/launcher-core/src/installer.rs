@@ -65,11 +65,15 @@ impl<F: Fetcher> Installer<F> {
         }
     }
 
-    pub fn fetcher(&self) -> &F {
+    pub const fn fetcher(&self) -> &F {
         &self.fetcher
     }
 
     /// Extracts each artifact into `<instance>/app/`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `install_app_checked` with an empty `checks`.
     pub async fn install_app(
         &self,
         id: InstanceId,
@@ -80,8 +84,14 @@ impl<F: Fetcher> Installer<F> {
     }
 
     /// Like `install_app`, then verifies `checks` against the extracted files.
-    /// AviUtl archives lose the directory that holds every entry.
-    /// AviUtl2 gets `data/` beside the executable, which makes the instance self-contained.
+    /// `AviUtl` archives lose the directory that holds every entry.
+    /// `AviUtl2` gets `data/` beside the executable, which makes the instance self-contained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, an artifact fails to download
+    /// or to match its hash, an archive entry is rejected or cannot be written,
+    /// or a file in `checks` is missing or differs in hash.
     pub async fn install_app_checked(
         &self,
         id: InstanceId,
@@ -117,6 +127,12 @@ impl<F: Fetcher> Installer<F> {
 
     /// Replaces the record with the same `package.id`, then writes the new record to `instance.toml`.
     /// The archive is validated before any existing file is removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, the kind has no plugin directory,
+    /// the artifact fails to download or to match its hash, an archive entry is rejected,
+    /// a file cannot be removed or written, or `instance.toml` cannot be saved.
     pub async fn install_package(
         &self,
         id: InstanceId,
@@ -157,6 +173,12 @@ impl<F: Fetcher> Installer<F> {
 
     /// Downloads `plan.artifact`, runs `plan.steps`, then verifies `plan.checks`.
     /// A failing step or check removes every file that the task wrote.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, `plan.artifact.name` is not a single
+    /// path component, the artifact fails to download or to match its hash, the kind has no
+    /// catalog by location, a step or a check in `plan` fails, or `instance.toml` cannot be saved.
     pub async fn install_staged(
         &self,
         id: InstanceId,
@@ -201,6 +223,12 @@ impl<F: Fetcher> Installer<F> {
     }
 
     /// Removes every file listed in the record, then the record.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NotFound` when the instance does not exist,
+    /// `Error::PluginNotFound` when `plugin_id` has no record,
+    /// and `Error::Io` when a file cannot be removed or `instance.toml` cannot be saved.
     pub fn remove_package(&self, id: InstanceId, plugin_id: &str) -> Result<(), Error> {
         let mut instance = self.store.load(id)?;
         info!(%id, package = plugin_id, "remove package");
@@ -336,7 +364,7 @@ fn delete_files(app_dir: &Path, floor: &Path, files: &[String]) -> Result<(), Er
     Ok(())
 }
 
-/// AviUtl2 reads `<exe dir>/data` only while that directory exists, so it must stay.
+/// `AviUtl2` reads `<exe dir>/data` only while that directory exists, so it must stay.
 fn removal_floor(instance: &Instance) -> PathBuf {
     let app_dir = instance.app_dir();
     match instance.config.kind {

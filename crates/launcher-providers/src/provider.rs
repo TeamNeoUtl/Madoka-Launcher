@@ -11,6 +11,10 @@ pub trait Provider: Send + Sync {
 
     fn catalog(&self) -> impl Future<Output = Result<Vec<Package>, ProviderError>> + Send;
 
+    /// # Errors
+    ///
+    /// Returns `ProviderError::UnsupportedHost` when `selection.host` cannot run the kind,
+    /// and `ProviderError::NoMatchingAsset` when `version` has no artifact for `selection`.
     fn plan_install_app(
         &self,
         version: &AppVersion,

@@ -33,6 +33,11 @@ impl InstanceStore {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns `Error::UnsupportedKind` when `host` cannot run `new.kind`, the errors of
+    /// `InstanceConfig::validate`, and `Error::Io` or `Error::Serialize` when the instance
+    /// directory or `instance.toml` cannot be written.
     pub fn create(&self, new: NewInstance, host: Host) -> Result<Instance, Error> {
         if !new.kind.supported_on(host) {
             return Err(Error::UnsupportedKind {
@@ -70,6 +75,12 @@ impl InstanceStore {
         Ok(instance)
     }
 
+    /// # Errors
+    ///
+    /// Returns `Error::NotFound` when the instance directory does not exist,
+    /// `Error::Io` or `Error::Parse` when `instance.toml` cannot be read,
+    /// `Error::IdMismatch` when its id differs from the directory name,
+    /// and the errors of `InstanceConfig::validate`.
     pub fn load(&self, id: InstanceId) -> Result<Instance, Error> {
         let dir = self.dir_of(id);
         if !dir.is_dir() {
@@ -78,6 +89,10 @@ impl InstanceStore {
         Self::load_dir(dir, id)
     }
 
+    /// # Errors
+    ///
+    /// Returns the errors of `InstanceConfig::validate`, `Error::Serialize`,
+    /// and `Error::Io` when `instance.toml` cannot be written.
     pub fn save(&self, instance: &Instance) -> Result<(), Error> {
         instance.config.validate()?;
         let text = toml::to_string_pretty(&instance.config)?;
@@ -88,6 +103,10 @@ impl InstanceStore {
     }
 
     /// Changes the name and the group. The group is removed when `group` is `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `load` and `save`.
     pub fn update(
         &self,
         id: InstanceId,
@@ -102,6 +121,12 @@ impl InstanceStore {
     }
 
     /// Copies the instance directory, except the launch log, under a new id and name.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `load`, the errors of `InstanceConfig::validate`,
+    /// and `Error::Io` or `Error::Serialize` when the copy or `instance.toml` fails.
+    /// The new directory is removed on failure.
     pub fn duplicate(&self, id: InstanceId, name: String) -> Result<Instance, Error> {
         let source = self.load(id)?;
         let mut config = source.config.clone();
@@ -127,6 +152,10 @@ impl InstanceStore {
         Ok(instance)
     }
 
+    /// # Errors
+    ///
+    /// Returns `Error::NotFound` when the instance directory does not exist,
+    /// and `Error::Io` when it cannot be removed.
     pub fn delete(&self, id: InstanceId) -> Result<(), Error> {
         let dir = self.dir_of(id);
         if !dir.is_dir() {
@@ -137,6 +166,11 @@ impl InstanceStore {
         Ok(())
     }
 
+    /// Instances that fail to load go to `Listing::failures`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Io` when the instances directory exists and cannot be read.
     pub fn list(&self) -> Result<Listing, Error> {
         let mut listing = Listing::default();
         let entries = match fs::read_dir(&self.instances_dir) {

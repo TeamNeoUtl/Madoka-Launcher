@@ -6,7 +6,7 @@ use url::Url;
 use crate::ProviderError;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Release {
+pub struct Release {
     tag_name: String,
     #[serde(default)]
     draft: bool,
@@ -83,7 +83,7 @@ impl Release {
     }
 }
 
-pub(crate) fn app_versions_from_json(
+pub fn app_versions_from_json(
     bytes: &[u8],
     accepts: impl Fn(&str) -> bool,
 ) -> Result<Vec<AppVersion>, ProviderError> {
@@ -94,12 +94,12 @@ pub(crate) fn app_versions_from_json(
     Ok(versions)
 }
 
-pub(crate) fn parse_url(text: &str) -> Result<Url, ProviderError> {
+pub fn parse_url(text: &str) -> Result<Url, ProviderError> {
     Url::parse(text).map_err(|_| ProviderError::InvalidUrl(text.to_owned()))
 }
 
 /// Artifacts of the latest release of `owner/repo`. `None` when the repository has no release.
-pub(crate) async fn latest_artifacts<H: Http>(
+pub async fn latest_artifacts<H: Http>(
     http: &H,
     owner: &str,
     repo: &str,

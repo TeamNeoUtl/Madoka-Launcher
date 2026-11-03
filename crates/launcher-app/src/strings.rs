@@ -1,6 +1,6 @@
 use launcher_core::{Edition, Host, Kind};
 
-pub const APP_TITLE: &str = "MLAYN Launcher";
+pub const APP_TITLE: &str = "Motoyori Launcher";
 
 pub const TAB_INSTANCES: &str = "インスタンス";
 pub const TAB_NEW: &str = "新規作成";
@@ -69,6 +69,10 @@ pub const GITHUB_TOKEN_HINT: &str = "空欄: 未認証 (60 req/h)";
 pub const FONT: &str = "フォント";
 pub const FONT_DEFAULT: &str = "システム既定";
 pub const FONT_RESTART: &str = "フォントは再起動後に反映";
+pub const DNS: &str = "DNS サーバー";
+pub const DNS_HINT: &str = "空欄: AdGuard DNS (カンマ区切り)";
+pub const DNS_INVALID: &str = "DNS: IP アドレスを解釈できません";
+pub const DNS_RESTART: &str = "DNS は再起動後に反映";
 pub const LANGUAGE: &str = "言語";
 pub const LANGUAGE_VALUE: &str = "日本語";
 pub const COPY_SUFFIX: &str = "のコピー";
@@ -77,6 +81,7 @@ pub const TASK_CREATE: &str = "作成";
 pub const TASK_DELETE: &str = "削除";
 pub const TASK_LAUNCH: &str = "起動";
 pub const TASK_DUPLICATE: &str = "複製";
+pub const TASK_DOWNLOAD: &str = "ダウンロード";
 pub const TASK_INSTALL: &str = "導入";
 pub const TASK_REMOVE: &str = "プラグイン削除";
 pub const ACTIVE_TASKS: &str = "進行中のタスク";

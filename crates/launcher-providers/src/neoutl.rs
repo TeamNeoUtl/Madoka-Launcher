@@ -17,12 +17,12 @@ pub struct NeoutlProvider<H> {
 }
 
 impl<H: Http> NeoutlProvider<H> {
-    pub fn new(http: H) -> Self {
+    pub const fn new(http: H) -> Self {
         Self { http }
     }
 }
 
-fn asset_name(host: Host) -> &'static str {
+const fn asset_name(host: Host) -> &'static str {
     match host {
         Host::Windows => "neoutl-windows-x86_64.zip",
         Host::Linux => "neoutl-linux-x86_64.zip",
@@ -40,8 +40,8 @@ impl<H: Http> Provider for NeoutlProvider<H> {
         app_versions_from_json(&bytes, |name| ASSET.is_match(name))
     }
 
-    async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {
-        Ok(Vec::new())
+    fn catalog(&self) -> impl Future<Output = Result<Vec<Package>, ProviderError>> + Send {
+        std::future::ready(Ok(Vec::new()))
     }
 
     fn plan_install_app(
@@ -61,7 +61,12 @@ impl<H: Http> Provider for NeoutlProvider<H> {
             })
     }
 
-    async fn plan_install_package(&self, package: &Package) -> Result<InstallPlan, ProviderError> {
-        Ok(InstallPlan::OpenInBrowser(Url::clone(&package.page_url)))
+    fn plan_install_package(
+        &self,
+        package: &Package,
+    ) -> impl Future<Output = Result<InstallPlan, ProviderError>> + Send {
+        std::future::ready(Ok(InstallPlan::OpenInBrowser(Url::clone(
+            &package.page_url,
+        ))))
     }
 }
