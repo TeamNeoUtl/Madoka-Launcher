@@ -28,3 +28,7 @@ tokio = { version = "1.54.1", features = ["rt", "process", "io-util"] }
 tracing = "0.1"
 url = "2.5.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+resvg = { version = "0.49", default-features = false }
+embed-resource = "3"

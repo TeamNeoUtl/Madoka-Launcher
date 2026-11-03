@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Madoka Launcher
+Exec=Madoka-Launcher
+Icon=Madoka-Launcher
+StartupWMClass=Madoka-Launcher
+Categories=AudioVideo;Video;
+Terminal=false
