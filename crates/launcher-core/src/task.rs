@@ -105,7 +105,28 @@ pub struct TaskHandle {
     id: TaskId,
 }
 
+/// Reference to one task that reports download progress. Clones share the task.
+#[derive(Debug, Clone)]
+pub struct TaskSink {
+    board: TaskBoard,
+    id: TaskId,
+}
+
+impl ProgressSink for TaskSink {
+    fn report(&self, progress: Progress) {
+        self.board.set_transfer(self.id, progress);
+    }
+}
+
 impl TaskHandle {
+    #[must_use]
+    pub fn sink(&self) -> TaskSink {
+        TaskSink {
+            board: self.board.clone(),
+            id: self.id,
+        }
+    }
+
     pub fn running(&self, done: u16, total: u16) {
         self.board.set(
             self.id,

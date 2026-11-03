@@ -11,6 +11,7 @@ mod provider;
 mod recipe;
 mod registry;
 mod release;
+mod updater;
 mod ymm4;
 
 pub use aviutl::{AviutlProvider, parse_apm_packages, parse_aviutl_app};
@@ -24,4 +25,5 @@ pub use http::{Http, HttpError, ReqwestHttp};
 pub use neoutl::NeoutlProvider;
 pub use provider::Provider;
 pub use registry::{MadokaProvider, has_catalog, has_provider};
+pub use updater::SelfUpdater;
 pub use ymm4::{Ymm4Provider, parse_ymm4_catalog};

@@ -15,6 +15,20 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 10;
 const PROGRESS_STEP: u64 = 8 * 1024 * 1024;
 
+/// Follows a redirect when `is_allowed_url` accepts its target.
+pub(crate) fn allowed_redirects() -> Policy {
+    Policy::custom(|attempt| {
+        if is_allowed_url(attempt.url()) {
+            debug!(to = %attempt.url(), "redirect");
+            attempt.follow()
+        } else {
+            let message = format!("redirect to {} is not allowed", attempt.url());
+            warn!(to = %attempt.url(), "redirect rejected");
+            attempt.error(message)
+        }
+    })
+}
+
 /// Streams a response body to a file. Every redirect target must satisfy `is_allowed_url`.
 pub struct ReqwestFetcher {
     client: reqwest::Client,
@@ -36,17 +50,7 @@ impl ReqwestFetcher {
     ///
     /// Returns `Error::Fetch` when the HTTP client cannot be built.
     pub fn with_dns(user_agent: &str, dns: Dns) -> Result<Self, Error> {
-        let policy = Policy::custom(|attempt| {
-            if is_allowed_url(attempt.url()) {
-                debug!(to = %attempt.url(), "redirect");
-                attempt.follow()
-            } else {
-                let message = format!("redirect to {} is not allowed", attempt.url());
-                warn!(to = %attempt.url(), "redirect rejected");
-                attempt.error(message)
-            }
-        });
-        Self::build(user_agent, dns, policy)
+        Self::build(user_agent, dns, allowed_redirects())
     }
 
     /// Follows redirects to any host. The caller holds the user's consent for the first URL.

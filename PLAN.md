@@ -144,6 +144,14 @@ Wine を使用しない。すべて直接 spawn。
 - `OpenInBrowser` (YMM4): 内蔵ブラウザで `url` を開き、ページ内で始まったダウンロードを `<root>/downloads/` へ保存する。拡張子が `.ymme` の場合は、ブラウザを開いたインスタンスへ導入し、`PluginRecord { id = package.id }` を記録する。導入先は GitHub が `user/plugin/<repo>/`、それ以外 (`Web`) が `user/plugin/web-<package.id の XXH3-64 を 16 桁 16 進数>/`。ハッシュ検証は行わない。`.ymme` 以外は保存のみ。
 - 破損検出: 件数 0、または必須キー欠落が 1 件以上の場合は `Err(CatalogShapeChanged)`。キャッシュを上書きしない。
 
+### 5.6 ランチャーの更新
+
+- 取得元: GitHub Releases (`TeamNeoUtl/Madoka-launcher`)。`SelfUpdater` (`launcher-providers`) が `self_update` を呼ぶ。
+- 確認: 起動時に 1 回と、Settings の「更新を確認」。`releases/latest` のバージョンが実行中より大きい場合に `Available` とし、Navigation Rail の Settings にバッジを表示する。起動時の失敗はログのみ。
+- 更新: Settings の「更新」で `Task` を作成する。asset は `Madoka-launcher-v<version>-{windows,linux}-x86_64.{zip,tar.gz}`。`Madoka-Browser` を置換してから `Madoka-Launcher` を置換する。各ダウンロードは GitHub が asset に付与する sha256 `digest` で検証する。
+- 反映: 再起動後。実行中の実行ファイルの置換は `self_update` (`self-replace`) が行う。
+- HTTP: `reqwest::blocking::Client` に User-Agent、`Dns`、接続タイムアウト 15 秒、リダイレクト先の `is_allowed_url` 検証を設定する。無通信タイムアウトは設定できない。
+
 ## 6. 安全性
 
 - `#![forbid(unsafe_code)]` を全 crate に設定する。unsafe は 0 件。
@@ -167,7 +175,7 @@ Wine を使用しない。すべて直接 spawn。
 | New Instance | 左のリスト: Kind (YMM4 / AviUtl / AviUtl2 / NeoUtl / Freya NLE)。右: 名前・Group・本体バージョン (YMM4 は Edition)。非対応 Kind は選択不可で理由を表示 |
 | Edit Instance | 左のタブ: バージョン / プラグイン / 設定。プラグインタブ: 導入済み一覧 + ダウンロード (カタログ検索) |
 | Tasks | 進行中・完了タスク一覧 |
-| Settings | データディレクトリ、GitHub トークン、言語 |
+| Settings | データディレクトリ、GitHub トークン、ランチャーのバージョン (更新確認・更新)、言語 |
 
 ### 7.2 状態管理
 
@@ -236,6 +244,7 @@ Wine を使用しない。すべて直接 spawn。
 | ログ | tracing, tracing-subscriber |
 | ID | uuid |
 | 版比較 | semver |
+| 自己更新 | self_update (`github`, `checksums`) |
 | 時刻 (RFC3339) | time |
 | 一時領域 (test) | tempfile |
 

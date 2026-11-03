@@ -29,4 +29,4 @@ pub use model::{Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance
 pub use paths::default_root;
 pub use runner::{Launched, PROBE_WINDOW, find_executable, open_directory, open_url};
 pub use store::{InstanceStore, ListFailure, Listing};
-pub use task::{TaskBoard, TaskHandle, TaskId, TaskInfo, TaskState};
+pub use task::{TaskBoard, TaskHandle, TaskId, TaskInfo, TaskSink, TaskState};

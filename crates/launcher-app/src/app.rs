@@ -43,6 +43,8 @@ pub enum Message {
     Finished,
     Opened(Result<(), String>),
     Browsed(InstanceId, Box<Package>, Result<Option<Browsed>, String>),
+    UpdateChecked(bool, Result<Option<String>, String>),
+    SelfUpdated(Result<(), String>),
     Redraw,
 }
 
@@ -89,6 +91,7 @@ impl App {
             token: services.token().unwrap_or_default().to_owned(),
             font: services.font_name().map(str::to_owned),
             fonts: Vec::new(),
+            update: settings::UpdateState::Checking,
             dns: services
                 .dns_servers()
                 .iter()
@@ -114,6 +117,7 @@ impl App {
             Task::perform(crate::ops::installed_fonts(), |result| {
                 Message::FontsLoaded(result.map_err(|error| error.to_string()))
             }),
+            app.check_update(false),
         ]);
         (app, load)
     }
@@ -195,6 +199,34 @@ impl App {
                     Task::none()
                 }
             },
+            Message::UpdateChecked(manual, result) => {
+                self.settings.update = match result {
+                    Ok(Some(version)) => settings::UpdateState::Available(version),
+                    Ok(None) => settings::UpdateState::UpToDate,
+                    Err(reason) => {
+                        if manual {
+                            self.notice = Some(reason);
+                        }
+                        settings::UpdateState::Idle
+                    }
+                };
+                Task::none()
+            }
+            Message::SelfUpdated(result) => {
+                self.settings.update = match (result, &self.settings.update) {
+                    (Ok(()), _) => settings::UpdateState::Applied,
+                    (Err(reason), state) => {
+                        self.notice = Some(reason);
+                        match state {
+                            settings::UpdateState::Installing(version) => {
+                                settings::UpdateState::Available(version.clone())
+                            }
+                            other => other.clone(),
+                        }
+                    }
+                };
+                Task::none()
+            }
             Message::Redraw => Task::none(),
         }
     }
@@ -286,10 +318,18 @@ impl App {
             nav_item(
                 ICON_TASKS,
                 strings::TAB_TASKS,
-                (active > 0).then(|| active.to_string()),
+                (active > 0).then(|| Badge {
+                    label: Some(active.to_string().into()),
+                }),
                 Screen::Tasks,
             ),
-            nav_item(ICON_SETTINGS, strings::TAB_SETTINGS, None, Screen::Settings),
+            nav_item(
+                ICON_SETTINGS,
+                strings::TAB_SETTINGS,
+                matches!(self.settings.update, settings::UpdateState::Available(_))
+                    .then_some(Badge { label: None }),
+                Screen::Settings,
+            ),
         ];
         let rail = m3::navrail(navrail::Style::new(&self.theme), items)
             .item_alignment(navrail::ItemAlignment::Top)
@@ -596,6 +636,24 @@ impl App {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
             }
+            M::CheckUpdate => {
+                self.settings.update = settings::UpdateState::Checking;
+                self.notice = None;
+                self.check_update(true)
+            }
+            M::ApplyUpdate => {
+                let settings::UpdateState::Available(version) = &self.settings.update else {
+                    return Task::none();
+                };
+                let version = version.clone();
+                let title = format!("{}: v{version}", strings::TASK_SELF_UPDATE);
+                let handle = self.services.board.add(title);
+                self.settings.update = settings::UpdateState::Installing(version.clone());
+                Task::perform(
+                    self.services.clone().self_update(handle, version),
+                    |result| Message::SelfUpdated(result.map_err(|error| error.to_string())),
+                )
+            }
             M::OpenDataDirectory => {
                 let dir = self.services.root().to_path_buf();
                 Task::perform(self.services.clone().open_folder(dir), |result| {
@@ -673,6 +731,12 @@ impl App {
         )
     }
 
+    fn check_update(&self, manual: bool) -> Task<Message> {
+        Task::perform(self.services.clone().check_update(), move |result| {
+            Message::UpdateChecked(manual, result.map_err(|error| error.to_string()))
+        })
+    }
+
     fn reload(&self) -> Task<Message> {
         Task::perform(self.services.clone().list(), |result| {
             Message::Loaded(result.map_err(|error| error.to_string()))
@@ -738,7 +802,7 @@ impl App {
 fn nav_item(
     glyph: &'static str,
     label: &'static str,
-    badge: Option<String>,
+    badge: Option<Badge<'static>>,
     screen: Screen,
 ) -> navrail::Item<'static, Message> {
     let icon = Icon::Text {
@@ -748,9 +812,7 @@ fn nav_item(
     navrail::Item {
         icon_active: icon.clone(),
         icon_inactive: icon,
-        badge: badge.map(|count| Badge {
-            label: Some(count.into()),
-        }),
+        badge,
         label: label.into(),
         on_press: Message::TabSelected(screen),
     }

@@ -6,11 +6,11 @@ use std::sync::{Arc, PoisonError, RwLock};
 use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
     Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
-    Package, TaskBoard, TaskHandle, open_directory,
+    Package, ProgressSink, TaskBoard, TaskHandle, open_directory,
 };
 use launcher_providers::{
-    Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any,
-    load_fresh, store_catalog,
+    Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
+    load_any, load_fresh, store_catalog,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -21,6 +21,7 @@ const CREATE_STEPS: u16 = 2;
 const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
 const WRITE_STEPS: u16 = 1;
+const UPDATE_STEPS: u16 = 1;
 const BROWSER_EXE: &str = if cfg!(windows) {
     "Madoka-Browser.exe"
 } else {
@@ -254,6 +255,37 @@ impl Services {
                 .map(|failure| format!("{}: {}", failure.dir.display(), failure.error))
                 .collect(),
         })
+    }
+
+    fn self_updater(&self) -> SelfUpdater {
+        SelfUpdater::new(
+            &self.user_agent,
+            self.dns.clone(),
+            self.token.clone(),
+            env!("CARGO_PKG_VERSION"),
+        )
+    }
+
+    /// Version of the latest launcher release when it is newer than the running version.
+    pub async fn check_update(self) -> Result<Option<String>, OpError> {
+        let updater = self.self_updater();
+        let result = run_blocking(move || updater.check()).await;
+        match &result {
+            Ok(version) => info!(?version, "update check done"),
+            Err(error) => warn!(%error, "update check failed"),
+        }
+        result
+    }
+
+    /// Replaces the launcher executables with release `version`. The new version runs after a restart.
+    pub async fn self_update(self, handle: TaskHandle, version: String) -> Result<(), OpError> {
+        handle.running(0, UPDATE_STEPS);
+        let updater = self.self_updater();
+        let sink: Arc<dyn ProgressSink> = Arc::new(handle.sink());
+        let result = run_blocking(move || updater.update(&version, &sink)).await;
+        log_outcome("self update", &result);
+        handle.finish(&result);
+        result
     }
 
     pub async fn app_versions(self, kind: Kind) -> Result<Vec<AppVersion>, OpError> {
@@ -716,6 +748,17 @@ pub async fn installed_fonts() -> Result<Vec<String>, OpError> {
     })
     .await
     .map_err(|error| OpError::Worker(error.to_string()))
+}
+
+async fn run_blocking<T, F>(work: F) -> Result<T, OpError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ProviderError> + Send + 'static,
+{
+    let joined = tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| OpError::Worker(error.to_string()))?;
+    Ok(joined?)
 }
 
 async fn blocking<T, F>(work: F) -> Result<T, OpError>

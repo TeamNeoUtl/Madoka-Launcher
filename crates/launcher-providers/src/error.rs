@@ -21,4 +21,6 @@ pub enum ProviderError {
     NoMatchingAsset { version: String },
     #[error("no provider for kind {0:?}")]
     NoProvider(Kind),
+    #[error("self update failed: {0}")]
+    SelfUpdate(String),
 }

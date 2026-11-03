@@ -107,3 +107,26 @@ async fn different_instances_do_not_block_each_other() {
 
     drop(held);
 }
+
+#[test]
+fn sink_reports_to_the_task_of_its_handle() {
+    let board = TaskBoard::default();
+    let handle = board.add("update");
+    let sink = handle.sink();
+    handle.running(0, 1);
+    sink.report(Progress {
+        done: 5,
+        total: Some(10),
+    });
+    assert_eq!(
+        board.snapshot()[0].state,
+        TaskState::Running {
+            done: 0,
+            total: 1,
+            transfer: Some(Progress {
+                done: 5,
+                total: Some(10)
+            })
+        }
+    );
+}

@@ -21,6 +21,18 @@ pub enum Message {
     ThemeToggled,
     FontSelected(Option<String>),
     OpenDataDirectory,
+    CheckUpdate,
+    ApplyUpdate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(String),
+    Installing(String),
+    Applied,
 }
 
 pub struct Form {
@@ -28,6 +40,7 @@ pub struct Form {
     pub dns: String,
     pub font: Option<String>,
     pub fonts: Vec<String>,
+    pub update: UpdateState,
 }
 
 pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a, Message> {
@@ -66,6 +79,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
     let body = column![
         dark_mode,
         font_picker(form, theme),
+        version_row(&form.update, theme),
         row![
             style::label(theme, format!("{}: {data_dir}", strings::DATA_DIRECTORY))
                 .size(14)
@@ -118,4 +132,51 @@ fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
     ]
     .spacing(4)
     .into()
+}
+
+fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Message> {
+    let status = match state {
+        UpdateState::Idle => None,
+        UpdateState::Checking => Some(strings::CHECKING_UPDATE.to_owned()),
+        UpdateState::UpToDate => Some(strings::LAUNCHER_UP_TO_DATE.to_owned()),
+        UpdateState::Available(version) => {
+            Some(format!("{}: v{version}", strings::UPDATE_AVAILABLE))
+        }
+        UpdateState::Installing(_) => Some(strings::LAUNCHER_UPDATING.to_owned()),
+        UpdateState::Applied => Some(strings::LAUNCHER_UPDATED.to_owned()),
+    };
+    let action = match state {
+        UpdateState::Idle | UpdateState::UpToDate => Some(
+            m3::button(
+                button::Style::tonal(theme, Accent::Primary),
+                button::Content::Label(strings::CHECK_UPDATE.into()),
+            )
+            .on_press(Message::CheckUpdate),
+        ),
+        UpdateState::Available(_) => Some(
+            m3::button(
+                button::Style::filled(theme, Accent::Primary),
+                button::Content::Label(strings::UPDATE.into()),
+            )
+            .on_press(Message::ApplyUpdate),
+        ),
+        UpdateState::Checking | UpdateState::Installing(_) | UpdateState::Applied => None,
+    };
+    let mut line = row![
+        style::label(
+            theme,
+            format!("{}: v{}", strings::LAUNCHER_VERSION, strings::APP_VERSION)
+        )
+        .size(14)
+        .width(Length::Fill)
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
+    if let Some(status) = status {
+        line = line.push(style::label(theme, status).size(14));
+    }
+    if let Some(action) = action {
+        line = line.push(action);
+    }
+    line.into()
 }
