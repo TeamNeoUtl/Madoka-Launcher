@@ -12,7 +12,7 @@ use launcher_providers::{
     AnyProvider, Dns, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any, load_fresh,
     store_catalog,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -342,6 +342,7 @@ impl Services {
         let mut child = Command::new(&exe)
             .arg(url.as_str())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(worker)?;
@@ -349,6 +350,10 @@ impl Services {
             .stdout
             .take()
             .ok_or_else(|| OpError::Worker("browser stdout is unavailable".to_owned()))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| OpError::Worker("browser stderr is unavailable".to_owned()))?;
         let mut lines = BufReader::new(stdout).lines();
         let mut found = None;
         while let Some(line) = lines.next_line().await.map_err(worker)? {
@@ -369,7 +374,14 @@ impl Services {
         if found.is_some() {
             child.kill().await.map_err(worker)?;
         } else {
-            child.wait().await.map_err(worker)?;
+            let status = child.wait().await.map_err(worker)?;
+            if !status.success() {
+                let mut message = String::new();
+                stderr.read_to_string(&mut message).await.map_err(worker)?;
+                let message = message.trim();
+                warn!(%url, %status, message, "browser failed");
+                return Err(OpError::Worker(format!("{status}: {message}")));
+            }
         }
         info!(%url, downloaded = found.is_some(), "browser closed");
         Ok(found)
