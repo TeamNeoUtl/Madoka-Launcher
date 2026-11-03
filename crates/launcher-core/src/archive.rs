@@ -14,8 +14,6 @@ pub enum Layout {
     Tree,
     /// Like `Tree`. When one directory holds every entry, that directory is dropped from the paths.
     TreeWithoutRoot,
-    /// Entries sit directly under the destination.
-    Flat,
 }
 
 struct Entry {
@@ -64,9 +62,6 @@ impl Archive {
             let is_dir = entry.is_dir();
             let rel = name.replace('\\', "/").trim_end_matches('/').to_owned();
             ensure_relative_path(&rel)?;
-            if layout == Layout::Flat && (is_dir || name.contains(['/', '\\'])) {
-                return Err(Error::UnsafePath(name));
-            }
             if !seen.insert(rel.clone()) {
                 return Err(Error::UnsafePath(name));
             }

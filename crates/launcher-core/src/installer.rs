@@ -127,6 +127,7 @@ impl<F: Fetcher> Installer<F> {
 
     /// Replaces the record with the same `package.id`, then writes the new record to `instance.toml`.
     /// The archive is validated before any existing file is removed.
+    /// When one directory holds every archive entry, the files are written without that directory.
     ///
     /// # Errors
     ///
@@ -145,7 +146,7 @@ impl<F: Fetcher> Installer<F> {
         let plugin_dir = plugin_dir(instance.config.kind, package)?;
         info!(%id, package = %package.id, version, "install package");
         let download = self.download(artifact, progress).await?;
-        let mut archive = Archive::open(&download.path, Layout::Flat)?;
+        let mut archive = Archive::open(&download.path, Layout::TreeWithoutRoot)?;
         let app_dir = instance.app_dir();
 
         if let Some(position) = position_of(&instance.config.plugins, &package.id) {

@@ -13,7 +13,7 @@
 
 | Kind | 本体の取得元 | プラグイン索引 | 導入形式 |
 |---|---|---|---|
-| ymm4 | GitHub Releases (`manju-summoner/YukkuriMovieMaker4`)。asset = `^YukkuriMovieMaker_v[0-9.]+(_Lite)?\.zip$`。sha256 は API の `digest` | `https://manjubox.net/ymm4plugins.yml` (YAML、426 件、有効 412 件) | `url` が GitHub リポジトリ (296 件) の場合、Release の `.ymme` (ZIP、階層なし) を `user/plugin/<repo>/` へ全件展開。他は既定ブラウザで開く |
+| ymm4 | GitHub Releases (`manju-summoner/YukkuriMovieMaker4`)。asset = `^YukkuriMovieMaker_v[0-9.]+(_Lite)?\.zip$`。sha256 は API の `digest` | `https://manjubox.net/ymm4plugins.yml` (YAML、426 件、有効 412 件) | `url` が GitHub リポジトリ (296 件) の場合、Release の `.ymme` (ZIP。直下のファイル、または 1 個のルートディレクトリ配下のファイル) を `user/plugin/<repo>/` へ全件展開。他は既定ブラウザで開く |
 | aviutl2 | 公式のポータブル ZIP (配布 URL・展開後の構造は Phase 5 で確認) | `https://raw.githubusercontent.com/Neosku/aviutl2-catalog-data/refs/heads/main/index.json` (445 件) | `installer.install` のアクション列 |
 | aviutl | APM `v3/core.json` (`aviutl` と `exedit`。URL は `http`、sha384 必須) | `https://cdn.jsdelivr.net/gh/team-apm/apm-data@main/v3/` (285 件) | `directURL` (2 件) または GitHub `releases` URL (78 件) の ZIP を展開し、`files[].filename` へ配置。sha384 検証。他 205 件は既定ブラウザで開く |
 | neoutl | Codeberg Releases (`TeamNeoUtl/NeoUtl`)。`neoutl-{linux,windows}-x86_64.zip` | なし | ZIP 展開 |
@@ -140,7 +140,7 @@ Wine を使用しない。すべて直接 spawn。
 - `type` はカンマ区切りで複数値を持つ。`Vec<Category>` に分割する。
 - `isEnabled = false` のエントリは非表示。
 - 導入可能判定: `url` が `https://github.com/<owner>/<repo>` (パス 2 要素) の場合のみ `Download`。それ以外は `OpenInBrowser`。
-- `.ymme` の展開: `<instance>/app/user/plugin/<repo>/` を作成し、全エントリを直下へ展開する。エントリ名に `/` `\` `..` を含む場合は `Failed`。展開した相対パスを `files` に記録する。
+- `.ymme` の展開: `<instance>/app/user/plugin/<repo>/` を作成し、全エントリを展開する。全エントリが 1 個のディレクトリ配下にある場合は、そのディレクトリを除いて展開する。他のサブディレクトリは保持する。エントリ名に `..`、絶対パス、ドライブ指定を含む場合は `Failed`。バックスラッシュは `/` として扱う。展開した相対パスを `files` に記録する。
 - 破損検出: 件数 0、または必須キー欠落が 1 件以上の場合は `Err(CatalogShapeChanged)`。キャッシュを上書きしない。
 
 ## 6. 安全性

@@ -86,6 +86,12 @@ fn fixture(kind: Kind) -> Fixture {
 fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, data) in entries {
+        if name.ends_with('/') {
+            writer
+                .add_directory(*name, SimpleFileOptions::default())
+                .unwrap();
+            continue;
+        }
         writer
             .start_file(*name, SimpleFileOptions::default())
             .unwrap();
@@ -250,13 +256,66 @@ async fn install_package_zip_slip_fails_without_writes() {
 }
 
 #[tokio::test]
-async fn install_package_rejects_backslash_and_nested_entries() {
+async fn install_package_rejects_parent_entries() {
     let f = fixture(Kind::Ymm4);
-    for name in ["sub/a.dll", "..\\evil.dll", "sub\\a.dll"] {
+    for name in [
+        "..\\evil.dll",
+        "sub/../../evil.dll",
+        "/evil.dll",
+        "C:\\evil.dll",
+    ] {
         let result = install_ymme(&f, "repo", "1.0", &[(name, b"x")]).await;
         assert!(matches!(result, Err(Error::UnsafePath(_))), "{name}");
     }
     assert!(all_files(&f.instance.app_dir()).is_empty());
+}
+
+#[tokio::test]
+async fn install_package_drops_the_single_root_directory() {
+    let f = fixture(Kind::Ymm4);
+    let record = install_ymme(
+        &f,
+        "repo",
+        "1.0",
+        &[
+            ("Plugin/", b""),
+            ("Plugin/a.dll", b"a"),
+            ("Plugin/README.md", b"r"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        record.files,
+        ["user/plugin/repo/a.dll", "user/plugin/repo/README.md"]
+    );
+    let app = f.instance.app_dir();
+    assert_eq!(fs::read(app.join("user/plugin/repo/a.dll")).unwrap(), b"a");
+    assert!(!app.join("user/plugin/repo/Plugin").exists());
+}
+
+#[tokio::test]
+async fn install_package_keeps_nested_directories() {
+    let f = fixture(Kind::Ymm4);
+    let record = install_ymme(
+        &f,
+        "repo",
+        "1.0",
+        &[("a.dll", b"a"), ("res/", b""), ("res/b.png", b"b")],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        record.files,
+        ["user/plugin/repo/a.dll", "user/plugin/repo/res/b.png"]
+    );
+    let app = f.instance.app_dir();
+    assert_eq!(
+        fs::read(app.join("user/plugin/repo/res/b.png")).unwrap(),
+        b"b"
+    );
 }
 
 #[tokio::test]
