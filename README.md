@@ -23,7 +23,7 @@ Madoka Launcher は完全無料・自由・オープンソースです。広告�
 
 # ダウンロード・インストール
 
-[launcher.taisho-guy.org](https://launcher.taisho-guy.org) から Madoka Launcher を入手できます。
+[madoka.taisho-guy.org](https://launcher.taisho-guy.org) から Madoka Launcher を入手できます。
 
 Windows 及び Linux に対応しています。
 
