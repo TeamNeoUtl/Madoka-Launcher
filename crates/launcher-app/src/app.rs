@@ -118,7 +118,7 @@ impl App {
         (app, load)
     }
 
-    pub fn theme(&self) -> iced::Theme {
+    pub const fn theme(&self) -> iced::Theme {
         style::iced_theme(self.theme.mode)
     }
 
@@ -146,7 +146,7 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Saved(result) => {
+            Message::Saved(result) | Message::Opened(result) => {
                 if let Err(reason) = result {
                     self.notice = Some(reason);
                 }
@@ -187,12 +187,6 @@ impl App {
                 self.reload()
             }
             Message::Finished => self.reload(),
-            Message::Opened(result) => {
-                if let Err(reason) = result {
-                    self.notice = Some(reason);
-                }
-                Task::none()
-            }
             Message::Browsed(result) => match result {
                 Ok(Some(browsed)) => self.start_download(browsed),
                 Ok(None) => Task::none(),
@@ -226,7 +220,7 @@ impl App {
                 settings::view(
                     &self.settings,
                     &self.theme,
-                    self.services.root().display().to_string(),
+                    &self.services.root().display().to_string(),
                 )
                 .map(Message::Settings),
             ),

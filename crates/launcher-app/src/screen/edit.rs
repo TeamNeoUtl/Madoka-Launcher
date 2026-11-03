@@ -13,6 +13,7 @@ use crate::style::{self, Tone};
 const TAB_LIST_WIDTH: f32 = 200.0;
 const ROW_HEIGHT: f32 = 72.0;
 const ROW_GAP: f32 = 4.0;
+const ROW_PITCH: f32 = ROW_HEIGHT + ROW_GAP;
 const OVERSCAN: usize = 3;
 const DEFAULT_VIEWPORT: f32 = 600.0;
 const SUMMARY_CHARS: usize = 90;
@@ -110,7 +111,7 @@ impl State {
         !self.name.trim().is_empty()
     }
 
-    pub fn needs_catalog(&self) -> bool {
+    pub const fn needs_catalog(&self) -> bool {
         has_catalog(self.kind) && matches!(self.catalog, Catalog::Idle)
     }
 }
@@ -283,7 +284,7 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .collect();
     scrollable(column(rows).spacing(ROW_GAP))
         .height(Length::Fill)
-        .style(style::scroll(*theme))
+        .style(style::scroll(theme))
         .into()
 }
 
@@ -389,7 +390,7 @@ fn category_bar<'a>(
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new(),
         ))
-        .style(style::scroll(*theme))
+        .style(style::scroll(theme))
         .into()
 }
 
@@ -428,32 +429,50 @@ fn package_list<'a>(
     instance: &Instance,
     state: &State,
 ) -> Element<'a, Message> {
-    let pitch = ROW_HEIGHT + ROW_GAP;
     let total = shown.len();
-    let content_height = total as f32 * pitch;
+    let content_height = extent(total);
     let offset = state
         .scroll_y
         .clamp(0.0, (content_height - state.viewport_height).max(0.0));
-    let first = (offset / pitch) as usize;
-    let visible = (state.viewport_height / pitch).ceil() as usize + 1;
+    let first = row_at(offset, total);
+    let visible = row_at(state.viewport_height, total) + 2;
     let start = first.saturating_sub(OVERSCAN).min(total);
     let end = (first + visible + OVERSCAN).min(total);
 
     let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(end - start + 2);
-    rows.push(spacer(start as f32 * pitch));
+    rows.push(spacer(extent(start)));
     rows.extend(
         shown[start..end]
             .iter()
             .map(|package| package_row(theme, package, status_of(instance, package))),
     );
-    rows.push(spacer((total - end) as f32 * pitch));
+    rows.push(spacer(extent(total - end)));
     scrollable(column(rows).spacing(0))
         .on_scroll(|viewport| {
             Message::Scrolled(viewport.absolute_offset().y, viewport.bounds().height)
         })
         .height(Length::Fill)
-        .style(style::scroll(*theme))
+        .style(style::scroll(theme))
         .into()
+}
+
+/// Height of `rows` rows. Counts above `u16::MAX` saturate.
+fn extent(rows: usize) -> f32 {
+    f32::from(u16::try_from(rows).unwrap_or(u16::MAX)) * ROW_PITCH
+}
+
+/// Index of the row that contains `offset`, or `total` when `offset` lies below every row.
+fn row_at(offset: f32, total: usize) -> usize {
+    let (mut low, mut high) = (0, total);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if extent(middle + 1) <= offset {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
 }
 
 fn spacer<'a>(height: f32) -> Element<'a, Message> {

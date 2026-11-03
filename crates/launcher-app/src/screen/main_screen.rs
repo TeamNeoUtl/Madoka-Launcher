@@ -18,7 +18,7 @@ const TILE_WIDTH: f32 = 210.0;
 const SIDEBAR_WIDTH: f32 = 280.0;
 const TILE_PADDING: f32 = 14.0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Message {
     Select(InstanceId),
     ShowNew,
@@ -52,12 +52,12 @@ pub fn view(props: &Props<'_>) -> Ui {
             .width(Length::Fill),
         compact(
             strings::REFRESH,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::Refresh
         ),
         compact(
             strings::ADD_INSTANCE,
-            button::Style::filled(theme, Accent::Primary),
+            &button::Style::filled(theme, Accent::Primary),
             Message::ShowNew
         ),
     ]
@@ -75,7 +75,7 @@ pub fn view(props: &Props<'_>) -> Ui {
         scrollable(grid(theme, props.instances, props.selected, props.context))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(style::scroll(*theme)),
+            .style(style::scroll(theme)),
         sidebar(theme, selected, confirming),
     ]
     .spacing(style::GAP)
@@ -199,32 +199,32 @@ fn context_menu(theme: &Theme) -> Ui {
     let entries: Vec<Ui> = vec![
         action(
             strings::LAUNCH,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::Launch,
         ),
         action(
             strings::EDIT,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::Edit,
         ),
         action(
             strings::OPEN_FOLDER,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::OpenFolder,
         ),
         action(
             strings::DUPLICATE,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::Duplicate,
         ),
         action(
             strings::DELETE,
-            style::danger_button(theme),
+            &style::danger_button(theme),
             Message::Delete,
         ),
         action(
             strings::CLOSE,
-            button::Style::tonal(theme, Accent::Primary),
+            &button::Style::tonal(theme, Accent::Primary),
             Message::ContextClose,
         ),
     ];
@@ -235,10 +235,10 @@ fn context_menu(theme: &Theme) -> Ui {
 }
 
 fn sidebar(theme: &Theme, instance: Option<&Instance>, confirming: bool) -> Ui {
-    let content: Ui = match instance {
-        None => style::label(theme, strings::NO_SELECTION).into(),
-        Some(instance) => details(theme, instance, confirming),
-    };
+    let content: Ui = instance.map_or_else(
+        || style::label(theme, strings::NO_SELECTION).into(),
+        |instance| details(theme, instance, confirming),
+    );
     m3::card(card::Style::filled(theme), content)
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
@@ -280,12 +280,12 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         vec![
             action(
                 strings::DELETE_CONFIRM,
-                style::danger_button(theme),
+                &style::danger_button(theme),
                 Message::ConfirmDelete,
             ),
             action(
                 strings::CANCEL,
-                button::Style::tonal(theme, Accent::Primary),
+                &button::Style::tonal(theme, Accent::Primary),
                 Message::CancelDelete,
             ),
         ]
@@ -293,27 +293,27 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         vec![
             action(
                 strings::LAUNCH,
-                button::Style::filled(theme, Accent::Primary),
+                &button::Style::filled(theme, Accent::Primary),
                 Message::Launch,
             ),
             action(
                 strings::EDIT,
-                button::Style::tonal(theme, Accent::Primary),
+                &button::Style::tonal(theme, Accent::Primary),
                 Message::Edit,
             ),
             action(
                 strings::DUPLICATE,
-                button::Style::tonal(theme, Accent::Primary),
+                &button::Style::tonal(theme, Accent::Primary),
                 Message::Duplicate,
             ),
             action(
                 strings::OPEN_FOLDER,
-                button::Style::tonal(theme, Accent::Primary),
+                &button::Style::tonal(theme, Accent::Primary),
                 Message::OpenFolder,
             ),
             action(
                 strings::DELETE,
-                style::danger_button(theme),
+                &style::danger_button(theme),
                 Message::Delete,
             ),
         ]
@@ -329,15 +329,15 @@ fn field(theme: &Theme, label: &str, value: &str) -> Ui {
         .into()
 }
 
-fn action(label: &'static str, style: button::Style, message: Message) -> Ui {
-    m3::button(style, button::Content::Label(label.into()))
+fn action(label: &'static str, style: &button::Style, message: Message) -> Ui {
+    m3::button(*style, button::Content::Label(label.into()))
         .size(button::Size::default().width(Length::Fill))
         .on_press(message)
         .into()
 }
 
-fn compact(label: &'static str, style: button::Style, message: Message) -> Ui {
-    m3::button(style, button::Content::Label(label.into()))
+fn compact(label: &'static str, style: &button::Style, message: Message) -> Ui {
+    m3::button(*style, button::Content::Label(label.into()))
         .on_press(message)
         .into()
 }

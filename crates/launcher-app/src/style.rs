@@ -56,7 +56,7 @@ pub const fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
-/// Theme of iced itself. It colors the widgets that iced_m3 does not replace.
+/// Theme of iced itself. It colors the widgets that `iced_m3` does not replace.
 pub const fn iced_theme(mode: Mode) -> IcedTheme {
     match mode {
         Mode::Light => IcedTheme::Light,
@@ -144,7 +144,8 @@ pub fn rail_background(theme: &Theme) -> impl Fn(&IcedTheme) -> container::Style
 }
 
 pub fn scroll(
-    theme: Theme,
+    theme: &Theme,
 ) -> impl Fn(&IcedTheme, scrollable::Status) -> scrollable::Style + use<> {
+    let theme = *theme;
     move |_, status| iced_m3::style::scrollable(status, &theme)
 }

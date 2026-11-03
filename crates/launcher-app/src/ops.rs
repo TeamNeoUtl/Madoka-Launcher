@@ -642,11 +642,15 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let extension = path
         .extension()
         .map(|extension| extension.to_string_lossy().into_owned());
-    (1_u32..)
-        .map(|n| match &extension {
-            Some(extension) => dir.join(format!("{stem} ({n}).{extension}")),
-            None => dir.join(format!("{stem} ({n})")),
-        })
+    let numbered = |n: u32| {
+        let name = extension.as_ref().map_or_else(
+            || format!("{stem} ({n})"),
+            |extension| format!("{stem} ({n}).{extension}"),
+        );
+        dir.join(name)
+    };
+    (1..=u32::MAX)
+        .map(numbered)
         .find(|candidate| !candidate.exists())
         .unwrap_or(first)
 }

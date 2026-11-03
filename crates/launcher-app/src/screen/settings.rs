@@ -30,7 +30,7 @@ pub struct Form {
     pub fonts: Vec<String>,
 }
 
-pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: String) -> Element<'a, Message> {
+pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a, Message> {
     let background = card::Style::filled(theme).container_color;
     let token = TextInput::new(strings::GITHUB_TOKEN_HINT, &form.token, theme)
         .with_label_text(strings::GITHUB_TOKEN, background)
@@ -114,7 +114,7 @@ fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
         style::label(theme, strings::FONT).size(14),
         scrollable(column(entries).spacing(4))
             .height(Length::Fixed(FONT_LIST_HEIGHT))
-            .style(style::scroll(*theme)),
+            .style(style::scroll(theme)),
     ]
     .spacing(4)
     .into()

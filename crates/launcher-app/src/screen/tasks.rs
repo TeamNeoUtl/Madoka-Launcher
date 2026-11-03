@@ -8,7 +8,7 @@ use launcher_core::{Progress, TaskInfo, TaskState};
 use crate::strings;
 use crate::style::{self, Tone};
 
-const BYTES_PER_MIB: f64 = 1_048_576.0;
+const BYTES_PER_MIB: u128 = 1_048_576;
 
 pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'static, M> {
     let list: Element<'static, M> = if tasks.is_empty() {
@@ -27,7 +27,7 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
         style::label(theme, strings::TAB_TASKS).size(24),
         scrollable(list)
             .height(Length::Fill)
-            .style(style::scroll(*theme)),
+            .style(style::scroll(theme)),
     ]
     .spacing(style::GAP)
     .into()
@@ -68,7 +68,8 @@ fn transfer_label(progress: Progress) -> String {
 }
 
 fn mib(bytes: u64) -> String {
-    format!("{:.1} MiB", bytes as f64 / BYTES_PER_MIB)
+    let tenths = (u128::from(bytes) * 10 + BYTES_PER_MIB / 2) / BYTES_PER_MIB;
+    format!("{}.{} MiB", tenths / 10, tenths % 10)
 }
 
 const fn tone(state: &TaskState) -> Tone {
@@ -124,11 +125,17 @@ fn bar<M: 'static>(theme: &Theme, progress: Option<f32>) -> Element<'static, M> 
         .into()
 }
 
+/// `done / total` in steps of 0.001. `total` is above zero.
+fn fraction(done: u64, total: u64) -> f32 {
+    let permille = u128::from(done.min(total)) * 1000 / u128::from(total);
+    f32::from(u16::try_from(permille).unwrap_or(1000)) / 1000.0
+}
+
 fn transfer_bar<M: 'static>(theme: &Theme, progress: Progress) -> Element<'static, M> {
     let fraction = progress
         .total
         .filter(|total| *total > 0)
-        .map(|total| progress.done.min(total) as f32 / total as f32);
+        .map(|total| fraction(progress.done, total));
     column![
         bar(theme, fraction),
         style::label(theme, transfer_label(progress)).size(12)

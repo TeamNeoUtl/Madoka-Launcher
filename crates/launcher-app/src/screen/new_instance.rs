@@ -46,7 +46,7 @@ pub enum Availability {
     NoProvider,
 }
 
-pub fn availability(kind: Kind, host: Host) -> Availability {
+pub const fn availability(kind: Kind, host: Host) -> Availability {
     if !kind.supported_on(host) {
         Availability::UnsupportedHost
     } else if !has_provider(kind) {
@@ -119,7 +119,7 @@ impl Form {
         }
     }
 
-    pub fn needs_load(&self) -> bool {
+    pub const fn needs_load(&self) -> bool {
         matches!(self.load, Load::Idle)
     }
 
@@ -331,7 +331,7 @@ fn version_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
             });
             scrollable(column(entries).spacing(4))
                 .height(Length::Fixed(VERSION_LIST_HEIGHT))
-                .style(style::scroll(*theme))
+                .style(style::scroll(theme))
                 .into()
         }
     }
