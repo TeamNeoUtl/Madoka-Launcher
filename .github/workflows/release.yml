@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+            suffix: .exe
+            archive: zip
+          - os: ubuntu-latest
+            label: linux-x86_64
+            suffix: ""
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libgtk-3-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify tag matches version
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "launcher-app") | .version')
+          test "v$version" = "$GITHUB_REF_NAME"
+      - run: cargo build --release --workspace
+      - name: Package
+        shell: bash
+        run: |
+          name="motoyori-launcher-$GITHUB_REF_NAME-${{ matrix.label }}"
+          mkdir "$name"
+          cp "target/release/Motoyori-Launcher${{ matrix.suffix }}" "target/release/Motoyori-Browser${{ matrix.suffix }}" LICENSE README.md "$name/"
+          if [ "${{ matrix.archive }}" = zip ]; then
+            7z a "$name.zip" "$name"
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+          echo "ARCHIVE=$name.${{ matrix.archive }}" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

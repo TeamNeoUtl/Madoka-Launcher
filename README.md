@@ -29,13 +29,14 @@ Windows 及び Linux に対応しています。
 
 # ビルド
 
-## Linux（Arch Linux 系推奨）
+| OS | 開発環境 |
+| --- | --- |
+| Linux | Arch Linux 系推奨（Ubuntu も多分通る） |
+| Windows | MSYS2 推奨（MSVC も多分通る） |
 
-- `cargo build --release`
+`cargo build --release` だけ。
 
-## Windows（MSYS2 推奨）
-
-- `cargo build --release`
+`git`, `rust` 等は各自インストールしてください。
 
 # よくある質問
 
