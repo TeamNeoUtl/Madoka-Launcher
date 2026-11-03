@@ -10,7 +10,7 @@ use launcher_core::{
 };
 use launcher_providers::{
     Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
-    load_any, load_fresh, store_catalog,
+    Versions, load_any, load_fresh, store_catalog,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -32,6 +32,7 @@ const BROWSED_DIR: &str = "downloads";
 const PART_SUFFIX: &str = ".part";
 const DEFAULT_FILE_NAME: &str = "download";
 const UNKNOWN_VERSION: &str = "-";
+const ADDON_LABEL: &str = "exedit";
 const PLUGIN_ARCHIVE_EXTENSION: &str = "ymme";
 const FORBIDDEN_FILE_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
@@ -70,6 +71,8 @@ pub struct CreateRequest {
     pub edition: Edition,
     pub group: Option<String>,
     pub version: AppVersion,
+    /// Plugin that is extracted beside the editor.
+    pub addon: Option<AppVersion>,
 }
 
 /// A download that started in the browser window.
@@ -288,11 +291,16 @@ impl Services {
         result
     }
 
-    pub async fn app_versions(self, kind: Kind) -> Result<Vec<AppVersion>, OpError> {
+    pub async fn app_versions(self, kind: Kind) -> Result<Versions, OpError> {
         let provider = MadokaProvider::for_kind(kind, self.http())?;
-        let result = provider.app_versions().await;
+        let result = provider.versions().await;
         match &result {
-            Ok(versions) => info!(?kind, count = versions.len(), "app versions loaded"),
+            Ok(versions) => info!(
+                ?kind,
+                app = versions.app.len(),
+                addon = versions.addon.len(),
+                "app versions loaded"
+            ),
             Err(error) => warn!(?kind, %error, "app versions failed"),
         }
         Ok(result?)
@@ -495,7 +503,7 @@ impl Services {
     /// Creates the instance directory, then installs the app into it.
     /// Deletes the instance directory when the installation fails.
     pub async fn create(self, handle: TaskHandle, request: CreateRequest) -> Option<InstanceId> {
-        info!(name = %request.name, kind = ?request.kind, version = %request.version.version, "create task start");
+        info!(name = %request.name, kind = ?request.kind, version = %request.version.version, addon = ?request.addon.as_ref().map(|addon| &addon.version), "create task start");
         let result = self.create_instance(&handle, request).await;
         log_outcome("create", &result);
         handle.finish(&result);
@@ -625,6 +633,7 @@ impl Services {
             edition,
             group,
             version,
+            addon,
         } = request;
         handle.running(0, CREATE_STEPS);
         let provider = MadokaProvider::for_kind(kind, self.http())?;
@@ -632,8 +641,14 @@ impl Services {
             host: self.host,
             edition,
         };
-        let artifacts = provider.plan_install_app(&version, selection)?;
-        let checks = version.checks.clone();
+        let mut artifacts = provider.plan_install_app(&version, selection)?;
+        let mut checks = version.checks.clone();
+        let mut app_version = version.version.clone();
+        if let Some(addon) = &addon {
+            artifacts.extend(provider.plan_install_app(addon, selection)?);
+            checks.extend(addon.checks.iter().cloned());
+            app_version = format!("{app_version} / {ADDON_LABEL} {}", addon.version);
+        }
         debug!(
             version = %version.version,
             artifacts = ?artifacts.iter().map(|a| a.url.as_str()).collect::<Vec<_>>(),
@@ -644,7 +659,7 @@ impl Services {
                 name,
                 kind,
                 edition,
-                app_version: version.version,
+                app_version,
                 group,
             },
             self.host,

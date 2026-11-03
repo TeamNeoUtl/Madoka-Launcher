@@ -7,10 +7,10 @@ use iced_m3::theme::{Mode, Theme};
 use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
 use iced_m3::widget::{self as m3, Badge, navrail};
-use launcher_core::{
-    AppSelection, AppVersion, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo,
-};
+use launcher_core::{AppSelection, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo};
 use url::Url;
+
+use launcher_providers::Versions;
 
 use crate::ops::{Browsed, Loaded, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
@@ -35,7 +35,7 @@ pub enum Message {
     Saved(Result<(), String>),
     FontsLoaded(Result<Vec<String>, String>),
     Loaded(Result<Loaded, String>),
-    VersionsLoaded(Kind, Result<Vec<AppVersion>, String>),
+    VersionsLoaded(Kind, Result<Versions, String>),
     CatalogLoaded(InstanceId, Result<Vec<Package>, String>),
     Planned(InstanceId, Result<Box<(Package, InstallPlan)>, String>),
     Updated(Result<(), String>),
@@ -477,6 +477,10 @@ impl App {
                 self.form.selected = Some(choice);
                 Task::none()
             }
+            M::AddonSelected(choice) => {
+                self.form.addon_selected = Some(choice);
+                Task::none()
+            }
             M::Reload => {
                 self.form.begin_load();
                 self.load_versions()
@@ -779,10 +783,14 @@ impl App {
             host: self.services.host,
             edition: self.form.edition,
         };
-        let installable =
-            self.services
-                .installable(self.form.kind, selection, self.form.versions());
-        self.form.set_choices(&installable);
+        let kind = self.form.kind;
+        let installable = self
+            .services
+            .installable(kind, selection, self.form.versions());
+        let addons = self
+            .services
+            .installable(kind, selection, self.form.addon_versions());
+        self.form.set_choices(&installable, &addons);
     }
 
     fn contains(&self, id: InstanceId) -> bool {

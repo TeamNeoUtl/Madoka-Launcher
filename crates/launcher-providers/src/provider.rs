@@ -4,10 +4,28 @@ use launcher_core::{AppSelection, AppVersion, Artifact, InstallPlan, Kind, Packa
 
 use crate::ProviderError;
 
+/// Versions of the editor and of the plugin that the editor needs beside it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Versions {
+    pub app: Vec<AppVersion>,
+    /// Empty when the kind has no such plugin.
+    pub addon: Vec<AppVersion>,
+}
+
 pub trait Provider: Send + Sync {
     fn kind(&self) -> Kind;
 
     fn app_versions(&self) -> impl Future<Output = Result<Vec<AppVersion>, ProviderError>> + Send;
+
+    /// `app_versions` and the addon versions. One request set serves both lists.
+    fn versions(&self) -> impl Future<Output = Result<Versions, ProviderError>> + Send {
+        async {
+            Ok(Versions {
+                app: self.app_versions().await?,
+                addon: Vec::new(),
+            })
+        }
+    }
 
     fn catalog(&self) -> impl Future<Output = Result<Vec<Package>, ProviderError>> + Send;
 

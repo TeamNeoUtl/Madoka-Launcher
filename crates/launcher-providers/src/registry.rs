@@ -2,7 +2,7 @@ use launcher_core::{AppSelection, AppVersion, Artifact, InstallPlan, Kind, Packa
 
 use crate::{
     Aviutl2Provider, AviutlProvider, FreyaProvider, Http, NeoutlProvider, Provider, ProviderError,
-    Ymm4Provider,
+    Versions, Ymm4Provider,
 };
 
 /// Kinds for which `MadokaProvider::for_kind` returns a provider.
@@ -64,6 +64,10 @@ impl<H: Http> Provider for MadokaProvider<H> {
 
     async fn app_versions(&self) -> Result<Vec<AppVersion>, ProviderError> {
         dispatch!(self, provider => provider.app_versions().await)
+    }
+
+    async fn versions(&self) -> Result<Versions, ProviderError> {
+        dispatch!(self, provider => provider.versions().await)
     }
 
     async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {

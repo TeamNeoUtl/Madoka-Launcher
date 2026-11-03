@@ -30,6 +30,7 @@ pub const UNGROUPED: &str = "未分類";
 pub const KIND: &str = "種別";
 pub const EDITION: &str = "エディション";
 pub const VERSION: &str = "本体バージョン";
+pub const ADDON_VERSION: &str = "拡張編集バージョン";
 pub const GROUP: &str = "グループ";
 pub const PLUGINS: &str = "プラグイン";
 pub const NAME: &str = "名前";

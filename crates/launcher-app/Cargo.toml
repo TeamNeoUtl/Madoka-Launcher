@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio"] }
-iced_m3 = { git = "https://github.com/tpaau/iced_m3.git", default-features = false, features = ["expressive-defaults"] }
+iced_m3 = { git = "https://github.com/TeamNeoUtl/iced-md3", default-features = false, features = ["expressive-defaults"] }
 launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }
 fontdb = "0.24"

@@ -12,16 +12,17 @@ use url::Url;
 use crate::history::{self, parse_rows};
 use crate::recipe::{direct_artifact, finish};
 use crate::release::{latest_artifacts, parse_url};
-use crate::{Http, Provider, ProviderError};
+use crate::{Http, Provider, ProviderError, Versions};
 
 const DATA_URL: &str = "https://cdn.jsdelivr.net/gh/team-apm/apm-data@main/v3/";
 const PATTERN_URL: &str =
     "https://cdn.jsdelivr.net/gh/team-apm/apm-data@main/util/archive-name-pattern.json";
 const FALLBACK_PAGE: &str = "https://github.com/team-apm/apm-data";
 const ZIP_EXTENSION: &str = ".zip";
-/// Link to `aviutl<digits><letter?>.zip`, followed by the next `version<number>` text.
-/// `aviutl2*.zip` and `exedit*.zip` do not match.
-const HISTORY_ROW: &str = r#"(?s)(?i:href)\s*=\s*["']([^"']*aviutl\d+[a-z]?\.zip)["'].*?(?i:version)\s*([0-9]+\.[0-9]+[a-z]?)"#;
+/// Link to `<name><digits><letter?>.zip`, followed by the next `version<number>` text.
+/// `aviutl2*.zip` and the other name do not match.
+const HISTORY_ROW_AVIUTL: &str = r#"(?s)(?i:href)\s*=\s*["']([^"']*aviutl\d+[a-z]?\.zip)["'].*?(?i:version)\s*([0-9]+\.[0-9]+[a-z]?)"#;
+const HISTORY_ROW_EXEDIT: &str = r#"(?s)(?i:href)\s*=\s*["']([^"']*exedit\d+[a-z]?\.zip)["'].*?(?i:version)\s*([0-9]+\.[0-9]+[a-z]?)"#;
 
 #[derive(Debug, Deserialize)]
 struct RawList {
@@ -157,61 +158,81 @@ fn program_artifact(program: &RawProgram) -> Result<(Artifact, Vec<FileCheck>), 
     Ok((artifact, checks_of(Some(release))))
 }
 
-/// `AviUtl` and the extended editing plugin of their latest versions form one app version.
-///
-/// # Errors
-///
-/// Returns `ProviderError::CatalogShapeChanged` when `bytes` is not the expected JSON document
-/// or a release lacks a required field, and `ProviderError::InvalidUrl` for an invalid URL.
-pub fn parse_aviutl_app(bytes: &[u8]) -> Result<AppVersion, ProviderError> {
-    let core: RawCore = serde_json::from_slice(bytes).map_err(|e| shape_changed(e.to_string()))?;
-    let (aviutl, mut checks) = program_artifact(&core.aviutl)?;
-    let (exedit, exedit_checks) = program_artifact(&core.exedit)?;
-    checks.extend(exedit_checks);
-    Ok(AppVersion {
-        version: format!(
-            "{} / exedit {}",
-            core.aviutl.latest_version, core.exedit.latest_version
-        ),
+/// Versions of one program: its latest release from `core`, then the archives of the history
+/// page that `row` matches, except the latest version. A hash comes from `core` when it lists
+/// the version. An unusable history page leaves the latest version alone.
+fn program_versions(
+    program: &RawProgram,
+    page: Option<&[u8]>,
+    row: &str,
+) -> Result<Vec<AppVersion>, ProviderError> {
+    let (artifact, checks) = program_artifact(program)?;
+    let mut versions = vec![AppVersion {
+        version: program.latest_version.clone(),
         prerelease: false,
         published_at: None,
-        artifacts: vec![aviutl, exedit],
+        artifacts: vec![artifact],
         checks,
-    })
+    }];
+    let Some(page) = page else {
+        return Ok(versions);
+    };
+    match parse_rows(page, row) {
+        Ok(rows) if !rows.is_empty() => {
+            versions.extend(
+                rows.into_iter()
+                    .filter(|(version, _)| *version != program.latest_version)
+                    .map(|(version, url)| {
+                        let release = release_of(&program.releases, &version);
+                        let mut artifact = direct_artifact(&url);
+                        artifact.hash = release
+                            .and_then(|release| release.integrity.as_ref())
+                            .and_then(|integrity| Hash::parse_sri(&integrity.archive));
+                        AppVersion {
+                            version,
+                            prerelease: false,
+                            published_at: None,
+                            artifacts: vec![artifact],
+                            checks: checks_of(release),
+                        }
+                    }),
+            );
+        }
+        Ok(_) => warn!(row, "history page lists no archive"),
+        Err(error) => warn!(%error, row, "history page is unusable"),
+    }
+    Ok(versions)
 }
 
-/// One app version per `AviUtl` archive of the history page, except the latest version of `core`.
-/// An older version holds the `AviUtl` archive only, because no source pairs it with an
-/// extended editing plugin version. The hash comes from `core` when it lists the version.
+fn parse_core(core: &[u8]) -> Result<RawCore, ProviderError> {
+    serde_json::from_slice(core).map_err(|e| shape_changed(e.to_string()))
+}
+
+/// `AviUtl` versions, newest first: the latest of `core`, then the older ones of `page`.
 ///
 /// # Errors
 ///
 /// Returns `ProviderError::CatalogShapeChanged` when `core` is not the expected JSON document
-/// or `page` lists no `AviUtl` archive, and `ProviderError::InvalidUrl` for an invalid URL.
-pub fn parse_aviutl_history(core: &[u8], page: &[u8]) -> Result<Vec<AppVersion>, ProviderError> {
-    let core: RawCore = serde_json::from_slice(core).map_err(|e| shape_changed(e.to_string()))?;
-    let rows = parse_rows(page, HISTORY_ROW)?;
-    if rows.is_empty() {
-        return Err(shape_changed("history page lists no AviUtl archive"));
-    }
-    Ok(rows
-        .into_iter()
-        .filter(|(version, _)| *version != core.aviutl.latest_version)
-        .map(|(version, url)| {
-            let release = release_of(&core.aviutl.releases, &version);
-            let mut artifact = direct_artifact(&url);
-            artifact.hash = release
-                .and_then(|release| release.integrity.as_ref())
-                .and_then(|integrity| Hash::parse_sri(&integrity.archive));
-            AppVersion {
-                version,
-                prerelease: false,
-                published_at: None,
-                artifacts: vec![artifact],
-                checks: checks_of(release),
-            }
-        })
-        .collect())
+/// or its latest release lacks a required field, and `ProviderError::InvalidUrl` for an
+/// invalid URL.
+pub fn parse_aviutl_apps(
+    core: &[u8],
+    page: Option<&[u8]>,
+) -> Result<Vec<AppVersion>, ProviderError> {
+    program_versions(&parse_core(core)?.aviutl, page, HISTORY_ROW_AVIUTL)
+}
+
+/// Extended editing plugin versions, in the order of `parse_aviutl_apps`.
+/// The archive holds the files that belong directly beside `aviutl.exe`.
+///
+/// # Errors
+///
+/// Returns the errors of `parse_aviutl_apps`.
+pub fn parse_aviutl_addons(
+    core: &[u8],
+    page: Option<&[u8]>,
+) -> Result<Vec<AppVersion>, ProviderError> {
+    program_versions(&parse_core(core)?.exedit, page, HISTORY_ROW_EXEDIT)
 }
 
 /// `https://github.com/<owner>/<repo>/releases...` gives `(owner, repo)`.
@@ -358,16 +379,19 @@ impl<H: Http> Provider for AviutlProvider<H> {
     }
 
     async fn app_versions(&self) -> Result<Vec<AppVersion>, ProviderError> {
+        Ok(self.versions().await?.app)
+    }
+
+    async fn versions(&self) -> Result<Versions, ProviderError> {
         let core = self.data("core.json").await?;
-        let mut versions = vec![parse_aviutl_app(&core)?];
-        match history::fetch_page(&self.http)
+        let page = history::fetch_page(&self.http)
             .await
-            .and_then(|page| parse_aviutl_history(&core, &page))
-        {
-            Ok(older) => versions.extend(older),
-            Err(error) => warn!(%error, "aviutl history unavailable"),
-        }
-        Ok(versions)
+            .inspect_err(|error| warn!(%error, "aviutl history unavailable"))
+            .ok();
+        Ok(Versions {
+            app: parse_aviutl_apps(&core, page.as_deref())?,
+            addon: parse_aviutl_addons(&core, page.as_deref())?,
+        })
     }
 
     async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {

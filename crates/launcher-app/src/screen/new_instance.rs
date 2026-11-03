@@ -8,7 +8,7 @@ use iced_m3::widget::button_group::connected;
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{AppVersion, Edition, Host, Kind};
-use launcher_providers::has_provider;
+use launcher_providers::{Versions, has_provider};
 
 use crate::ops::CreateRequest;
 use crate::strings;
@@ -34,6 +34,7 @@ pub enum Message {
     GroupChanged(String),
     EditionSelected(Edition),
     VersionSelected(VersionChoice),
+    AddonSelected(VersionChoice),
     Reload,
     Submit,
     Cancel,
@@ -97,8 +98,11 @@ pub struct Form {
     pub edition: Edition,
     pub selected: Option<VersionChoice>,
     pub choices: Vec<VersionChoice>,
+    pub addon_selected: Option<VersionChoice>,
+    pub addon_choices: Vec<VersionChoice>,
     pub load: Load,
     versions: Vec<AppVersion>,
+    addon_versions: Vec<AppVersion>,
 }
 
 impl Form {
@@ -114,8 +118,11 @@ impl Form {
             edition: Edition::Normal,
             selected: None,
             choices: Vec::new(),
+            addon_selected: None,
+            addon_choices: Vec::new(),
             load: Load::Idle,
             versions: Vec::new(),
+            addon_versions: Vec::new(),
         }
     }
 
@@ -132,18 +139,23 @@ impl Form {
     pub fn begin_load(&mut self) {
         self.load = Load::Loading;
         self.versions.clear();
+        self.addon_versions.clear();
         self.choices.clear();
+        self.addon_choices.clear();
         self.selected = None;
+        self.addon_selected = None;
     }
 
-    pub fn finish_load(&mut self, result: Result<Vec<AppVersion>, String>) {
+    pub fn finish_load(&mut self, result: Result<Versions, String>) {
         match result {
             Ok(versions) => {
-                self.versions = versions;
+                self.versions = versions.app;
+                self.addon_versions = versions.addon;
                 self.load = Load::Ready;
             }
             Err(reason) => {
                 self.versions.clear();
+                self.addon_versions.clear();
                 self.load = Load::Failed(reason);
             }
         }
@@ -153,14 +165,26 @@ impl Form {
         &self.versions
     }
 
-    /// Replaces the choices with `installable` and selects the first entry.
-    pub fn set_choices(&mut self, installable: &[AppVersion]) {
+    pub fn addon_versions(&self) -> &[AppVersion] {
+        &self.addon_versions
+    }
+
+    pub fn has_addon(&self) -> bool {
+        !self.addon_versions.is_empty()
+    }
+
+    /// Replaces the choices with the installable versions and selects the first entry of each.
+    pub fn set_choices(&mut self, installable: &[AppVersion], addons: &[AppVersion]) {
         self.choices = installable.iter().map(VersionChoice::from).collect();
         self.selected = self.choices.first().cloned();
+        self.addon_choices = addons.iter().map(VersionChoice::from).collect();
+        self.addon_selected = self.addon_choices.first().cloned();
     }
 
     pub fn can_submit(&self) -> bool {
-        !self.name.trim().is_empty() && self.selected.is_some()
+        !self.name.trim().is_empty()
+            && self.selected.is_some()
+            && (!self.has_addon() || self.addon_selected.is_some())
     }
 
     pub fn request(&self) -> Option<CreateRequest> {
@@ -173,6 +197,15 @@ impl Form {
             .iter()
             .find(|version| &version.version == tag)?
             .clone();
+        let addon = match &self.addon_selected {
+            Some(choice) => Some(
+                self.addon_versions
+                    .iter()
+                    .find(|version| version.version == choice.tag)?
+                    .clone(),
+            ),
+            None => None,
+        };
         let group = self.group.trim();
         Some(CreateRequest {
             name: self.name.trim().to_owned(),
@@ -180,6 +213,7 @@ impl Form {
             edition: self.edition,
             group: (!group.is_empty()).then(|| group.to_owned()),
             version,
+            addon,
         })
     }
 }
@@ -221,8 +255,27 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
     fields = fields.push(labeled(
         theme,
         strings::VERSION,
-        version_picker(form, theme),
+        version_picker(
+            form,
+            theme,
+            &form.choices,
+            form.selected.as_ref(),
+            Message::VersionSelected,
+        ),
     ));
+    if form.has_addon() {
+        fields = fields.push(labeled(
+            theme,
+            strings::ADDON_VERSION,
+            version_picker(
+                form,
+                theme,
+                &form.addon_choices,
+                form.addon_selected.as_ref(),
+                Message::AddonSelected,
+            ),
+        ));
+    }
 
     let submit = m3::button(
         button::Style::filled(theme, Accent::Primary),
@@ -300,7 +353,13 @@ fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
     labeled(theme, strings::EDITION, group)
 }
 
-fn version_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
+fn version_picker<'a>(
+    form: &'a Form,
+    theme: &Theme,
+    choices: &'a [VersionChoice],
+    current: Option<&VersionChoice>,
+    select: impl Fn(VersionChoice) -> Message + 'a,
+) -> Element<'a, Message> {
     match &form.load {
         Load::Idle | Load::Loading => style::label(theme, strings::LOADING).into(),
         Load::Failed(reason) => column![
@@ -313,18 +372,18 @@ fn version_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
         ]
         .spacing(6)
         .into(),
-        Load::Ready if form.choices.is_empty() => style::label(theme, strings::NO_VERSION).into(),
+        Load::Ready if choices.is_empty() => style::label(theme, strings::NO_VERSION).into(),
         Load::Ready => {
-            let entries = form.choices.iter().map(|choice| {
-                let selected = form.selected.as_ref() == Some(choice);
+            let entries = choices.iter().map(|choice| {
+                let selected = current == Some(choice);
                 m3::card(
                     style::tile_card(theme, selected),
                     style::label(theme, choice.to_string())
                         .color(style::tile_content(theme, selected)),
                 )
-                .interaction(card::Interaction::Press(Action::Direct(
-                    Message::VersionSelected(choice.clone()),
-                )))
+                .interaction(card::Interaction::Press(Action::Direct(select(
+                    choice.clone(),
+                ))))
                 .padding(Padding::from(ENTRY_PADDING))
                 .width(Length::Fill)
                 .into()
