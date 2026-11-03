@@ -11,6 +11,7 @@ mod paths;
 mod runner;
 mod stage;
 mod store;
+mod swap;
 mod task;
 
 pub use catalog::{

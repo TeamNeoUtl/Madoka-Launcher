@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use launcher_core::{
     AppSelection, AppVersion, Artifact, FileCheck, Hash, Host, InstallPlan, Kind, Location, Origin,
@@ -42,8 +42,6 @@ struct RawCore {
 
 #[derive(Debug, Deserialize)]
 struct RawProgram {
-    #[serde(rename = "latestVersion")]
-    latest_version: String,
     #[serde(default)]
     releases: Vec<RawRelease>,
 }
@@ -51,8 +49,6 @@ struct RawProgram {
 #[derive(Debug, Deserialize)]
 struct RawRelease {
     version: String,
-    #[serde(default)]
-    url: Option<String>,
     #[serde(default)]
     integrity: Option<RawIntegrity>,
 }
@@ -141,98 +137,88 @@ fn release_of<'a>(releases: &'a [RawRelease], version: &str) -> Option<&'a RawRe
     releases.iter().find(|release| release.version == version)
 }
 
-/// Archive of the latest version of `AviUtl` or the extended editing plugin.
-fn program_artifact(program: &RawProgram) -> Result<(Artifact, Vec<FileCheck>), ProviderError> {
-    let release = release_of(&program.releases, &program.latest_version)
-        .ok_or_else(|| shape_changed("latest release is missing"))?;
-    let text = release
-        .url
-        .as_deref()
-        .ok_or_else(|| shape_changed("release has no url"))?;
-    let url = parse_url(text)?;
-    let mut artifact = direct_artifact(&url);
-    artifact.hash = release
-        .integrity
-        .as_ref()
-        .and_then(|integrity| Hash::parse_sri(&integrity.archive));
-    Ok((artifact, checks_of(Some(release))))
+fn archive_hash(release: Option<&RawRelease>) -> Option<Hash> {
+    release
+        .and_then(|release| release.integrity.as_ref())
+        .and_then(|integrity| Hash::parse_sri(&integrity.archive))
 }
 
-/// Versions of one program: its latest release from `core`, then the archives of the history
-/// page that `row` matches, except the latest version. A hash comes from `core` when it lists
-/// the version. An unusable history page leaves the latest version alone.
+/// Versions of one program, in the order of the history page: one entry per version that `row`
+/// matches. The first entry of a version wins. `core` supplies the archive hash and the file
+/// hashes of the versions that it lists. A version that only `core` lists is left out.
 fn program_versions(
-    program: &RawProgram,
-    page: Option<&[u8]>,
+    program: Option<&RawProgram>,
+    page: &[u8],
     row: &str,
 ) -> Result<Vec<AppVersion>, ProviderError> {
-    let (artifact, checks) = program_artifact(program)?;
-    let mut versions = vec![AppVersion {
-        version: program.latest_version.clone(),
-        prerelease: false,
-        published_at: None,
-        artifacts: vec![artifact],
-        checks,
-    }];
-    let Some(page) = page else {
-        return Ok(versions);
-    };
-    match parse_rows(page, row) {
-        Ok(rows) if !rows.is_empty() => {
-            versions.extend(
-                rows.into_iter()
-                    .filter(|(version, _)| *version != program.latest_version)
-                    .map(|(version, url)| {
-                        let release = release_of(&program.releases, &version);
-                        let mut artifact = direct_artifact(&url);
-                        artifact.hash = release
-                            .and_then(|release| release.integrity.as_ref())
-                            .and_then(|integrity| Hash::parse_sri(&integrity.archive));
-                        AppVersion {
-                            version,
-                            prerelease: false,
-                            published_at: None,
-                            artifacts: vec![artifact],
-                            checks: checks_of(release),
-                        }
-                    }),
-            );
-        }
-        Ok(_) => warn!(row, "history page lists no archive"),
-        Err(error) => warn!(%error, row, "history page is unusable"),
+    let rows = parse_rows(page, row)?;
+    if rows.is_empty() {
+        return Err(shape_changed("history page lists no archive"));
     }
-    Ok(versions)
+    let mut seen = HashSet::new();
+    Ok(rows
+        .into_iter()
+        .filter(|(version, _)| seen.insert(version.clone()))
+        .map(|(version, url)| {
+            let release = program.and_then(|program| release_of(&program.releases, &version));
+            let mut artifact = direct_artifact(&url);
+            artifact.hash = archive_hash(release);
+            AppVersion {
+                version,
+                prerelease: false,
+                published_at: None,
+                artifacts: vec![artifact],
+                checks: checks_of(release),
+            }
+        })
+        .collect())
 }
 
 fn parse_core(core: &[u8]) -> Result<RawCore, ProviderError> {
     serde_json::from_slice(core).map_err(|e| shape_changed(e.to_string()))
 }
 
-/// `AviUtl` versions, newest first: the latest of `core`, then the older ones of `page`.
+/// `None` when `core` is absent or not the expected JSON document.
+fn usable_core(core: Option<&[u8]>) -> Option<RawCore> {
+    parse_core(core?)
+        .inspect_err(|error| warn!(%error, "apm core is unusable"))
+        .ok()
+}
+
+/// `AviUtl` versions of the history page, newest first.
+/// `core` adds hashes. Without it, or with an unusable one, the archives carry no hash.
 ///
 /// # Errors
 ///
-/// Returns `ProviderError::CatalogShapeChanged` when `core` is not the expected JSON document
-/// or its latest release lacks a required field, and `ProviderError::InvalidUrl` for an
-/// invalid URL.
+/// Returns `ProviderError::CatalogShapeChanged` when `page` lists no `AviUtl` archive,
+/// and `ProviderError::InvalidUrl` for an invalid URL.
 pub fn parse_aviutl_apps(
-    core: &[u8],
-    page: Option<&[u8]>,
+    core: Option<&[u8]>,
+    page: &[u8],
 ) -> Result<Vec<AppVersion>, ProviderError> {
-    program_versions(&parse_core(core)?.aviutl, page, HISTORY_ROW_AVIUTL)
+    program_versions(
+        usable_core(core).as_ref().map(|core| &core.aviutl),
+        page,
+        HISTORY_ROW_AVIUTL,
+    )
 }
 
-/// Extended editing plugin versions, in the order of `parse_aviutl_apps`.
+/// Extended editing plugin versions of the history page, in the order of `parse_aviutl_apps`.
 /// The archive holds the files that belong directly beside `aviutl.exe`.
 ///
 /// # Errors
 ///
-/// Returns the errors of `parse_aviutl_apps`.
+/// Returns `ProviderError::CatalogShapeChanged` when `page` lists no extended editing archive,
+/// and `ProviderError::InvalidUrl` for an invalid URL.
 pub fn parse_aviutl_addons(
-    core: &[u8],
-    page: Option<&[u8]>,
+    core: Option<&[u8]>,
+    page: &[u8],
 ) -> Result<Vec<AppVersion>, ProviderError> {
-    program_versions(&parse_core(core)?.exedit, page, HISTORY_ROW_EXEDIT)
+    program_versions(
+        usable_core(core).as_ref().map(|core| &core.exedit),
+        page,
+        HISTORY_ROW_EXEDIT,
+    )
 }
 
 /// `https://github.com/<owner>/<repo>/releases...` gives `(owner, repo)`.
@@ -281,9 +267,7 @@ fn recipe(package: &RawPackage) -> Option<Recipe> {
     Some(Recipe {
         version: package.latest_version.clone(),
         origin,
-        hash: release
-            .and_then(|release| release.integrity.as_ref())
-            .and_then(|integrity| Hash::parse_sri(&integrity.archive)),
+        hash: archive_hash(release),
         steps,
         checks: checks_of(release),
     })
@@ -383,14 +367,15 @@ impl<H: Http> Provider for AviutlProvider<H> {
     }
 
     async fn versions(&self) -> Result<Versions, ProviderError> {
-        let core = self.data("core.json").await?;
-        let page = history::fetch_page(&self.http)
+        let page = history::fetch_page(&self.http).await?;
+        let core = self
+            .data("core.json")
             .await
-            .inspect_err(|error| warn!(%error, "aviutl history unavailable"))
+            .inspect_err(|error| warn!(%error, "apm core unavailable"))
             .ok();
         Ok(Versions {
-            app: parse_aviutl_apps(&core, page.as_deref())?,
-            addon: parse_aviutl_addons(&core, page.as_deref())?,
+            app: parse_aviutl_apps(core.as_deref(), &page)?,
+            addon: parse_aviutl_addons(core.as_deref(), &page)?,
         })
     }
 

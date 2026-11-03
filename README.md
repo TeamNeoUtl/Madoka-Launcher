@@ -82,7 +82,7 @@ NeoUtl や Freya NLE は Linux や macOS に対応していますから、これ
 | NeoUtl | Codeberg 上のリポジトリ |
 | Freya NLE | GitHub 上のリポジトリ |
 
-AviUtl については、既存のプラグインマネージャーと同じリポジトリを参照します。
+AviUtl 本体と ExEdit0 の版の一覧は、AviUtlのお部屋の履歴ページのみから作成します。AviUtl Package Manager 提供のリポジトリは、アーカイブとファイルのハッシュ、及びプラグインの一覧に使用します。
 
 全ての対応ソフトウェアについて Madoka は独自のデータベースを持ちませんから、最新への追従が容易になっています。
 

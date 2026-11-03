@@ -6,11 +6,11 @@ use std::sync::{Arc, PoisonError, RwLock};
 use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
     Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
-    Package, ProgressSink, TaskBoard, TaskHandle, open_directory,
+    Package, PackageSource, PluginRecord, ProgressSink, TaskBoard, TaskHandle, open_directory,
 };
 use launcher_providers::{
     Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
-    Versions, load_any, load_fresh, store_catalog,
+    Versions, has_catalog, load_any, load_fresh, store_catalog,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -22,6 +22,7 @@ const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
 const WRITE_STEPS: u16 = 1;
 const UPDATE_STEPS: u16 = 1;
+const RESOLVE_STEPS: u16 = 1;
 const BROWSER_EXE: &str = if cfg!(windows) {
     "Madoka-Browser.exe"
 } else {
@@ -32,8 +33,8 @@ const BROWSED_DIR: &str = "downloads";
 const PART_SUFFIX: &str = ".part";
 const DEFAULT_FILE_NAME: &str = "download";
 const UNKNOWN_VERSION: &str = "-";
-const ADDON_LABEL: &str = "exedit";
 const PLUGIN_ARCHIVE_EXTENSION: &str = "ymme";
+const ZIP_EXTENSION: &str = "zip";
 const FORBIDDEN_FILE_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
 #[derive(Debug, thiserror::Error)]
@@ -73,6 +74,15 @@ pub struct CreateRequest {
     pub version: AppVersion,
     /// Plugin that is extracted beside the editor.
     pub addon: Option<AppVersion>,
+}
+
+/// Result of `Services::update_all`.
+#[derive(Debug, Default)]
+pub struct UpdateReport {
+    /// Packages whose update needs a download in the browser window.
+    pub browse: Vec<Package>,
+    /// One text per package that failed to update.
+    pub failures: Vec<String>,
 }
 
 /// A download that started in the browser window.
@@ -476,7 +486,11 @@ impl Services {
             path: dest.clone(),
             source,
         })?;
-        if is_plugin_archive(&dest) {
+        let recipe = match &package.source {
+            PackageSource::Recipe(recipe) if is_zip(&dest) => Some(recipe.clone()),
+            _ => None,
+        };
+        if recipe.is_some() || is_plugin_archive(&dest) {
             let _guard = self.locks.lock(id).await;
             let installer = Arc::clone(&self.installer);
             let package = package.clone();
@@ -486,9 +500,11 @@ impl Services {
                 .to_owned();
             let archive = dest.clone();
             blocking(move || {
-                installer
-                    .install_package_file(id, &package, &version, &archive)
-                    .map(drop)
+                let record = match recipe {
+                    Some(recipe) => installer.install_recipe_file(id, &package, &recipe, &archive),
+                    None => installer.install_package_file(id, &package, &version, &archive),
+                };
+                record.map(drop)
             })
             .await?;
         }
@@ -561,6 +577,24 @@ impl Services {
         handle.finish(&result);
     }
 
+    /// Brings the app, the addon and the installed plugins of the instance to their latest versions.
+    /// Returns the packages that the update leaves to the browser window.
+    pub async fn update_all(self, handle: TaskHandle, id: InstanceId) -> Vec<Package> {
+        info!(%id, "update all task start");
+        let result = self.update_all_inner(&handle, id).await;
+        let (browse, summary) = match result {
+            Ok(report) if report.failures.is_empty() => (report.browse, Ok(())),
+            Ok(report) => (report.browse, Err(report.failures.join("\n"))),
+            Err(error) => (Vec::new(), Err(error.to_string())),
+        };
+        match &summary {
+            Ok(()) => info!(%id, browse = browse.len(), "update all succeeded"),
+            Err(reason) => error!(%id, reason = %reason, "update all failed"),
+        }
+        handle.finish(&summary);
+        browse
+    }
+
     pub async fn remove_plugin(self, handle: TaskHandle, id: InstanceId, plugin_id: String) {
         info!(%id, package = %plugin_id, "remove plugin task start");
         let result = self.remove_plugin_inner(&handle, id, plugin_id).await;
@@ -590,6 +624,17 @@ impl Services {
     ) -> Result<(), OpError> {
         let _guard = self.locks.lock(id).await;
         handle.running(0, WRITE_STEPS);
+        self.install_planned(handle, id, package, plan).await
+    }
+
+    /// Runs `plan` for `package`. The caller holds the lock of the instance.
+    async fn install_planned(
+        &self,
+        handle: &TaskHandle,
+        id: InstanceId,
+        package: &Package,
+        plan: InstallPlan,
+    ) -> Result<(), OpError> {
         match plan {
             InstallPlan::Download(artifacts) => {
                 let artifact = artifacts
@@ -608,6 +653,79 @@ impl Services {
             InstallPlan::OpenInBrowser(_) => {}
         }
         Ok(())
+    }
+
+    async fn update_all_inner(
+        &self,
+        handle: &TaskHandle,
+        id: InstanceId,
+    ) -> Result<UpdateReport, OpError> {
+        let _guard = self.locks.lock(id).await;
+        handle.running(0, RESOLVE_STEPS);
+        let store = self.store.clone();
+        let instance = blocking(move || store.load(id)).await?;
+        let config = &instance.config;
+        let provider = MadokaProvider::for_kind(config.kind, self.http())?;
+        let selection = AppSelection {
+            host: self.host,
+            edition: config.edition,
+        };
+        let versions = provider.versions().await?;
+        let accepts = |version: &AppVersion| provider.plan_install_app(version, selection).is_ok();
+        let app = newer_than(&versions.app, Some(&config.app_version), accepts);
+        let addon = newer_than(&versions.addon, config.addon_version.as_deref(), accepts);
+
+        let mut report = UpdateReport::default();
+        let mut outdated = Vec::new();
+        if has_catalog(config.kind) && !config.plugins.is_empty() {
+            match self.clone().catalog(config.kind, true).await {
+                Ok(packages) => outdated = outdated_packages(config.plugins.as_slice(), &packages),
+                Err(error) => report.failures.push(format!("catalog: {error}")),
+            }
+        }
+
+        let app_steps = u16::from(app.is_some() || addon.is_some());
+        let total = RESOLVE_STEPS
+            .saturating_add(app_steps)
+            .saturating_add(u16::try_from(outdated.len()).unwrap_or(u16::MAX));
+        let mut done = RESOLVE_STEPS;
+        handle.running(done, total);
+
+        if app_steps > 0 {
+            let mut artifacts = Vec::new();
+            let mut checks = Vec::new();
+            for version in app.iter().chain(&addon) {
+                artifacts.extend(provider.plan_install_app(version, selection)?);
+                checks.extend(version.checks.iter().cloned());
+            }
+            info!(%id, app = ?app.as_ref().map(|v| &v.version), addon = ?addon.as_ref().map(|v| &v.version), "update app");
+            self.installer
+                .update_app_checked(id, &artifacts, &checks, handle)
+                .await?;
+            let app_version = app.map_or_else(|| config.app_version.clone(), |v| v.version);
+            let addon_version = addon
+                .map(|v| v.version)
+                .or_else(|| config.addon_version.clone());
+            let store = self.store.clone();
+            blocking(move || store.set_versions(id, app_version, addon_version).map(drop)).await?;
+            done += 1;
+            handle.running(done, total);
+        }
+
+        for package in outdated {
+            match provider.plan_install_package(&package).await {
+                Ok(plan) if needs_browser(&plan) => report.browse.push(package),
+                Ok(plan) => {
+                    if let Err(error) = self.install_planned(handle, id, &package, plan).await {
+                        report.failures.push(format!("{}: {error}", package.name));
+                    }
+                }
+                Err(error) => report.failures.push(format!("{}: {error}", package.name)),
+            }
+            done += 1;
+            handle.running(done, total);
+        }
+        Ok(report)
     }
 
     async fn remove_plugin_inner(
@@ -643,11 +761,9 @@ impl Services {
         };
         let mut artifacts = provider.plan_install_app(&version, selection)?;
         let mut checks = version.checks.clone();
-        let mut app_version = version.version.clone();
         if let Some(addon) = &addon {
             artifacts.extend(provider.plan_install_app(addon, selection)?);
             checks.extend(addon.checks.iter().cloned());
-            app_version = format!("{app_version} / {ADDON_LABEL} {}", addon.version);
         }
         debug!(
             version = %version.version,
@@ -659,7 +775,7 @@ impl Services {
                 name,
                 kind,
                 edition,
-                app_version,
+                app_version: version.version.clone(),
                 group,
             },
             self.host,
@@ -677,6 +793,16 @@ impl Services {
                 error!(%id, error = %cleanup, "instance cleanup failed");
             }
             return Err(error.into());
+        }
+        if let Some(addon) = addon {
+            let app_version = version.version;
+            let store = self.store.clone();
+            blocking(move || {
+                store
+                    .set_versions(id, app_version, Some(addon.version))
+                    .map(drop)
+            })
+            .await?;
         }
         Ok(id)
     }
@@ -706,6 +832,45 @@ fn log_outcome<T>(task: &str, result: &Result<T, OpError>) {
         Ok(_) => info!(task, "task succeeded"),
         Err(error) => error!(task, %error, "task failed"),
     }
+}
+
+/// The newest stable version of `list` that `accepts`, unless `installed` is that version or newer.
+/// `list` holds the newest version first.
+fn newer_than(
+    list: &[AppVersion],
+    installed: Option<&str>,
+    accepts: impl Fn(&AppVersion) -> bool,
+) -> Option<AppVersion> {
+    let candidate = list
+        .iter()
+        .position(|version| !version.prerelease && accepts(version))?;
+    let current = installed
+        .and_then(|installed| list.iter().position(|version| version.version == installed));
+    current
+        .is_none_or(|current| current > candidate)
+        .then(|| list[candidate].clone())
+}
+
+/// Installed plugins whose catalog entry names another version than the record.
+fn outdated_packages(plugins: &[PluginRecord], packages: &[Package]) -> Vec<Package> {
+    plugins
+        .iter()
+        .filter_map(|record| {
+            let package = packages.iter().find(|package| package.id == record.id)?;
+            let latest = package.latest_version()?;
+            (latest != record.version).then(|| package.clone())
+        })
+        .collect()
+}
+
+/// The browser window supplies the archive when the plan has no verified download.
+fn needs_browser(plan: &InstallPlan) -> bool {
+    matches!(plan, InstallPlan::OpenInBrowser(_)) || !plan.is_verified()
+}
+
+fn is_zip(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(ZIP_EXTENSION))
 }
 
 fn is_plugin_archive(path: &Path) -> bool {

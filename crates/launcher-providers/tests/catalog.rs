@@ -272,15 +272,18 @@ fn labels(versions: &[launcher_core::AppVersion]) -> Vec<&str> {
 }
 
 #[test]
-fn aviutl_apps_list_the_latest_then_the_older_archives() {
+fn aviutl_apps_follow_the_history_page() {
     let versions =
-        parse_aviutl_apps(&bytes(&aviutl_core()), Some(HISTORY_PAGE.as_bytes())).unwrap();
+        parse_aviutl_apps(Some(&bytes(&aviutl_core())), HISTORY_PAGE.as_bytes()).unwrap();
     assert_eq!(labels(&versions), ["1.10", "0.99m", "0.96g"]);
     assert_eq!(versions[0].artifacts[0].name, "aviutl110.zip");
+    assert_eq!(
+        versions[0].artifacts[0].url.as_str(),
+        "https://spring-fragrance.mints.ne.jp/aviutl/aviutl110.zip"
+    );
     assert!(versions[0].artifacts[0].hash.is_some());
     assert_eq!(versions[0].checks.len(), 1);
     let listed = &versions[1];
-    assert_eq!(listed.artifacts.len(), 1);
     assert_eq!(
         listed.artifacts[0].url.as_str(),
         "https://spring-fragrance.mints.ne.jp/aviutl/aviutl99m.zip"
@@ -295,9 +298,9 @@ fn aviutl_apps_list_the_latest_then_the_older_archives() {
 }
 
 #[test]
-fn aviutl_addons_list_the_latest_then_the_older_archives() {
+fn aviutl_addons_follow_the_history_page() {
     let versions =
-        parse_aviutl_addons(&bytes(&aviutl_core()), Some(HISTORY_PAGE.as_bytes())).unwrap();
+        parse_aviutl_addons(Some(&bytes(&aviutl_core())), HISTORY_PAGE.as_bytes()).unwrap();
     assert_eq!(labels(&versions), ["0.92", "0.91c", "0.91"]);
     assert_eq!(versions[0].artifacts[0].name, "exedit92.zip");
     assert!(versions[0].artifacts[0].hash.is_some());
@@ -310,12 +313,60 @@ fn aviutl_addons_list_the_latest_then_the_older_archives() {
 }
 
 #[test]
-fn aviutl_lists_keep_the_latest_without_a_usable_history_page() {
+fn aviutl_lists_leave_out_versions_that_only_core_lists() {
+    let page = concat!(
+        r#"<a href="aviutl96g.zip">a</a> version0.96g "#,
+        r#"<a href="exedit91.zip">e</a> version0.91"#,
+    );
     let core = bytes(&aviutl_core());
-    for page in [None, Some(&b"<html></html>"[..])] {
-        assert_eq!(labels(&parse_aviutl_apps(&core, page).unwrap()), ["1.10"]);
-        assert_eq!(labels(&parse_aviutl_addons(&core, page).unwrap()), ["0.92"]);
+    assert_eq!(
+        labels(&parse_aviutl_apps(Some(&core), page.as_bytes()).unwrap()),
+        ["0.96g"]
+    );
+    assert_eq!(
+        labels(&parse_aviutl_addons(Some(&core), page.as_bytes()).unwrap()),
+        ["0.91"]
+    );
+}
+
+#[test]
+fn aviutl_lists_keep_the_first_row_of_a_repeated_version() {
+    let page = concat!(
+        r#"<a href="aviutl110.zip">a</a> version1.10 "#,
+        r#"<a href="aviutl110b.zip">b</a> version1.10"#,
+    );
+    let versions = parse_aviutl_apps(None, page.as_bytes()).unwrap();
+    assert_eq!(labels(&versions), ["1.10"]);
+    assert_eq!(versions[0].artifacts[0].name, "aviutl110.zip");
+}
+
+#[test]
+fn aviutl_lists_carry_no_hash_without_a_usable_core() {
+    for core in [None, Some(&b"{}"[..]), Some(&b"not json"[..])] {
+        let versions = parse_aviutl_apps(core, HISTORY_PAGE.as_bytes()).unwrap();
+        assert_eq!(labels(&versions), ["1.10", "0.99m", "0.96g"]);
+        assert!(
+            versions
+                .iter()
+                .all(|v| v.artifacts[0].hash.is_none() && v.checks.is_empty())
+        );
+        let addons = parse_aviutl_addons(core, HISTORY_PAGE.as_bytes()).unwrap();
+        assert_eq!(labels(&addons), ["0.92", "0.91c", "0.91"]);
     }
+}
+
+#[test]
+fn aviutl_lists_reject_a_page_without_archives() {
+    let core = bytes(&aviutl_core());
+    let page = b"<html></html>";
+    assert!(matches!(
+        parse_aviutl_apps(Some(&core), page),
+        Err(ProviderError::CatalogShapeChanged(_))
+    ));
+    assert!(matches!(
+        parse_aviutl_addons(Some(&core), page),
+        Err(ProviderError::CatalogShapeChanged(_))
+    ));
 }
 
 #[tokio::test]
@@ -327,14 +378,29 @@ async fn aviutl_versions_hold_both_lists() {
     let versions = AviutlProvider::new(http).versions().await.unwrap();
     assert_eq!(labels(&versions.app), ["1.10", "0.99m", "0.96g"]);
     assert_eq!(labels(&versions.addon), ["0.92", "0.91c", "0.91"]);
+    assert!(versions.app[0].artifacts[0].hash.is_some());
 }
 
 #[tokio::test]
-async fn aviutl_versions_survive_a_missing_history_page() {
-    let http = FixtureHttp(HashMap::from([(CORE.to_owned(), bytes(&aviutl_core()))]));
+async fn aviutl_versions_survive_a_missing_core() {
+    let http = FixtureHttp(HashMap::from([(
+        HISTORY.to_owned(),
+        HISTORY_PAGE.as_bytes().to_vec(),
+    )]));
     let versions = AviutlProvider::new(http).versions().await.unwrap();
-    assert_eq!(labels(&versions.app), ["1.10"]);
-    assert_eq!(labels(&versions.addon), ["0.92"]);
+    assert_eq!(labels(&versions.app), ["1.10", "0.99m", "0.96g"]);
+    assert!(versions.app[0].artifacts[0].hash.is_none());
+}
+
+#[tokio::test]
+async fn aviutl_versions_fail_without_the_history_page() {
+    let http = FixtureHttp(HashMap::from([(CORE.to_owned(), bytes(&aviutl_core()))]));
+    let provider = AviutlProvider::new(http);
+    assert!(matches!(
+        provider.versions().await,
+        Err(ProviderError::Http(_))
+    ));
+    assert!(provider.app_versions().await.is_err());
 }
 
 #[tokio::test]

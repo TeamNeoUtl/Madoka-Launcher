@@ -51,6 +51,7 @@ impl InstanceStore {
             kind: new.kind,
             edition: new.edition,
             app_version: new.app_version,
+            addon_version: None,
             group: new.group,
             created_at: OffsetDateTime::now_utc(),
             plugins: Vec::new(),
@@ -116,6 +117,24 @@ impl InstanceStore {
         let mut instance = self.load(id)?;
         instance.config.name = name;
         instance.config.group = group;
+        self.save(&instance)?;
+        Ok(instance)
+    }
+
+    /// Writes the versions of the app and of the addon.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `load` and `save`.
+    pub fn set_versions(
+        &self,
+        id: InstanceId,
+        app_version: String,
+        addon_version: Option<String>,
+    ) -> Result<Instance, Error> {
+        let mut instance = self.load(id)?;
+        instance.config.app_version = app_version;
+        instance.config.addon_version = addon_version;
         self.save(&instance)?;
         Ok(instance)
     }
@@ -207,10 +226,11 @@ impl InstanceStore {
     fn load_dir(dir: PathBuf, id: InstanceId) -> Result<Instance, Error> {
         let path = dir.join(Instance::CONFIG_FILE);
         let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
-        let config: InstanceConfig = toml::from_str(&text).map_err(|source| Error::Parse {
+        let mut config: InstanceConfig = toml::from_str(&text).map_err(|source| Error::Parse {
             path: path.clone(),
             source,
         })?;
+        config.normalize();
         if config.id != id {
             return Err(Error::IdMismatch {
                 dir: id,

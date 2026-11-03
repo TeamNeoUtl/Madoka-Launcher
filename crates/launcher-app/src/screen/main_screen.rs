@@ -180,7 +180,7 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
             style::kind_tone(config.kind)
         ),
         text(config.name.clone()).size(17).color(color),
-        text(config.app_version.clone()).size(12).color(color),
+        text(config.version_label()).size(12).color(color),
     ]
     .spacing(6);
     let tile = m3::card(style::tile_card(theme, selected), content)
@@ -264,7 +264,7 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         ));
     }
     lines = lines
-        .push(field(theme, strings::VERSION, &config.app_version))
+        .push(field(theme, strings::VERSION, &config.version_label()))
         .push(field(
             theme,
             strings::GROUP,

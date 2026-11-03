@@ -51,6 +51,7 @@ pub enum Message {
     CancelPending,
     /// Plugin id.
     Remove(String),
+    UpdateAll,
     NameChanged(String),
     GroupChanged(String),
     SaveSettings,
@@ -228,8 +229,11 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             strings::edition_label(config.edition),
         ));
     }
-    lines
-        .push(field(theme, strings::VERSION, &config.app_version))
+    lines = lines.push(field(theme, strings::VERSION, &config.app_version));
+    if let Some(addon) = &config.addon_version {
+        lines = lines.push(field(theme, strings::ADDON_VERSION, addon));
+    }
+    lines = lines
         .push(field(
             theme,
             strings::GROUP,
@@ -239,7 +243,15 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             theme,
             strings::PLUGINS,
             &config.plugins.len().to_string(),
-        ))
+        ));
+    lines
+        .push(
+            m3::button(
+                button::Style::filled(theme, Accent::Primary),
+                button::Content::Label(strings::UPDATE_ALL.into()),
+            )
+            .on_press(Message::UpdateAll),
+        )
         .into()
 }
 

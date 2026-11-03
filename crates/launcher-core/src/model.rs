@@ -51,6 +51,10 @@ pub enum Edition {
     Lite,
 }
 
+const ADDON_LABEL: &str = "exedit";
+/// Separator of the combined version text that earlier launcher versions stored in `app_version`.
+const LEGACY_ADDON_SEPARATOR: &str = " / exedit ";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginRecord {
     pub id: String,
@@ -67,6 +71,9 @@ pub struct InstanceConfig {
     #[serde(default)]
     pub edition: Edition,
     pub app_version: String,
+    /// Version of the plugin that sits beside the editor. `None` when the kind has no such plugin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addon_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -76,6 +83,30 @@ pub struct InstanceConfig {
 }
 
 impl InstanceConfig {
+    /// `app_version`, followed by the addon version when there is one.
+    #[must_use]
+    pub fn version_label(&self) -> String {
+        match &self.addon_version {
+            Some(addon) => format!("{} / {ADDON_LABEL} {addon}", self.app_version),
+            None => self.app_version.clone(),
+        }
+    }
+
+    /// Splits the combined `app_version` of earlier launcher versions into both fields.
+    pub(crate) fn normalize(&mut self) {
+        if self.addon_version.is_some() {
+            return;
+        }
+        let split = self
+            .app_version
+            .split_once(LEGACY_ADDON_SEPARATOR)
+            .map(|(app, addon)| (app.to_owned(), addon.to_owned()));
+        if let Some((app, addon)) = split {
+            self.app_version = app;
+            self.addon_version = Some(addon);
+        }
+    }
+
     /// # Errors
     ///
     /// Returns `Error::EmptyName` for a blank name, `Error::InvalidEdition` for `Edition::Lite`

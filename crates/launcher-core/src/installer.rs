@@ -10,13 +10,17 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::archive::{Archive, Created, Layout};
 use crate::model::ensure_single_component;
 use crate::stage::{self, Roots};
+use crate::swap::Swap;
 use crate::{
-    Artifact, Error, Fetcher, FileCheck, Hash, Instance, InstanceId, InstanceStore, Kind, Package,
-    PackageSource, PluginRecord, Progress, ProgressSink, StagedPlan, is_allowed_url,
+    Artifact, Error, Fetcher, FileCheck, Hash, Host, Instance, InstanceId, InstanceStore, Kind,
+    Package, PackageSource, PluginRecord, Progress, ProgressSink, Recipe, StagedPlan, Step,
+    find_executable, is_allowed_url,
 };
 
 const DOWNLOADS_DIR: &str = "cache/downloads";
 const TMP_DIR: &str = "cache/tmp";
+const STAGED_DIR: &str = "new";
+const BACKUP_DIR: &str = "old";
 const PART_SUFFIX: &str = ".part";
 
 /// Working directory of one installation. Removed on drop.
@@ -34,6 +38,15 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+/// Archive and procedure of one staged installation.
+struct Staging<'a> {
+    version: &'a str,
+    steps: &'a [Step],
+    checks: &'a [FileCheck],
+    archive: &'a Path,
+    name: &'a str,
 }
 
 /// A downloaded file. Removed on drop when it is not stored in the cache.
@@ -102,27 +115,61 @@ impl<F: Fetcher> Installer<F> {
     ) -> Result<(), Error> {
         let instance = self.store.load(id)?;
         let kind = instance.config.kind;
-        let layout = if kind == Kind::Aviutl {
-            Layout::TreeWithoutRoot
-        } else {
-            Layout::Tree
-        };
         let app_dir = instance.app_dir();
         info!(%id, artifacts = artifacts.len(), "install app");
         for artifact in artifacts {
             let download = self.download(artifact, progress).await?;
-            let mut archive = Archive::open(&download.path, layout)?;
+            let mut archive = Archive::open(&download.path, layout_of(kind))?;
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&app_dir)?;
         }
-        if matches!(kind, Kind::Aviutl | Kind::Aviutl2) {
-            let roots = Roots::locate(kind, &app_dir, None)?;
-            if kind == Kind::Aviutl2 {
-                fs::create_dir_all(&roots.data).map_err(|e| Error::io(&roots.data, e))?;
-            }
-            stage::verify(&roots, checks)?;
-        }
+        verify_app(kind, &app_dir, checks)?;
         info!(%id, "app installed");
+        Ok(())
+    }
+
+    /// Replaces the app files with the content of `artifacts`, then verifies `checks`.
+    /// Every archive is extracted into a working directory first, so a failing download or a
+    /// rejected entry leaves the app directory untouched. A failing copy or check restores the
+    /// files that the copy replaced and removes the files that it created.
+    /// When the new archive keeps its executable in another directory than the installed app,
+    /// the files go to the directory of the installed executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, an artifact fails to download
+    /// or to match its hash, an archive entry is rejected or cannot be written,
+    /// a file cannot be replaced, or a file in `checks` is missing or differs in hash.
+    pub async fn update_app_checked(
+        &self,
+        id: InstanceId,
+        artifacts: &[Artifact],
+        checks: &[FileCheck],
+        progress: &dyn ProgressSink,
+    ) -> Result<(), Error> {
+        let instance = self.store.load(id)?;
+        let kind = instance.config.kind;
+        let app_dir = instance.app_dir();
+        let tmp = TempDir::create(&self.root)?;
+        let staged = tmp.0.join(STAGED_DIR);
+        fs::create_dir_all(&staged).map_err(|e| Error::io(&staged, e))?;
+        info!(%id, artifacts = artifacts.len(), "update app");
+        for artifact in artifacts {
+            let download = self.download(artifact, progress).await?;
+            let mut archive = Archive::open(&download.path, layout_of(kind))?;
+            debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
+            archive.extract(&staged)?;
+        }
+        let (source, dest) = match (exe_dir(kind, &staged), exe_dir(kind, &app_dir)) {
+            (Some(new), Some(old)) if new != old => (staged.join(new), app_dir.join(old)),
+            _ => (staged, app_dir.clone()),
+        };
+        let swap = Swap::apply(&source, &dest, &tmp.0.join(BACKUP_DIR))?;
+        if let Err(error) = verify_app(kind, &app_dir, checks) {
+            swap.roll_back();
+            return Err(error);
+        }
+        info!(%id, "app updated");
         Ok(())
     }
 
@@ -221,14 +268,64 @@ impl<F: Fetcher> Installer<F> {
         plan: &StagedPlan,
         progress: &dyn ProgressSink,
     ) -> Result<PluginRecord, Error> {
-        let mut instance = self.store.load(id)?;
-        let app_dir = instance.app_dir();
+        let instance = self.store.load(id)?;
         info!(%id, package = %package.id, version = %plan.version, "install staged package");
         ensure_single_component(&plan.artifact.name)?;
         let download = self.download(&plan.artifact, progress).await?;
+        let staging = Staging {
+            version: &plan.version,
+            steps: &plan.steps,
+            checks: &plan.checks,
+            archive: &download.path,
+            name: &plan.artifact.name,
+        };
+        self.place_staged(instance, package, &staging)
+    }
+
+    /// Installs the archive at `archive` with the steps and checks of `recipe`, without downloading
+    /// or hashing the archive. The caller vouches for the file: it comes from the user's own
+    /// browser download. The `checks` of the recipe still apply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, the name of `archive` is not a single
+    /// path component, the kind has no catalog by location, a step or a check fails,
+    /// or `instance.toml` cannot be saved.
+    pub fn install_recipe_file(
+        &self,
+        id: InstanceId,
+        package: &Package,
+        recipe: &Recipe,
+        archive: &Path,
+    ) -> Result<PluginRecord, Error> {
+        let instance = self.store.load(id)?;
+        let name = archive
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::UnsafePath(archive.display().to_string()))?;
+        ensure_single_component(name)?;
+        info!(%id, package = %package.id, version = %recipe.version, archive = %archive.display(), "install recipe file");
+        let staging = Staging {
+            version: &recipe.version,
+            steps: &recipe.steps,
+            checks: &recipe.checks,
+            archive,
+            name,
+        };
+        self.place_staged(instance, package, &staging)
+    }
+
+    fn place_staged(
+        &self,
+        mut instance: Instance,
+        package: &Package,
+        staging: &Staging<'_>,
+    ) -> Result<PluginRecord, Error> {
+        let id = instance.config.id;
+        let app_dir = instance.app_dir();
         let tmp = TempDir::create(&self.root)?;
-        let staged = tmp.0.join(&plan.artifact.name);
-        fs::copy(&download.path, &staged).map_err(|e| Error::io(&staged, e))?;
+        let staged = tmp.0.join(staging.name);
+        fs::copy(staging.archive, &staged).map_err(|e| Error::io(&staged, e))?;
         let roots = Roots::locate(instance.config.kind, &app_dir, Some(&tmp.0))?;
 
         if let Some(position) = position_of(&instance.config.plugins, &package.id) {
@@ -239,15 +336,15 @@ impl<F: Fetcher> Installer<F> {
         }
 
         let mut created = Created::default();
-        let result = stage::run(&roots, &staged, &plan.steps, &mut created)
-            .and_then(|()| stage::verify(&roots, &plan.checks));
+        let result = stage::run(&roots, &staged, staging.steps, &mut created)
+            .and_then(|()| stage::verify(&roots, staging.checks));
         if let Err(error) = result {
             created.roll_back();
             return Err(error);
         }
         let record = PluginRecord {
             id: package.id.clone(),
-            version: plan.version.clone(),
+            version: staging.version.to_owned(),
             source: package.source.label(),
             files: relative_files(&app_dir, &created.files)?,
         };
@@ -349,6 +446,43 @@ impl<F: Fetcher> Installer<F> {
         );
         Ok(())
     }
+}
+
+/// `AviUtl` archives lose the directory that holds every entry.
+const fn layout_of(kind: Kind) -> Layout {
+    if matches!(kind, Kind::Aviutl) {
+        Layout::TreeWithoutRoot
+    } else {
+        Layout::Tree
+    }
+}
+
+/// `AviUtl` and the other Windows-only kinds ship `.exe` files on every host.
+fn executable_host(kind: Kind) -> Host {
+    if kind.supported_on(Host::current()) {
+        Host::current()
+    } else {
+        Host::Windows
+    }
+}
+
+/// Directory of the executable below `dir`, relative to `dir`. `None` when there is no executable.
+fn exe_dir(kind: Kind, dir: &Path) -> Option<PathBuf> {
+    let exe = find_executable(dir, kind, executable_host(kind)).ok()?;
+    exe.parent()?.strip_prefix(dir).ok().map(Path::to_path_buf)
+}
+
+/// Verifies `checks` against the app files. `AviUtl2` gets `data/` beside the executable,
+/// which makes the instance self-contained.
+fn verify_app(kind: Kind, app_dir: &Path, checks: &[FileCheck]) -> Result<(), Error> {
+    if !matches!(kind, Kind::Aviutl | Kind::Aviutl2) {
+        return Ok(());
+    }
+    let roots = Roots::locate(kind, app_dir, None)?;
+    if kind == Kind::Aviutl2 {
+        fs::create_dir_all(&roots.data).map_err(|e| Error::io(&roots.data, e))?;
+    }
+    stage::verify(&roots, checks)
 }
 
 fn verify(path: &Path, expected: &Hash, name: &str) -> Result<(), Error> {

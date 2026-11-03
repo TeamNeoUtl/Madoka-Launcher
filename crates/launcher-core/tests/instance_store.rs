@@ -172,3 +172,41 @@ fn instances_are_independent_directories() {
     assert!(!a.dir.starts_with(&b.dir) && !b.dir.starts_with(&a.dir));
     assert_eq!(a.config_path().file_name().unwrap(), Instance::CONFIG_FILE);
 }
+
+#[test]
+fn combined_version_of_earlier_launchers_splits_on_load() {
+    let root = TempDir::new().unwrap();
+    let store = InstanceStore::new(root.path());
+    let mut created = store
+        .create(new_instance(Kind::Aviutl), Host::Windows)
+        .unwrap();
+    created.config.app_version = "1.10 / exedit 0.92".to_owned();
+    store.save(&created).unwrap();
+
+    let loaded = store.load(created.config.id).unwrap();
+    assert_eq!(loaded.config.app_version, "1.10");
+    assert_eq!(loaded.config.addon_version.as_deref(), Some("0.92"));
+    assert_eq!(loaded.config.version_label(), "1.10 / exedit 0.92");
+}
+
+#[test]
+fn set_versions_writes_the_app_and_the_addon_version() {
+    let root = TempDir::new().unwrap();
+    let store = InstanceStore::new(root.path());
+    let created = store
+        .create(new_instance(Kind::Aviutl), Host::Windows)
+        .unwrap();
+    let id = created.config.id;
+
+    let updated = store
+        .set_versions(id, "1.10".to_owned(), Some("0.92".to_owned()))
+        .unwrap();
+    assert_eq!(store.load(id).unwrap(), updated);
+    let text = std::fs::read_to_string(created.config_path()).unwrap();
+    assert!(text.contains("app_version = \"1.10\""));
+    assert!(text.contains("addon_version = \"0.92\""));
+
+    store.set_versions(id, "1.10".to_owned(), None).unwrap();
+    let text = std::fs::read_to_string(created.config_path()).unwrap();
+    assert!(!text.contains("addon_version"));
+}

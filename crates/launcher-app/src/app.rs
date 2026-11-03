@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -39,6 +40,8 @@ pub enum Message {
     CatalogLoaded(InstanceId, Result<Vec<Package>, String>),
     Planned(InstanceId, Result<Box<(Package, InstallPlan)>, String>),
     Updated(Result<(), String>),
+    /// Packages that the update of the instance leaves to the browser window.
+    UpdatedAll(InstanceId, Vec<Package>),
     Created(Option<InstanceId>),
     Finished,
     Opened(Result<(), String>),
@@ -81,6 +84,8 @@ pub struct App {
     form: new_instance::Form,
     edit: Option<edit::State>,
     settings: settings::Form,
+    browse_queue: VecDeque<(InstanceId, Package, Url)>,
+    browsing: bool,
 }
 
 impl App {
@@ -111,6 +116,8 @@ impl App {
             form,
             edit: None,
             settings,
+            browse_queue: VecDeque::new(),
+            browsing: false,
         };
         let load = Task::batch([
             app.reload(),
@@ -184,6 +191,14 @@ impl App {
                     Task::none()
                 }
             },
+            Message::UpdatedAll(id, packages) => {
+                self.browse_queue
+                    .extend(packages.into_iter().map(|package| {
+                        let url = package.page_url.clone();
+                        (id, package, url)
+                    }));
+                Task::batch([self.reload(), self.next_browse()])
+            }
             Message::Created(id) => {
                 if id.is_some() {
                     self.selected = id;
@@ -191,14 +206,18 @@ impl App {
                 self.reload()
             }
             Message::Finished => self.reload(),
-            Message::Browsed(id, package, result) => match result {
-                Ok(Some(browsed)) => self.start_download(id, *package, browsed),
-                Ok(None) => Task::none(),
-                Err(reason) => {
-                    self.notice = Some(reason);
-                    Task::none()
-                }
-            },
+            Message::Browsed(id, package, result) => {
+                self.browsing = false;
+                let download = match result {
+                    Ok(Some(browsed)) => self.start_download(id, *package, browsed),
+                    Ok(None) => Task::none(),
+                    Err(reason) => {
+                        self.notice = Some(reason);
+                        Task::none()
+                    }
+                };
+                Task::batch([download, self.next_browse()])
+            }
             Message::UpdateChecked(manual, result) => {
                 self.settings.update = match result {
                     Ok(Some(version)) => settings::UpdateState::Available(version),
@@ -556,7 +575,7 @@ impl App {
                     return Task::none();
                 };
                 let url = package.page_url.clone();
-                self.browse(id, package, url)
+                self.enqueue_browse(id, package, url)
             }
             M::ConfirmPending => {
                 let Some(Pending { package, plan }) = state.pending.take() else {
@@ -574,6 +593,19 @@ impl App {
                 Task::perform(
                     self.services.clone().remove_plugin(handle, id, plugin_id),
                     |()| Message::Finished,
+                )
+            }
+            M::UpdateAll => {
+                let name = self
+                    .instances
+                    .iter()
+                    .find(|instance| instance.config.id == id)
+                    .map_or_else(String::new, |instance| instance.config.name.clone());
+                let title = format!("{}: {name}", strings::TASK_UPDATE_ALL);
+                let handle = self.services.board.add(title);
+                Task::perform(
+                    self.services.clone().update_all(handle, id),
+                    move |packages| Message::UpdatedAll(id, packages),
                 )
             }
             M::NameChanged(name) => {
@@ -680,7 +712,7 @@ impl App {
             }
         };
         match plan {
-            InstallPlan::OpenInBrowser(url) => self.browse(id, package, url),
+            InstallPlan::OpenInBrowser(url) => self.enqueue_browse(id, package, url),
             plan if plan.is_verified() => self.start_install(id, package, plan),
             plan => {
                 if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
@@ -700,6 +732,23 @@ impl App {
                 .install_plugin(handle, id, package, plan),
             |()| Message::Finished,
         )
+    }
+
+    /// Opens the browser window for `url` once no other browser window is open.
+    fn enqueue_browse(&mut self, id: InstanceId, package: Package, url: Url) -> Task<Message> {
+        self.browse_queue.push_back((id, package, url));
+        self.next_browse()
+    }
+
+    fn next_browse(&mut self) -> Task<Message> {
+        if self.browsing {
+            return Task::none();
+        }
+        let Some((id, package, url)) = self.browse_queue.pop_front() else {
+            return Task::none();
+        };
+        self.browsing = true;
+        self.browse(id, package, url)
     }
 
     /// Shows `url` in the browser window. The download that starts there installs `package` into `id`.

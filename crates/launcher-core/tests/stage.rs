@@ -5,8 +5,8 @@ use std::sync::Mutex;
 
 use launcher_core::{
     Artifact, Edition, Error, Fetcher, FileCheck, Hash, HashAlgo, Host, Installer, Instance,
-    InstanceStore, Kind, Location, NewInstance, NoProgress, Package, PackageSource, ProgressSink,
-    Root, StagedPlan, Step,
+    InstanceStore, Kind, Location, NewInstance, NoProgress, Origin, Package, PackageSource,
+    ProgressSink, Recipe, Root, StagedPlan, Step,
 };
 use tempfile::TempDir;
 use url::Url;
@@ -318,4 +318,62 @@ async fn aviutl2_app_gets_a_data_directory() {
         .await
         .unwrap();
     assert!(fx.app().join("data").is_dir());
+}
+
+fn recipe(checks: Vec<FileCheck>) -> Recipe {
+    Recipe {
+        version: "2.0".to_owned(),
+        origin: Origin::Direct(Url::parse("https://example.com/browsed.zip").unwrap()),
+        hash: None,
+        steps: vec![Step::Extract, copy_plugins("a.aux2")],
+        checks,
+    }
+}
+
+fn browsed_archive(fx: &Fixture) -> std::path::PathBuf {
+    let path = fx._root.path().join("browsed.zip");
+    fs::write(&path, zip_bytes(&[("a.aux2", b"alpha")])).unwrap();
+    path
+}
+
+#[test]
+fn recipe_file_installs_a_browsed_archive_with_the_recipe_version() {
+    let fx = fixture(Kind::Aviutl2, "aviutl2.exe");
+    let check = FileCheck {
+        location: loc(Root::Data, "Plugin/a.aux2"),
+        hash: xxh3(b"alpha"),
+    };
+    let record = fx
+        .installer
+        .install_recipe_file(
+            fx.instance.config.id,
+            &package("p"),
+            &recipe(vec![check]),
+            &browsed_archive(&fx),
+        )
+        .unwrap();
+
+    assert_eq!(record.version, "2.0");
+    assert_eq!(record.files, ["data/Plugin/a.aux2"]);
+    assert!(fx.app().join("data/Plugin/a.aux2").is_file());
+    assert_eq!(fx.reload().config.plugins, [record]);
+}
+
+#[test]
+fn recipe_file_with_a_wrong_hash_writes_nothing() {
+    let fx = fixture(Kind::Aviutl2, "aviutl2.exe");
+    let check = FileCheck {
+        location: loc(Root::Data, "Plugin/a.aux2"),
+        hash: xxh3(b"other"),
+    };
+    let result = fx.installer.install_recipe_file(
+        fx.instance.config.id,
+        &package("p"),
+        &recipe(vec![check]),
+        &browsed_archive(&fx),
+    );
+
+    assert!(matches!(result, Err(Error::HashMismatch { .. })));
+    assert!(!fx.app().join("data/Plugin/a.aux2").exists());
+    assert!(fx.reload().config.plugins.is_empty());
 }

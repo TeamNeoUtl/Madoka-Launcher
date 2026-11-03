@@ -306,7 +306,7 @@ pub fn parse_aviutl2_history(index: &[u8], page: &[u8]) -> Result<Vec<AppVersion
     if rows.is_empty() {
         return Err(shape_changed("history page lists no AviUtl2 archive"));
     }
-    rows.sort_by(|a, b| version_key(&b.0).cmp(&version_key(&a.0)));
+    rows.sort_by_key(|row| std::cmp::Reverse(version_key(&row.0)));
     Ok(rows
         .into_iter()
         .filter(|(version, _)| *version != entry.latest_version)

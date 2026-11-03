@@ -5,8 +5,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use launcher_core::{
-    Artifact, Edition, Error, Fetcher, Hash, HashAlgo, Host, Installer, Instance, InstanceStore,
-    Kind, NewInstance, NoProgress, Package, PackageSource, Progress, ProgressSink,
+    Artifact, Edition, Error, Fetcher, FileCheck, Hash, HashAlgo, Host, Installer, Instance,
+    InstanceStore, Kind, Location, NewInstance, NoProgress, Package, PackageSource, Progress,
+    ProgressSink, Root,
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -725,4 +726,127 @@ fn install_package_file_rejects_unsupported_kind() {
 
     assert!(matches!(result, Err(Error::PluginUnsupported(_))));
     assert!(all_files(&f.instance.app_dir()).is_empty());
+}
+
+fn update_fixture() -> Fixture {
+    let f = fixture(Kind::Aviutl);
+    let app = f.instance.app_dir();
+    fs::write(app.join("aviutl.exe"), b"old exe").unwrap();
+    fs::write(app.join("user.ini"), b"mine").unwrap();
+    f
+}
+
+fn exe_check(bytes: &[u8]) -> FileCheck {
+    FileCheck {
+        location: Location {
+            root: Root::App,
+            rel: "aviutl.exe".to_owned(),
+        },
+        hash: Hash {
+            algo: HashAlgo::Sha256,
+            hex: sha256_hex(bytes),
+        },
+    }
+}
+
+#[tokio::test]
+async fn update_app_replaces_files_and_keeps_the_others() {
+    let f = update_fixture();
+    let bytes = zip_bytes(&[
+        ("aviutl110/aviutl.exe", b"new exe"),
+        ("aviutl110/lang/ja.txt", b"ja"),
+    ]);
+    f.installer.fetcher().set(bytes.clone());
+    f.installer
+        .update_app_checked(
+            f.instance.config.id,
+            &[artifact("aviutl110.zip", &bytes)],
+            &[exe_check(b"new exe")],
+            &NoProgress,
+        )
+        .await
+        .unwrap();
+
+    let app = f.instance.app_dir();
+    assert_eq!(fs::read(app.join("aviutl.exe")).unwrap(), b"new exe");
+    assert_eq!(fs::read(app.join("lang/ja.txt")).unwrap(), b"ja");
+    assert_eq!(fs::read(app.join("user.ini")).unwrap(), b"mine");
+}
+
+#[tokio::test]
+async fn update_app_restores_the_previous_files_when_a_check_fails() {
+    let f = update_fixture();
+    let bytes = zip_bytes(&[
+        ("aviutl110/aviutl.exe", b"new exe"),
+        ("aviutl110/lang/ja.txt", b"ja"),
+    ]);
+    f.installer.fetcher().set(bytes.clone());
+    let result = f
+        .installer
+        .update_app_checked(
+            f.instance.config.id,
+            &[artifact("aviutl110.zip", &bytes)],
+            &[exe_check(b"other")],
+            &NoProgress,
+        )
+        .await;
+
+    assert!(matches!(result, Err(Error::HashMismatch { .. })));
+    let app = f.instance.app_dir();
+    assert_eq!(fs::read(app.join("aviutl.exe")).unwrap(), b"old exe");
+    assert_eq!(fs::read(app.join("user.ini")).unwrap(), b"mine");
+    assert!(!app.join("lang").exists());
+}
+
+#[tokio::test]
+async fn update_app_rejects_an_archive_before_it_writes() {
+    let f = update_fixture();
+    let bytes = zip_bytes(&[("aviutl.exe", b"new exe"), ("../evil.txt", b"x")]);
+    f.installer.fetcher().set(bytes.clone());
+    let result = f
+        .installer
+        .update_app_checked(
+            f.instance.config.id,
+            &[artifact("aviutl110.zip", &bytes)],
+            &[],
+            &NoProgress,
+        )
+        .await;
+
+    assert!(matches!(result, Err(Error::UnsafePath(_))));
+    let app = f.instance.app_dir();
+    assert_eq!(fs::read(app.join("aviutl.exe")).unwrap(), b"old exe");
+    assert!(!f.instance.dir.join("evil.txt").exists());
+}
+
+#[tokio::test]
+async fn update_app_follows_the_directory_of_the_installed_executable() {
+    let f = fixture(Kind::Ymm4);
+    let app = f.instance.app_dir();
+    fs::create_dir_all(app.join("YukkuriMovieMaker")).unwrap();
+    fs::write(app.join("YukkuriMovieMaker/YukkuriMovieMaker.exe"), b"old").unwrap();
+    fs::write(app.join("YukkuriMovieMaker/keep.ini"), b"mine").unwrap();
+    let bytes = zip_bytes(&[
+        ("v2/YukkuriMovieMaker.exe", b"new"),
+        ("v2/lib/x.dll", b"dll"),
+    ]);
+    f.installer.fetcher().set(bytes.clone());
+    f.installer
+        .update_app_checked(
+            f.instance.config.id,
+            &[artifact("app.zip", &bytes)],
+            &[],
+            &NoProgress,
+        )
+        .await
+        .unwrap();
+
+    let root = app.join("YukkuriMovieMaker");
+    assert_eq!(
+        fs::read(root.join("YukkuriMovieMaker.exe")).unwrap(),
+        b"new"
+    );
+    assert_eq!(fs::read(root.join("lib/x.dll")).unwrap(), b"dll");
+    assert_eq!(fs::read(root.join("keep.ini")).unwrap(), b"mine");
+    assert!(!app.join("v2").exists());
 }
