@@ -1,5 +1,5 @@
 use launcher_core::Kind;
-use launcher_providers::{AnyProvider, Http, HttpError, Provider, has_provider};
+use launcher_providers::{Http, HttpError, MadokaProvider, Provider, has_provider};
 use url::Url;
 
 struct NoHttp;
@@ -24,7 +24,7 @@ const ALL_KINDS: [Kind; 5] = [
 #[test]
 fn provider_kind_matches_requested_kind() {
     for kind in ALL_KINDS {
-        let provider = AnyProvider::for_kind(kind, NoHttp).expect("provider exists");
+        let provider = MadokaProvider::for_kind(kind, NoHttp).expect("provider exists");
         assert_eq!(provider.kind(), kind);
     }
 }
@@ -34,7 +34,7 @@ fn has_provider_agrees_with_for_kind() {
     for kind in ALL_KINDS {
         assert_eq!(
             has_provider(kind),
-            AnyProvider::for_kind(kind, NoHttp).is_ok()
+            MadokaProvider::for_kind(kind, NoHttp).is_ok()
         );
     }
 }

@@ -1,6 +1,6 @@
 use launcher_core::{Edition, Host, Kind};
 
-pub const APP_TITLE: &str = "Motoyori Launcher";
+pub const APP_TITLE: &str = "Madoka Launcher";
 
 pub const TAB_INSTANCES: &str = "インスタンス";
 pub const TAB_NEW: &str = "新規作成";

@@ -8,7 +8,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
 
-const FILTER_ENV: &str = "Motoyori_LOG";
+const FILTER_ENV: &str = "Madoka_LOG";
 const DEFAULT_DIRECTIVES: &str =
     "warn,launcher_core=debug,launcher_providers=debug,reqwest=debug,hyper_util=debug";
 const LOG_DIR: &str = "logs";
@@ -16,7 +16,7 @@ const LOG_FILE: &str = "launcher.log";
 const PREVIOUS_LOG_FILE: &str = "launcher.previous.log";
 
 /// Writes records to stderr and to `<root>/logs/launcher.log`.
-/// The previous log is kept as `launcher.previous.log`. `Motoyori_LOG` overrides the filter.
+/// The previous log is kept as `launcher.previous.log`. `Madoka_LOG` overrides the filter.
 /// Panics are recorded as `error` records.
 pub fn init(root: &Path) -> PathBuf {
     let path = root.join(LOG_DIR).join(LOG_FILE);
@@ -44,7 +44,7 @@ pub fn init(root: &Path) -> PathBuf {
     path
 }
 
-/// The target of this crate is the binary name (`Motoyori_Launcher`), not the package name.
+/// The target of this crate is the binary name (`Madoka_Launcher`), not the package name.
 fn default_filter() -> EnvFilter {
     let target = module_path!().split("::").next().unwrap_or_default();
     EnvFilter::new(format!("{DEFAULT_DIRECTIVES},{target}=debug"))

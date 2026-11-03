@@ -1,6 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-//! Web view window. Usage: `Motoyori-Browser <url>`.
+//! Web view window. Usage: `Madoka-Browser <url>`.
 //! A download that starts in the page is cancelled, the window closes, and stdout receives
 //! one line: `download <file name>\t<url>`. The file name is empty when the web view reports none.
 //! A new window request (`window.open`, `target="_blank"`) with an http or https url navigates this window.
@@ -15,7 +15,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::{NewWindowResponse, WebViewBuilder};
 
-const TITLE: &str = "Motoyori Browser";
+const TITLE: &str = "Madoka Browser";
 const WIDTH: f64 = 1100.0;
 const HEIGHT: f64 = 760.0;
 const DOWNLOAD_PREFIX: &str = "download ";
@@ -38,7 +38,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let url = std::env::args()
         .nth(1)
-        .ok_or("usage: Motoyori-Browser <url>")?;
+        .ok_or("usage: Madoka-Browser <url>")?;
     let event_loop = EventLoopBuilder::<Signal>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let navigate_proxy = proxy.clone();

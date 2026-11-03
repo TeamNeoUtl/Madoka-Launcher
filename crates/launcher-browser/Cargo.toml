@@ -3,7 +3,7 @@ name = "launcher-browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Embedded browser window of Motoyori Launcher."
+description = "Embedded browser window of Madoka Launcher."
 repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -13,7 +13,7 @@ categories.workspace = true
 workspace = true
 
 [[bin]]
-name = "Motoyori-Browser"
+name = "Madoka-Browser"
 path = "src/main.rs"
 
 [dependencies]

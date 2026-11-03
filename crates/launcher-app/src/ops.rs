@@ -9,8 +9,8 @@ use launcher_core::{
     Package, TaskBoard, TaskHandle, open_directory,
 };
 use launcher_providers::{
-    AnyProvider, Dns, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any, load_fresh,
-    store_catalog,
+    Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, load_any,
+    load_fresh, store_catalog,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -22,9 +22,9 @@ const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
 const WRITE_STEPS: u16 = 1;
 const BROWSER_EXE: &str = if cfg!(windows) {
-    "Motoyori-Browser.exe"
+    "Madoka-Browser.exe"
 } else {
-    "Motoyori-Browser"
+    "Madoka-Browser"
 };
 const BROWSER_DOWNLOAD_PREFIX: &str = "download ";
 const BROWSED_DIR: &str = "downloads";
@@ -128,7 +128,7 @@ pub struct Services {
 impl Services {
     pub fn new(root: PathBuf) -> Result<Self, OpError> {
         let config = Config::load(&root)?;
-        let user_agent = format!("Motoyori-Launcher/{}", env!("CARGO_PKG_VERSION"));
+        let user_agent = format!("Madoka-Launcher/{}", env!("CARGO_PKG_VERSION"));
         let token = config.github_token.filter(|token| !token.trim().is_empty());
         let config_has_token = token.is_some();
         let theme = config.theme;
@@ -257,7 +257,7 @@ impl Services {
     }
 
     pub async fn app_versions(self, kind: Kind) -> Result<Vec<AppVersion>, OpError> {
-        let provider = AnyProvider::for_kind(kind, self.http())?;
+        let provider = MadokaProvider::for_kind(kind, self.http())?;
         let result = provider.app_versions().await;
         match &result {
             Ok(versions) => info!(?kind, count = versions.len(), "app versions loaded"),
@@ -282,7 +282,7 @@ impl Services {
                 return Ok(packages);
             }
         }
-        let provider = AnyProvider::for_kind(kind, self.http())?;
+        let provider = MadokaProvider::for_kind(kind, self.http())?;
         match provider.catalog().await {
             Ok(packages) => {
                 info!(?kind, count = packages.len(), "catalog loaded");
@@ -311,7 +311,7 @@ impl Services {
         kind: Kind,
         package: Package,
     ) -> Result<(Package, InstallPlan), OpError> {
-        let provider = AnyProvider::for_kind(kind, self.http())?;
+        let provider = MadokaProvider::for_kind(kind, self.http())?;
         let plan = provider.plan_install_package(&package).await?;
         Ok((package, plan))
     }
@@ -323,7 +323,7 @@ impl Services {
         selection: AppSelection,
         versions: &[AppVersion],
     ) -> Vec<AppVersion> {
-        let Ok(provider) = AnyProvider::for_kind(kind, self.http()) else {
+        let Ok(provider) = MadokaProvider::for_kind(kind, self.http()) else {
             return Vec::new();
         };
         versions
@@ -595,7 +595,7 @@ impl Services {
             version,
         } = request;
         handle.running(0, CREATE_STEPS);
-        let provider = AnyProvider::for_kind(kind, self.http())?;
+        let provider = MadokaProvider::for_kind(kind, self.http())?;
         let selection = AppSelection {
             host: self.host,
             edition,

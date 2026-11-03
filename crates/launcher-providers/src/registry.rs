@@ -5,7 +5,7 @@ use crate::{
     Ymm4Provider,
 };
 
-/// Kinds for which `AnyProvider::for_kind` returns a provider.
+/// Kinds for which `MadokaProvider::for_kind` returns a provider.
 #[must_use]
 pub const fn has_provider(kind: Kind) -> bool {
     matches!(
@@ -21,7 +21,7 @@ pub const fn has_catalog(kind: Kind) -> bool {
 }
 
 /// Dispatches `Provider` calls by `Kind`. `Provider` is not object-safe.
-pub enum AnyProvider<H> {
+pub enum MadokaProvider<H> {
     Aviutl(AviutlProvider<H>),
     Aviutl2(Aviutl2Provider<H>),
     Ymm4(Ymm4Provider<H>),
@@ -29,7 +29,7 @@ pub enum AnyProvider<H> {
     Freya(FreyaProvider<H>),
 }
 
-impl<H: Http> AnyProvider<H> {
+impl<H: Http> MadokaProvider<H> {
     /// # Errors
     ///
     /// Returns `ProviderError::NoProvider` when `kind` has no provider.
@@ -57,7 +57,7 @@ macro_rules! dispatch {
     };
 }
 
-impl<H: Http> Provider for AnyProvider<H> {
+impl<H: Http> Provider for MadokaProvider<H> {
     fn kind(&self) -> Kind {
         dispatch!(self, provider => provider.kind())
     }

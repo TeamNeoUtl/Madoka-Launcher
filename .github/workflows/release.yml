@@ -44,9 +44,9 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="motoyori-launcher-$GITHUB_REF_NAME-${{ matrix.label }}"
+          name="Madoka-launcher-$GITHUB_REF_NAME-${{ matrix.label }}"
           mkdir "$name"
-          cp "target/release/Motoyori-Launcher${{ matrix.suffix }}" "target/release/Motoyori-Browser${{ matrix.suffix }}" LICENSE README.md "$name/"
+          cp "target/release/Madoka-Launcher${{ matrix.suffix }}" "target/release/Madoka-Browser${{ matrix.suffix }}" LICENSE README.md "$name/"
           if [ "${{ matrix.archive }}" = zip ]; then
             7z a "$name.zip" "$name"
           else

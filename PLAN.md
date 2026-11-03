@@ -1,4 +1,4 @@
-# Motoyori-Launcher 実装計画
+# Madoka-Launcher 実装計画
 
 ## 1. 目的
 
@@ -37,7 +37,7 @@
 ### 4.1 ランチャーのデータ
 
 ```
-<data_dir>/Motoyori-Launcher/
+<data_dir>/Madoka-Launcher/
   config.toml
   cache/
     catalog/<kind>.json
@@ -152,9 +152,9 @@ Wine を使用しない。すべて直接 spawn。
 - ダウンロード先ホスト許可リスト (`launcher_core::ALLOWED_HOSTS`、`https` のみ): `github.com`, `api.github.com`, `codeberg.org`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `spring-fragrance.mints.ne.jp`。`http` を許すホストは `HTTP_HOSTS` (`spring-fragrance.mints.ne.jp`) のみで、ハッシュなしの `http` ダウンロードは `HashRequired` で拒否する。リダイレクト先も `ReqwestFetcher` が同じ関数で検証する。許可リスト外ホストの項目は `OpenInBrowser`。
 - AviUtl2 本体: セットアップ実行ファイルを使用しない。ポータブル ZIP を `<instance>/app/` へ展開する。インスタンス間でファイル・設定・データを共有しない。
 - 索引の `run` アクション: 実行前に `path` と `args` を表示して確認を取る。`elevate = true` はランチャーでは昇格せず、確認ダイアログに表示する。
-- HTTP: `reqwest` + `rustls`。User-Agent は `Motoyori-Launcher/<version>`。GitHub API は未認証 60 req/h。ETag で条件付き取得し、`config.toml` の任意トークンで上限を引き上げる。
+- HTTP: `reqwest` + `rustls`。User-Agent は `Madoka-Launcher/<version>`。GitHub API は未認証 60 req/h。ETag で条件付き取得し、`config.toml` の任意トークンで上限を引き上げる。
 - タイムアウト: 接続 15 秒。API 取得は全体 30 秒。本体ダウンロードは無通信 30 秒。超過は `Failed` とし、原因 (エラーの連鎖) を理由に含める。
-- ログ (`tracing`): 出力先は標準エラーと `<data_dir>/logs/launcher.log`。起動ごとに前回分を `launcher.previous.log` へ退避する。既定フィルタは `warn` + 本プロジェクトの crate と `reqwest` / `hyper_util` が `debug`。環境変数 `Motoyori_LOG` で上書きする。記録対象: 起動時のデータディレクトリ、通信 (URL・ステータス・バイト数・経過時間・リダイレクト・8 MiB ごとの進捗)、Installer の各手順、Instance の作成・削除、ロック待ち時間、タスク状態の遷移、起動したプロセスの pid と終了状態、パニック。
+- ログ (`tracing`): 出力先は標準エラーと `<data_dir>/logs/launcher.log`。起動ごとに前回分を `launcher.previous.log` へ退避する。既定フィルタは `warn` + 本プロジェクトの crate と `reqwest` / `hyper_util` が `debug`。環境変数 `Madoka_LOG` で上書きする。記録対象: 起動時のデータディレクトリ、通信 (URL・ステータス・バイト数・経過時間・リダイレクト・8 MiB ごとの進捗)、Installer の各手順、Instance の作成・削除、ロック待ち時間、タスク状態の遷移、起動したプロセスの pid と終了状態、パニック。
 
 ## 7. UI (Iced)
 

@@ -6,7 +6,7 @@
 
 | 項目 | 内容 | 決定日 |
 |---|---|---|
-| プロジェクト名 | `Motoyori-Launcher` | 10-27 |
+| プロジェクト名 | `Madoka-Launcher` | 10-27 |
 | YMM4 本体の取得元 | GitHub Releases (`manju-summoner/YukkuriMovieMaker4`) | 10-27 |
 | 索引・データリポジトリ | 同梱しない。実行時に取得 | 10-27 |
 | `.ymme` | 階層を持つ `.ymme` が存在する (`CameraPath_v1.0.0.ymme`、2026-11-03 確認)。専用ディレクトリを作成し、ルートディレクトリを除いて全エントリを配置 | 11-03 |

@@ -1,7 +1,7 @@
 //! Copies `WebView2Loader.dll` next to the executables when the target links it dynamically.
 //! `webview2-com-sys` links `WebView2LoaderStatic` for `msvc` and `WebView2Loader.dll` for other
 //! Windows targets. The crate leaves the DLL in its `OUT_DIR`, so the loader fails to start
-//! `Motoyori-Browser.exe` with status 0xc0000135 without this copy.
+//! `Madoka-Browser.exe` with status 0xc0000135 without this copy.
 
 use std::env;
 use std::fs;
