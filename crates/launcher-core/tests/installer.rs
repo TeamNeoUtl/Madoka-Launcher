@@ -629,3 +629,100 @@ async fn install_app_without_zip_modes_leaves_files_non_executable() {
         .mode();
     assert_eq!(mode & 0o111, 0);
 }
+
+fn web_package(page: &str) -> Package {
+    let url = Url::parse(page).unwrap();
+    Package {
+        id: url.to_string(),
+        name: "web".to_owned(),
+        summary: String::new(),
+        author: String::new(),
+        categories: Vec::new(),
+        updated: None,
+        page_url: url.clone(),
+        source: PackageSource::Web(url),
+    }
+}
+
+fn write_zip(f: &Fixture, name: &str, entries: &[(&str, &[u8])]) -> PathBuf {
+    let path = f.root.path().join(name);
+    fs::write(&path, zip_bytes(entries)).unwrap();
+    path
+}
+
+#[test]
+fn install_package_file_records_a_web_package() {
+    let f = fixture(Kind::Ymm4);
+    let package = web_package("https://example.com/plugin/1");
+    let path = write_zip(
+        &f,
+        "web.ymme",
+        &[("P/", b""), ("P/a.dll", b"a"), ("P/b.dll", b"b")],
+    );
+    let record = f
+        .installer
+        .install_package_file(f.instance.config.id, &package, "-", &path)
+        .unwrap();
+
+    assert_eq!(record.id, package.id);
+    assert_eq!(record.files.len(), 2);
+    let app = f.instance.app_dir();
+    for file in &record.files {
+        assert!(file.starts_with("user/plugin/web-"), "{file}");
+        assert!(app.join(file).is_file(), "{file}");
+    }
+    assert_eq!(reload(&f).config.plugins, [record]);
+}
+
+#[test]
+fn install_package_file_replaces_the_record_of_the_same_package() {
+    let f = fixture(Kind::Ymm4);
+    let package = web_package("https://example.com/plugin/1");
+    let first = write_zip(&f, "1.ymme", &[("a.dll", b"a1"), ("b.dll", b"b1")]);
+    let second = write_zip(&f, "2.ymme", &[("a.dll", b"a2")]);
+    let id = f.instance.config.id;
+    f.installer
+        .install_package_file(id, &package, "-", &first)
+        .unwrap();
+    let record = f
+        .installer
+        .install_package_file(id, &package, "-", &second)
+        .unwrap();
+
+    assert_eq!(record.files.len(), 1);
+    assert_eq!(all_files(&f.instance.app_dir()).len(), 1);
+    assert_eq!(reload(&f).config.plugins, [record]);
+}
+
+#[test]
+fn install_package_file_separates_web_packages() {
+    let f = fixture(Kind::Ymm4);
+    let id = f.instance.config.id;
+    let path = write_zip(&f, "p.ymme", &[("a.dll", b"a")]);
+    let one = f
+        .installer
+        .install_package_file(id, &web_package("https://example.com/1"), "-", &path)
+        .unwrap();
+    let two = f
+        .installer
+        .install_package_file(id, &web_package("https://example.com/2"), "-", &path)
+        .unwrap();
+
+    assert_ne!(one.files, two.files);
+    assert_eq!(reload(&f).config.plugins.len(), 2);
+}
+
+#[test]
+fn install_package_file_rejects_unsupported_kind() {
+    let f = fixture(Kind::Aviutl2);
+    let path = write_zip(&f, "p.ymme", &[("a.dll", b"a")]);
+    let result = f.installer.install_package_file(
+        f.instance.config.id,
+        &web_package("https://example.com/1"),
+        "-",
+        &path,
+    );
+
+    assert!(matches!(result, Err(Error::PluginUnsupported(_))));
+    assert!(all_files(&f.instance.app_dir()).is_empty());
+}

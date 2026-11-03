@@ -3,6 +3,7 @@
 //! Web view window. Usage: `Motoyori-Browser <url>`.
 //! A download that starts in the page is cancelled, the window closes, and stdout receives
 //! one line: `download <file name>\t<url>`. The file name is empty when the web view reports none.
+//! A new window request (`window.open`, `target="_blank"`) with an http or https url navigates this window.
 //! A failure writes one line to stderr and exits with status 1.
 
 use std::io::Write;
@@ -12,7 +13,7 @@ use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
-use wry::WebViewBuilder;
+use wry::{NewWindowResponse, WebViewBuilder};
 
 const TITLE: &str = "Motoyori Browser";
 const WIDTH: f64 = 1100.0;
@@ -21,6 +22,7 @@ const DOWNLOAD_PREFIX: &str = "download ";
 
 enum Signal {
     Download,
+    Navigate(String),
 }
 
 fn main() -> ExitCode {
@@ -39,6 +41,7 @@ fn run() -> Result<(), String> {
         .ok_or("usage: Motoyori-Browser <url>")?;
     let event_loop = EventLoopBuilder::<Signal>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    let navigate_proxy = proxy.clone();
     let window = WindowBuilder::new()
         .with_title(TITLE)
         .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
@@ -56,6 +59,12 @@ fn run() -> Result<(), String> {
             let _ = out.flush();
             let _ = proxy.send_event(Signal::Download);
             false
+        })
+        .with_new_window_req_handler(move |url, _| {
+            if url.starts_with("https://") || url.starts_with("http://") {
+                let _ = navigate_proxy.send_event(Signal::Navigate(url));
+            }
+            NewWindowResponse::Deny
         });
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     let webview = builder.build(&window);
@@ -66,17 +75,19 @@ fn run() -> Result<(), String> {
         let vbox = window.default_vbox().ok_or("window has no gtk box")?;
         builder.build_gtk(vbox)
     };
-    let _webview = webview.map_err(|error| format!("web view: {error}"))?;
+    let webview = webview.map_err(|error| format!("web view: {error}"))?;
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
-        if matches!(
-            event,
+        match event {
+            Event::UserEvent(Signal::Navigate(url)) => {
+                let _ = webview.load_url(&url);
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
-            } | Event::UserEvent(Signal::Download)
-        ) {
-            *flow = ControlFlow::Exit;
+            }
+            | Event::UserEvent(Signal::Download) => *flow = ControlFlow::Exit,
+            _ => {}
         }
     })
 }

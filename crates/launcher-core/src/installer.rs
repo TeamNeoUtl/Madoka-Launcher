@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use tracing::{debug, info};
 use uuid::Uuid;
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::archive::{Archive, Created, Layout};
 use crate::model::ensure_single_component;
@@ -142,11 +143,44 @@ impl<F: Fetcher> Installer<F> {
         artifact: &Artifact,
         progress: &dyn ProgressSink,
     ) -> Result<PluginRecord, Error> {
-        let mut instance = self.store.load(id)?;
+        let instance = self.store.load(id)?;
         let plugin_dir = plugin_dir(instance.config.kind, package)?;
         info!(%id, package = %package.id, version, "install package");
         let download = self.download(artifact, progress).await?;
-        let mut archive = Archive::open(&download.path, Layout::TreeWithoutRoot)?;
+        self.place_package(instance, &plugin_dir, package, version, &download.path)
+    }
+
+    /// Installs the archive at `archive` like `install_package`, without downloading or hashing.
+    /// The caller vouches for the file: it comes from the user's own browser download.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` when the instance cannot be loaded, the kind has no plugin directory,
+    /// an archive entry is rejected, a file cannot be removed or written,
+    /// or `instance.toml` cannot be saved.
+    pub fn install_package_file(
+        &self,
+        id: InstanceId,
+        package: &Package,
+        version: &str,
+        archive: &Path,
+    ) -> Result<PluginRecord, Error> {
+        let instance = self.store.load(id)?;
+        let plugin_dir = plugin_dir(instance.config.kind, package)?;
+        info!(%id, package = %package.id, version, archive = %archive.display(), "install package file");
+        self.place_package(instance, &plugin_dir, package, version, archive)
+    }
+
+    fn place_package(
+        &self,
+        mut instance: Instance,
+        plugin_dir: &str,
+        package: &Package,
+        version: &str,
+        archive: &Path,
+    ) -> Result<PluginRecord, Error> {
+        let id = instance.config.id;
+        let mut archive = Archive::open(archive, Layout::TreeWithoutRoot)?;
         let app_dir = instance.app_dir();
 
         if let Some(position) = position_of(&instance.config.plugins, &package.id) {
@@ -155,7 +189,7 @@ impl<F: Fetcher> Installer<F> {
             self.store.save(&instance)?;
         }
 
-        archive.extract(&app_dir.join(&plugin_dir))?;
+        archive.extract(&app_dir.join(plugin_dir))?;
         let record = PluginRecord {
             id: package.id.clone(),
             version: version.to_owned(),
@@ -336,6 +370,10 @@ fn plugin_dir(kind: Kind, package: &Package) -> Result<String, Error> {
             ensure_single_component(repo)?;
             Ok(format!("user/plugin/{repo}"))
         }
+        (Kind::Ymm4, PackageSource::Web(_)) => Ok(format!(
+            "user/plugin/web-{:016x}",
+            xxh3_64(package.id.as_bytes())
+        )),
         _ => Err(Error::PluginUnsupported(kind)),
     }
 }

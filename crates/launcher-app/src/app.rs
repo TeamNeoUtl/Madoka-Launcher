@@ -42,7 +42,7 @@ pub enum Message {
     Created(Option<InstanceId>),
     Finished,
     Opened(Result<(), String>),
-    Browsed(Result<Option<Browsed>, String>),
+    Browsed(InstanceId, Box<Package>, Result<Option<Browsed>, String>),
     Redraw,
 }
 
@@ -187,8 +187,8 @@ impl App {
                 self.reload()
             }
             Message::Finished => self.reload(),
-            Message::Browsed(result) => match result {
-                Ok(Some(browsed)) => self.start_download(browsed),
+            Message::Browsed(id, package, result) => match result {
+                Ok(Some(browsed)) => self.start_download(id, *package, browsed),
                 Ok(None) => Task::none(),
                 Err(reason) => {
                     self.notice = Some(reason);
@@ -508,10 +508,11 @@ impl App {
                 })
             }
             M::Open(package_id) => {
-                let Some(url) = state.package(&package_id).map(|p| p.page_url.clone()) else {
+                let Some(package) = state.package(&package_id).cloned() else {
                     return Task::none();
                 };
-                self.browse(url)
+                let url = package.page_url.clone();
+                self.browse(id, package, url)
             }
             M::ConfirmPending => {
                 let Some(Pending { package, plan }) = state.pending.take() else {
@@ -617,7 +618,7 @@ impl App {
             }
         };
         match plan {
-            InstallPlan::OpenInBrowser(url) => self.browse(url),
+            InstallPlan::OpenInBrowser(url) => self.browse(id, package, url),
             plan if plan.is_verified() => self.start_install(id, package, plan),
             plan => {
                 if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
@@ -639,17 +640,24 @@ impl App {
         )
     }
 
-    fn browse(&self, url: Url) -> Task<Message> {
-        Task::perform(self.services.clone().browse(url), |result| {
-            Message::Browsed(result.map_err(|error| error.to_string()))
+    /// Shows `url` in the browser window. The download that starts there installs `package` into `id`.
+    fn browse(&self, id: InstanceId, package: Package, url: Url) -> Task<Message> {
+        Task::perform(self.services.clone().browse(url), move |result| {
+            Message::Browsed(
+                id,
+                Box::new(package),
+                result.map_err(|error| error.to_string()),
+            )
         })
     }
 
-    fn start_download(&self, browsed: Browsed) -> Task<Message> {
+    fn start_download(&self, id: InstanceId, package: Package, browsed: Browsed) -> Task<Message> {
         let title = format!("{}: {}", strings::TASK_DOWNLOAD, browsed.label());
         let handle = self.services.board.add(title);
         Task::perform(
-            self.services.clone().download_browsed(handle, browsed),
+            self.services
+                .clone()
+                .download_browsed(handle, id, package, browsed),
             |()| Message::Finished,
         )
     }

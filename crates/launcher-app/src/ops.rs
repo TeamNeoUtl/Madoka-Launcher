@@ -30,6 +30,8 @@ const BROWSER_DOWNLOAD_PREFIX: &str = "download ";
 const BROWSED_DIR: &str = "downloads";
 const PART_SUFFIX: &str = ".part";
 const DEFAULT_FILE_NAME: &str = "download";
+const UNKNOWN_VERSION: &str = "-";
+const PLUGIN_ARCHIVE_EXTENSION: &str = "ymme";
 const FORBIDDEN_FILE_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
 #[derive(Debug, thiserror::Error)]
@@ -388,9 +390,18 @@ impl Services {
     }
 
     /// Saves the browsed download to `<root>/downloads/`.
-    pub async fn download_browsed(self, handle: TaskHandle, browsed: Browsed) {
-        info!(url = %browsed.url, "browsed download task start");
-        let result = self.download_browsed_inner(&handle, &browsed).await;
+    /// A `.ymme` file is then installed as `package` into instance `id`.
+    pub async fn download_browsed(
+        self,
+        handle: TaskHandle,
+        id: InstanceId,
+        package: Package,
+        browsed: Browsed,
+    ) {
+        info!(%id, package = %package.id, url = %browsed.url, "browsed download task start");
+        let result = self
+            .download_browsed_inner(&handle, id, &package, &browsed)
+            .await;
         log_outcome("browsed download", &result);
         handle.finish(&result);
     }
@@ -398,6 +409,8 @@ impl Services {
     async fn download_browsed_inner(
         &self,
         handle: &TaskHandle,
+        id: InstanceId,
+        package: &Package,
         browsed: &Browsed,
     ) -> Result<PathBuf, OpError> {
         ensure_web(&browsed.url)?;
@@ -423,6 +436,22 @@ impl Services {
             path: dest.clone(),
             source,
         })?;
+        if is_plugin_archive(&dest) {
+            let _guard = self.locks.lock(id).await;
+            let installer = Arc::clone(&self.installer);
+            let package = package.clone();
+            let version = package
+                .latest_version()
+                .unwrap_or(UNKNOWN_VERSION)
+                .to_owned();
+            let archive = dest.clone();
+            blocking(move || {
+                installer
+                    .install_package_file(id, &package, &version, &archive)
+                    .map(drop)
+            })
+            .await?;
+        }
         Ok(dest)
     }
 
@@ -526,7 +555,7 @@ impl Services {
                 let artifact = artifacts
                     .first()
                     .ok_or_else(|| OpError::Worker("install plan holds no artifact".to_owned()))?;
-                let version = package.latest_version().unwrap_or("-");
+                let version = package.latest_version().unwrap_or(UNKNOWN_VERSION);
                 self.installer
                     .install_package(id, package, version, artifact, handle)
                     .await?;
@@ -630,6 +659,11 @@ fn log_outcome<T>(task: &str, result: &Result<T, OpError>) {
         Ok(_) => info!(task, "task succeeded"),
         Err(error) => error!(task, %error, "task failed"),
     }
+}
+
+fn is_plugin_archive(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(PLUGIN_ARCHIVE_EXTENSION))
 }
 
 fn ensure_web(url: &Url) -> Result<(), OpError> {

@@ -141,6 +141,7 @@ Wine を使用しない。すべて直接 spawn。
 - `isEnabled = false` のエントリは非表示。
 - 導入可能判定: `url` が `https://github.com/<owner>/<repo>` (パス 2 要素) の場合のみ `Download`。それ以外は `OpenInBrowser`。
 - `.ymme` の展開: `<instance>/app/user/plugin/<repo>/` を作成し、全エントリを展開する。全エントリが 1 個のディレクトリ配下にある場合は、そのディレクトリを除いて展開する。他のサブディレクトリは保持する。エントリ名に `..`、絶対パス、ドライブ指定を含む場合は `Failed`。バックスラッシュは `/` として扱う。展開した相対パスを `files` に記録する。
+- `OpenInBrowser` (YMM4): 内蔵ブラウザで `url` を開き、ページ内で始まったダウンロードを `<root>/downloads/` へ保存する。拡張子が `.ymme` の場合は、ブラウザを開いたインスタンスへ導入し、`PluginRecord { id = package.id }` を記録する。導入先は GitHub が `user/plugin/<repo>/`、それ以外 (`Web`) が `user/plugin/web-<package.id の XXH3-64 を 16 桁 16 進数>/`。ハッシュ検証は行わない。`.ymme` 以外は保存のみ。
 - 破損検出: 件数 0、または必須キー欠落が 1 件以上の場合は `Err(CatalogShapeChanged)`。キャッシュを上書きしない。
 
 ## 6. 安全性
