@@ -5,8 +5,8 @@ use launcher_core::{
 };
 use launcher_providers::{
     Aviutl2Provider, AviutlProvider, Http, HttpError, Provider, ProviderError, load_any,
-    load_fresh, parse_apm_packages, parse_aviutl_app, parse_aviutl2_app, parse_aviutl2_catalog,
-    store_catalog,
+    load_fresh, parse_apm_packages, parse_aviutl_app, parse_aviutl_history, parse_aviutl2_app,
+    parse_aviutl2_catalog, parse_aviutl2_history, store_catalog,
 };
 use serde_json::{Value, json};
 use url::Url;
@@ -127,6 +127,66 @@ fn aviutl2_app_points_at_the_portable_zip_beside_the_setup() {
     assert_eq!(version.checks[0].location.rel, "aviutl2.exe");
 }
 
+const INDEX: &str =
+    "https://raw.githubusercontent.com/Neosku/aviutl2-catalog-data/refs/heads/main/index.json";
+const HISTORY2_PAGE: &str = r#"<table>
+<tr><td><a href="aviutl2beta9.zip">aviutl2beta9.zip</a></td></tr>
+<tr><td><a href="aviutl2beta53a.zip">aviutl2beta53a.zip</a></td></tr>
+<tr><td><a href="aviutl2_v2.1.9.zip">aviutl2_v2.1.9.zip</a></td></tr>
+<tr><td><a href="aviutl2_v2.1.16.zip">aviutl2_v2.1.16.zip</a></td></tr>
+<tr><td><a href="aviutl2_v2.1.7a.zip">aviutl2_v2.1.7a.zip</a></td></tr>
+<tr><td><a href="aviutl2_sdk.zip">aviutl2_sdk.zip</a></td></tr>
+<tr><td><a href="AviUtl2_v2.1.9_setup.exe">setup</a></td></tr>
+<tr><td><a href="aviutl.zip">aviutl110.zip</a></td></tr></table>"#;
+
+fn aviutl2_index() -> Vec<u8> {
+    let mut core = entry(
+        "Kenkun.AviUtlExEdit2",
+        json!({"direct": "https://spring-fragrance.mints.ne.jp/aviutl/AviUtl2_v2.1.16_setup.exe"}),
+        json!([]),
+    );
+    core["latest-version"] = json!("v2.1.16");
+    core["version"] = json!([
+        {"version": "v2.1.16", "release_date": "2026-02-01",
+            "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]},
+        {"version": "v2.1.9", "release_date": "2025-12-01",
+            "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]}]);
+    bytes(&json!([core]))
+}
+
+#[test]
+fn aviutl2_history_lists_older_zips_newest_first() {
+    let versions = parse_aviutl2_history(&aviutl2_index(), HISTORY2_PAGE.as_bytes()).unwrap();
+    let labels: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+    assert_eq!(labels, ["v2.1.9", "v2.1.7a", "beta53a", "beta9"]);
+    let listed = &versions[0];
+    assert_eq!(listed.artifacts[0].name, "aviutl2_v2.1.9.zip");
+    assert_eq!(listed.published_at.as_deref(), Some("2025-12-01"));
+    assert_eq!(listed.checks.len(), 1);
+    assert!(versions[1].checks.is_empty());
+}
+
+#[test]
+fn aviutl2_history_rejects_a_page_without_aviutl2_zips() {
+    let result = parse_aviutl2_history(&aviutl2_index(), b"<html></html>");
+    assert!(matches!(result, Err(ProviderError::CatalogShapeChanged(_))));
+}
+
+#[tokio::test]
+async fn aviutl2_app_versions_put_the_latest_first_and_survive_a_missing_page() {
+    let index = HashMap::from([(INDEX.to_owned(), aviutl2_index())]);
+    let provider = Aviutl2Provider::new(FixtureHttp(index.clone()));
+    assert_eq!(provider.app_versions().await.unwrap().len(), 1);
+    let mut full = index;
+    full.insert(HISTORY.to_owned(), HISTORY2_PAGE.as_bytes().to_vec());
+    let versions = Aviutl2Provider::new(FixtureHttp(full))
+        .app_versions()
+        .await
+        .unwrap();
+    assert_eq!(versions[0].version, "v2.1.16");
+    assert_eq!(versions.len(), 5);
+}
+
 fn apm_package(id: &str, extra: Value) -> Value {
     let mut package = json!({
         "id": id, "name": id, "overview": "o", "developer": "d",
@@ -194,6 +254,79 @@ fn aviutl_app_joins_both_archives_and_their_hashes() {
     assert_eq!(version.artifacts.len(), 2);
     assert!(version.artifacts.iter().all(|a| a.hash.is_some()));
     assert_eq!(version.checks.len(), 2);
+}
+
+const CORE: &str = "https://cdn.jsdelivr.net/gh/team-apm/apm-data@main/v3/core.json";
+const HISTORY: &str = "https://spring-fragrance.mints.ne.jp/aviutl/oldver2.php";
+const HISTORY_PAGE: &str = r#"<table>
+<tr><td><a href="aviutl110.zip">aviutl110.zip</a></td><td>version1.10</td></tr>
+<tr><td><a href="https://spring-fragrance.mints.ne.jp/aviutl/aviutl99m.zip">aviutl99m.zip</a></td><td>version0.99m</td></tr>
+<tr><td><a href='aviutl96g.zip'>aviutl96g.zip</a></td><td>version0.96g</td></tr>
+<tr><td><a href="exedit92.zip">exedit92.zip</a></td><td>version0.92</td></tr>
+<tr><td><a href="aviutl2beta9.zip">aviutl2beta9.zip</a></td></tr>
+<tr><td><a href="aviutl2_v2.1.9.zip">aviutl2_v2.1.9.zip</a></td></tr></table>"#;
+
+fn aviutl_core() -> Value {
+    let release = |version: &str, url: Option<&str>| {
+        json!({"version": version, "url": url,
+            "integrity": {"archive": SHA384_SRI, "file": [{"target": "aviutl.exe", "hash": SHA384_SRI}]}})
+    };
+    json!({"version": 3,
+        "aviutl": {"latestVersion": "1.10", "releases": [
+            release("1.10", Some("https://spring-fragrance.mints.ne.jp/aviutl/aviutl110.zip")),
+            release("0.99m", None)]},
+        "exedit": {"latestVersion": "0.92", "releases": [
+            release("0.92", Some("https://spring-fragrance.mints.ne.jp/aviutl/exedit92.zip"))]}})
+}
+
+#[test]
+fn aviutl_history_lists_older_aviutl_archives_only() {
+    let versions = parse_aviutl_history(&bytes(&aviutl_core()), HISTORY_PAGE.as_bytes()).unwrap();
+    let labels: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+    assert_eq!(labels, ["0.99m", "0.96g"]);
+    let listed = &versions[0];
+    assert_eq!(listed.artifacts.len(), 1);
+    assert_eq!(listed.artifacts[0].name, "aviutl99m.zip");
+    assert_eq!(
+        listed.artifacts[0].url.as_str(),
+        "https://spring-fragrance.mints.ne.jp/aviutl/aviutl99m.zip"
+    );
+    assert!(
+        listed.artifacts[0].hash.is_some(),
+        "hash of the core release"
+    );
+    assert_eq!(listed.checks.len(), 1);
+    let unlisted = &versions[1];
+    assert_eq!(
+        unlisted.artifacts[0].url.as_str(),
+        "https://spring-fragrance.mints.ne.jp/aviutl/aviutl96g.zip"
+    );
+    assert!(unlisted.artifacts[0].hash.is_none());
+    assert!(unlisted.checks.is_empty());
+}
+
+#[test]
+fn aviutl_history_rejects_a_page_without_aviutl_archives() {
+    let result = parse_aviutl_history(&bytes(&aviutl_core()), b"<html></html>");
+    assert!(matches!(result, Err(ProviderError::CatalogShapeChanged(_))));
+}
+
+#[tokio::test]
+async fn aviutl_app_versions_put_the_latest_before_the_older_ones() {
+    let http = FixtureHttp(HashMap::from([
+        (CORE.to_owned(), bytes(&aviutl_core())),
+        (HISTORY.to_owned(), HISTORY_PAGE.as_bytes().to_vec()),
+    ]));
+    let versions = AviutlProvider::new(http).app_versions().await.unwrap();
+    let labels: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+    assert_eq!(labels, ["1.10 / exedit 0.92", "0.99m", "0.96g"]);
+}
+
+#[tokio::test]
+async fn aviutl_app_versions_keep_the_latest_when_the_history_page_fails() {
+    let http = FixtureHttp(HashMap::from([(CORE.to_owned(), bytes(&aviutl_core()))]));
+    let versions = AviutlProvider::new(http).app_versions().await.unwrap();
+    assert_eq!(versions.len(), 1);
 }
 
 fn recipe_package(origin: Origin, hash: bool) -> Package {

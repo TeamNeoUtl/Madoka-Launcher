@@ -5,8 +5,10 @@ use launcher_core::{
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use tracing::warn;
 use url::Url;
 
+use crate::history::{self, parse_rows};
 use crate::recipe::{direct_artifact, finish};
 use crate::release::{latest_artifacts, parse_url};
 use crate::{Http, Provider, ProviderError};
@@ -15,6 +17,9 @@ const INDEX_URL: &str =
     "https://raw.githubusercontent.com/Neosku/aviutl2-catalog-data/refs/heads/main/index.json";
 const CORE_ID: &str = "Kenkun.AviUtlExEdit2";
 const CATALOG_PAGE: &str = "https://github.com/Neosku/aviutl2-catalog-data";
+/// Link to `aviutl2beta<n>.zip` or `aviutl2_v<x.y.z>.zip`; group 2 is `beta<n>` or `v<x.y.z>`.
+const HISTORY_ROW: &str =
+    r#"["']([^"']*aviutl2_?((?:beta[0-9]+|v[0-9]+(?:\.[0-9]+)+)[a-z]?)\.zip)["']"#;
 
 /// Placeholder of the index, the root it names and the directory below that root.
 const PLACEHOLDERS: [(&str, Root, &str); 5] = [
@@ -132,11 +137,11 @@ fn origin(source: &Value) -> Option<Origin> {
 }
 
 fn checks(entry: &RawEntry) -> Vec<FileCheck> {
-    let Some(version) = entry
-        .version
-        .iter()
-        .find(|version| version.version == entry.latest_version)
-    else {
+    checks_of(entry, &entry.latest_version)
+}
+
+fn checks_of(entry: &RawEntry, version: &str) -> Vec<FileCheck> {
+    let Some(version) = entry.version.iter().find(|raw| raw.version == version) else {
         return Vec::new();
     };
     version
@@ -266,6 +271,65 @@ pub fn parse_aviutl2_app(bytes: &[u8]) -> Result<AppVersion, ProviderError> {
     })
 }
 
+/// Sort key of a version label: `v` versions before `beta` versions, then numbers, then suffix.
+fn version_key(label: &str) -> (bool, Vec<u32>, String) {
+    let release = label.starts_with('v');
+    let body = label.trim_start_matches("beta").trim_start_matches('v');
+    let suffix: String = body
+        .chars()
+        .rev()
+        .take_while(char::is_ascii_lowercase)
+        .collect();
+    let numbers = body
+        .trim_end_matches(|c: char| c.is_ascii_lowercase())
+        .split('.')
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    (release, numbers, suffix)
+}
+
+/// One app version per portable ZIP of the history page, except the latest version of `index`,
+/// newest first. The hash of `aviutl2.exe` comes from `index` when it lists the version.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `index` is not the expected document,
+/// the editor entry is missing, or `page` lists no ZIP, and `ProviderError::InvalidUrl`
+/// for an invalid URL.
+pub fn parse_aviutl2_history(index: &[u8], page: &[u8]) -> Result<Vec<AppVersion>, ProviderError> {
+    let entries = parse_entries(index)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == CORE_ID)
+        .ok_or_else(|| shape_changed("editor entry is missing"))?;
+    let mut rows = parse_rows(page, HISTORY_ROW)?;
+    if rows.is_empty() {
+        return Err(shape_changed("history page lists no AviUtl2 archive"));
+    }
+    rows.sort_by(|a, b| version_key(&b.0).cmp(&version_key(&a.0)));
+    Ok(rows
+        .into_iter()
+        .filter(|(version, _)| *version != entry.latest_version)
+        .map(|(version, url)| {
+            let checks = checks_of(entry, &version)
+                .into_iter()
+                .filter(|check| check.location.root == Root::App)
+                .collect();
+            AppVersion {
+                artifacts: vec![direct_artifact(&url)],
+                published_at: entry
+                    .version
+                    .iter()
+                    .find(|raw| raw.version == version)
+                    .and_then(|raw| raw.release_date.clone()),
+                version,
+                prerelease: false,
+                checks,
+            }
+        })
+        .collect())
+}
+
 pub struct Aviutl2Provider<H> {
     http: H,
 }
@@ -286,7 +350,16 @@ impl<H: Http> Provider for Aviutl2Provider<H> {
     }
 
     async fn app_versions(&self) -> Result<Vec<AppVersion>, ProviderError> {
-        Ok(vec![parse_aviutl2_app(&self.index().await?)?])
+        let index = self.index().await?;
+        let mut versions = vec![parse_aviutl2_app(&index)?];
+        match history::fetch_page(&self.http)
+            .await
+            .and_then(|page| parse_aviutl2_history(&index, &page))
+        {
+            Ok(older) => versions.extend(older),
+            Err(error) => warn!(%error, "aviutl2 history unavailable"),
+        }
+        Ok(versions)
     }
 
     async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {

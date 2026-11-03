@@ -6,8 +6,10 @@ use launcher_core::{
 };
 use regex::Regex;
 use serde::Deserialize;
+use tracing::warn;
 use url::Url;
 
+use crate::history::{self, parse_rows};
 use crate::recipe::{direct_artifact, finish};
 use crate::release::{latest_artifacts, parse_url};
 use crate::{Http, Provider, ProviderError};
@@ -17,6 +19,9 @@ const PATTERN_URL: &str =
     "https://cdn.jsdelivr.net/gh/team-apm/apm-data@main/util/archive-name-pattern.json";
 const FALLBACK_PAGE: &str = "https://github.com/team-apm/apm-data";
 const ZIP_EXTENSION: &str = ".zip";
+/// Link to `aviutl<digits><letter?>.zip`, followed by the next `version<number>` text.
+/// `aviutl2*.zip` and `exedit*.zip` do not match.
+const HISTORY_ROW: &str = r#"(?s)(?i:href)\s*=\s*["']([^"']*aviutl\d+[a-z]?\.zip)["'].*?(?i:version)\s*([0-9]+\.[0-9]+[a-z]?)"#;
 
 #[derive(Debug, Deserialize)]
 struct RawList {
@@ -175,6 +180,40 @@ pub fn parse_aviutl_app(bytes: &[u8]) -> Result<AppVersion, ProviderError> {
     })
 }
 
+/// One app version per `AviUtl` archive of the history page, except the latest version of `core`.
+/// An older version holds the `AviUtl` archive only, because no source pairs it with an
+/// extended editing plugin version. The hash comes from `core` when it lists the version.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `core` is not the expected JSON document
+/// or `page` lists no `AviUtl` archive, and `ProviderError::InvalidUrl` for an invalid URL.
+pub fn parse_aviutl_history(core: &[u8], page: &[u8]) -> Result<Vec<AppVersion>, ProviderError> {
+    let core: RawCore = serde_json::from_slice(core).map_err(|e| shape_changed(e.to_string()))?;
+    let rows = parse_rows(page, HISTORY_ROW)?;
+    if rows.is_empty() {
+        return Err(shape_changed("history page lists no AviUtl archive"));
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|(version, _)| *version != core.aviutl.latest_version)
+        .map(|(version, url)| {
+            let release = release_of(&core.aviutl.releases, &version);
+            let mut artifact = direct_artifact(&url);
+            artifact.hash = release
+                .and_then(|release| release.integrity.as_ref())
+                .and_then(|integrity| Hash::parse_sri(&integrity.archive));
+            AppVersion {
+                version,
+                prerelease: false,
+                published_at: None,
+                artifacts: vec![artifact],
+                checks: checks_of(release),
+            }
+        })
+        .collect())
+}
+
 /// `https://github.com/<owner>/<repo>/releases...` gives `(owner, repo)`.
 fn github_release_repo(text: &str) -> Option<(String, String)> {
     let url = Url::parse(text).ok()?;
@@ -319,7 +358,16 @@ impl<H: Http> Provider for AviutlProvider<H> {
     }
 
     async fn app_versions(&self) -> Result<Vec<AppVersion>, ProviderError> {
-        Ok(vec![parse_aviutl_app(&self.data("core.json").await?)?])
+        let core = self.data("core.json").await?;
+        let mut versions = vec![parse_aviutl_app(&core)?];
+        match history::fetch_page(&self.http)
+            .await
+            .and_then(|page| parse_aviutl_history(&core, &page))
+        {
+            Ok(older) => versions.extend(older),
+            Err(error) => warn!(%error, "aviutl history unavailable"),
+        }
+        Ok(versions)
     }
 
     async fn catalog(&self) -> Result<Vec<Package>, ProviderError> {

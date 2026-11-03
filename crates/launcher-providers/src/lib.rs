@@ -5,6 +5,7 @@ mod dns;
 mod error;
 mod fetch;
 mod freya;
+mod history;
 mod http;
 mod neoutl;
 mod provider;
@@ -14,8 +15,10 @@ mod release;
 mod updater;
 mod ymm4;
 
-pub use aviutl::{AviutlProvider, parse_apm_packages, parse_aviutl_app};
-pub use aviutl2::{Aviutl2Provider, parse_aviutl2_app, parse_aviutl2_catalog};
+pub use aviutl::{AviutlProvider, parse_apm_packages, parse_aviutl_app, parse_aviutl_history};
+pub use aviutl2::{
+    Aviutl2Provider, parse_aviutl2_app, parse_aviutl2_catalog, parse_aviutl2_history,
+};
 pub use cache::{CACHE_TTL, load_any, load_fresh, store as store_catalog};
 pub use dns::{ADGUARD_DNS, Dns};
 pub use error::ProviderError;
