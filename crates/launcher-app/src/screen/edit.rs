@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 
 use iced::alignment::Vertical;
@@ -8,8 +9,8 @@ use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{InstallPlan, Instance, InstanceId, Kind, Package, PackageSource};
 use launcher_providers::has_catalog;
+use rust_i18n::t;
 
-use crate::i18n::Key;
 use crate::strings;
 use crate::style::{self, Tone};
 
@@ -33,30 +34,24 @@ pub enum Tab {
     Settings,
 }
 
-const TABS: [(Tab, &str, &str); 6] = [
-    (
-        Tab::Version,
-        strings::EDIT_TAB_VERSION,
-        style::icons::HISTORY,
-    ),
-    (
-        Tab::Plugins,
-        strings::EDIT_TAB_PLUGINS,
-        style::icons::EXTENSION,
-    ),
-    (Tab::Browse, strings::EDIT_TAB_BROWSE, style::icons::SEARCH),
-    (Tab::Commons, strings::EDIT_TAB_COMMONS, style::icons::SHARE),
-    (
-        Tab::JsonRegister,
-        strings::JSON_DIRECT_REGISTER,
-        style::icons::CODE,
-    ),
-    (
-        Tab::Settings,
-        strings::EDIT_TAB_SETTINGS,
-        style::icons::TUNE,
-    ),
-];
+fn tabs() -> [(Tab, Cow<'static, str>, &'static str); 6] {
+    [
+        (Tab::Version, t!("edit_tab_version"), style::icons::HISTORY),
+        (
+            Tab::Plugins,
+            t!("edit_tab_plugins"),
+            style::icons::EXTENSION,
+        ),
+        (Tab::Browse, t!("edit_tab_browse"), style::icons::SEARCH),
+        (Tab::Commons, t!("edit_tab_commons"), style::icons::SHARE),
+        (
+            Tab::JsonRegister,
+            t!("json_direct_register"),
+            style::icons::CODE,
+        ),
+        (Tab::Settings, t!("edit_tab_settings"), style::icons::TUNE),
+    ]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOrder {
@@ -316,7 +311,7 @@ pub fn view<'a>(
     let header = row![
         m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::BACK, strings::BACK),
+            style::btn_content(style::icons::BACK, t!("back")),
         )
         .on_press(Message::Back),
         row![
@@ -338,9 +333,9 @@ pub fn view<'a>(
     .spacing(12)
     .align_y(Vertical::Center);
 
-    let tabs: Vec<Element<'a, Message>> = TABS
-        .iter()
-        .map(|(tab, label, glyph)| tab_entry(theme, *tab, label, glyph, state.tab == *tab))
+    let tabs: Vec<Element<'a, Message>> = tabs()
+        .into_iter()
+        .map(|(tab, label, glyph)| tab_entry(theme, tab, label, glyph, state.tab == tab))
         .collect();
     let tab_card = m3::card(card::Style::filled(theme), column(tabs).spacing(8))
         .width(Length::Fixed(TAB_LIST_WIDTH));
@@ -427,7 +422,7 @@ fn update_preview_modal<'a>(
                 style::icon(style::icons::UPDATE)
                     .size(20)
                     .color(theme.primary()),
-                style::label(theme, strings::UPDATE_SUMMARY).size(16),
+                style::label(theme, t!("update_summary")).size(16),
                 style::label(theme, format!("({}件)", items.len())).size(14),
             ]
             .spacing(8)
@@ -441,7 +436,7 @@ fn update_preview_modal<'a>(
                 .on_press(Message::ConfirmUpdateAll),
                 m3::button(
                     button::Style::tonal(theme, Accent::Primary),
-                    style::btn_content(style::icons::CLOSE, strings::CANCEL),
+                    style::btn_content(style::icons::CLOSE, t!("cancel")),
                 )
                 .on_press(Message::CancelUpdateAll),
             ]
@@ -458,7 +453,7 @@ fn update_preview_modal<'a>(
 fn tab_entry<'a>(
     theme: &Theme,
     tab: Tab,
-    label: &'static str,
+    label: Cow<'a, str>,
     glyph: &'static str,
     selected: bool,
 ) -> Element<'a, Message> {
@@ -513,21 +508,21 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         lines = lines.push(field_with_icon(
             theme,
             style::icons::LAYERS,
-            strings::EDITION,
+            &t!("edition"),
             strings::edition_label(config.edition),
         ));
     }
     lines = lines.push(field_with_icon(
         theme,
         style::icons::HISTORY,
-        strings::VERSION,
+        &t!("version"),
         &config.app_version,
     ));
     if let Some(addon) = &config.addon_version {
         lines = lines.push(field_with_icon(
             theme,
             style::icons::EXTENSION,
-            strings::ADDON_VERSION,
+            &t!("addon_version"),
             addon,
         ));
     }
@@ -535,20 +530,20 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .push(field_with_icon(
             theme,
             style::icons::GROUP,
-            strings::GROUP,
-            config.group.as_deref().unwrap_or(strings::UNGROUPED),
+            &t!("group"),
+            config.group.as_deref().unwrap_or(&t!("ungrouped")),
         ))
         .push(field_with_icon(
             theme,
             style::icons::EXTENSION,
-            strings::PLUGINS,
+            &t!("plugins"),
             &config.plugins.len().to_string(),
         ));
     lines
         .push(
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                style::btn_content(style::icons::UPDATE, strings::UPDATE_ALL),
+                style::btn_content(style::icons::UPDATE, t!("update_all")),
             )
             .on_press(Message::RequestUpdateAll),
         )
@@ -564,12 +559,12 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .on_press(Message::ScanManualPlugins),
         m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::EXPORT, strings::tr(Key::ExportConfig)),
+            style::btn_content(style::icons::EXPORT, t!("export_config")),
         )
         .on_press(Message::ExportConfig),
         m3::button(
             button::Style::tonal(theme, Accent::Secondary),
-            style::btn_content(style::icons::IMPORT, strings::tr(Key::ImportConfig)),
+            style::btn_content(style::icons::IMPORT, t!("import_config")),
         )
         .on_press(Message::ImportConfig),
     ]
@@ -583,7 +578,7 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
                 style::icon(style::icons::EXTENSION)
                     .size(20)
                     .color(theme.on_surface_variant()),
-                style::label(theme, strings::NO_PLUGINS).size(14),
+                style::label(theme, t!("no_plugins")).size(14),
             ]
             .spacing(8)
             .align_y(Vertical::Center)
@@ -601,7 +596,7 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
                 badges = badges.push(style::icon_chip::<Message>(
                     theme,
                     style::icons::PAUSE,
-                    strings::PAUSED,
+                    t!("paused"),
                     Tone::Secondary,
                 ));
             }
@@ -625,7 +620,7 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
                         format!(
                             "{} | {}: {}",
                             record.version,
-                            strings::FILES,
+                            t!("files"),
                             record.files.len()
                         )
                     )
@@ -640,20 +635,20 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             let pause_btn = if record.paused {
                 m3::button(
                     button::Style::tonal(theme, Accent::Secondary),
-                    style::btn_content(style::icons::PLAY, strings::RESUME_UPDATE),
+                    style::btn_content(style::icons::PLAY, t!("resume_update")),
                 )
                 .on_press(Message::TogglePausePlugin(record.id.clone(), false))
             } else {
                 m3::button(
                     button::Style::tonal(theme, Accent::Tertiary),
-                    style::btn_content(style::icons::PAUSE, strings::PAUSE_UPDATE),
+                    style::btn_content(style::icons::PAUSE, t!("pause_update")),
                 )
                 .on_press(Message::TogglePausePlugin(record.id.clone(), true))
             };
 
             let remove = m3::button(
                 style::danger_button(theme),
-                style::btn_content(style::icons::DELETE, strings::DELETE),
+                style::btn_content(style::icons::DELETE, t!("delete")),
             )
             .on_press(Message::Remove(record.id.clone()));
 
@@ -689,7 +684,7 @@ fn browse_tab<'a>(
             style::icon(style::icons::INFO)
                 .size(20)
                 .color(theme.on_surface_variant()),
-            style::label(theme, strings::NO_CATALOG).size(14),
+            style::label(theme, t!("no_catalog")).size(14),
         ]
         .spacing(8)
         .align_y(Vertical::Center)
@@ -701,7 +696,7 @@ fn browse_tab<'a>(
                 style::icon(style::icons::SYNC)
                     .size(20)
                     .color(theme.primary()),
-                style::label(theme, strings::LOADING).size(14),
+                style::label(theme, t!("loading")).size(14),
             ]
             .spacing(8)
             .align_y(Vertical::Center)
@@ -713,13 +708,13 @@ fn browse_tab<'a>(
                     style::icon(style::icons::ERROR)
                         .size(16)
                         .color(theme.error()),
-                    style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+                    style::label(theme, format!("{}: {reason}", t!("load_failed"))).size(12),
                 ]
                 .spacing(6)
                 .align_y(Vertical::Center),
                 m3::button(
                     button::Style::tonal(theme, Accent::Primary),
-                    style::btn_content(style::icons::REFRESH, strings::RELOAD),
+                    style::btn_content(style::icons::REFRESH, t!("reload")),
                 )
                 .on_press(Message::ReloadCatalog),
             ]
@@ -729,13 +724,16 @@ fn browse_tab<'a>(
         Catalog::Ready(packages) => packages,
     };
 
-    let search = TextInput::new(strings::SEARCH_HINT, &state.search, theme)
-        .with_label_text(strings::SEARCH, card::Style::filled(theme).container_color)
+    let search = TextInput::new(&t!("search_hint"), &state.search, theme)
+        .with_label_text(
+            strings::label("search"),
+            card::Style::filled(theme).container_color,
+        )
         .on_input(Message::SearchChanged)
         .padding(INPUT_PADDING);
     let refresh = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::REFRESH, strings::REFRESH),
+        style::btn_content(style::icons::REFRESH, t!("refresh")),
     )
     .on_press(Message::ReloadCatalog);
     let mut page =
@@ -807,7 +805,7 @@ fn browse_tab<'a>(
                     style::icon(style::icons::SEARCH)
                         .size(16)
                         .color(theme.on_surface_variant()),
-                    style::label(theme, strings::NO_MATCH).size(14),
+                    style::label(theme, t!("no_match").into_owned()).size(14),
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center),
@@ -819,7 +817,7 @@ fn browse_tab<'a>(
 }
 
 fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message> {
-    let status_btn = |filter: StatusFilter, label: &'static str| -> Element<'a, Message> {
+    let status_btn = |filter: StatusFilter, label: Cow<'static, str>| -> Element<'a, Message> {
         let active = state.status_filter == filter;
         let color = style::tile_content(theme, active);
         m3::card(
@@ -833,7 +831,7 @@ fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message>
         .into()
     };
 
-    let sort_btn = |order: SortOrder, label: &'static str| -> Element<'a, Message> {
+    let sort_btn = |order: SortOrder, label: Cow<'static, str>| -> Element<'a, Message> {
         let active = state.sort_order == order;
         let color = style::tile_content(theme, active);
         m3::card(
@@ -851,9 +849,9 @@ fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message>
         style::icon(style::icons::FILTER)
             .size(14)
             .color(theme.primary()),
-        status_btn(StatusFilter::All, strings::STATUS_ALL),
-        status_btn(StatusFilter::Installed, strings::STATUS_INSTALLED),
-        status_btn(StatusFilter::NotInstalled, strings::STATUS_NOT_INSTALLED),
+        status_btn(StatusFilter::All, t!("status_all")),
+        status_btn(StatusFilter::Installed, t!("status_installed")),
+        status_btn(StatusFilter::NotInstalled, t!("status_not_installed")),
     ]
     .spacing(6)
     .align_y(Vertical::Center);
@@ -862,10 +860,10 @@ fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message>
         style::icon(style::icons::SORT)
             .size(14)
             .color(theme.primary()),
-        sort_btn(SortOrder::Popularity, strings::SORT_POPULARITY),
-        sort_btn(SortOrder::Trend, strings::SORT_TREND),
-        sort_btn(SortOrder::Newest, strings::SORT_NEWEST),
-        sort_btn(SortOrder::Updated, strings::SORT_UPDATED),
+        sort_btn(SortOrder::Popularity, t!("sort_popularity")),
+        sort_btn(SortOrder::Trend, t!("sort_trend")),
+        sort_btn(SortOrder::Newest, t!("sort_newest")),
+        sort_btn(SortOrder::Updated, t!("sort_updated")),
     ]
     .spacing(6)
     .align_y(Vertical::Center);
@@ -956,7 +954,7 @@ fn category_bar<'a>(
         .into()
     };
     let mut entries = vec![entry(
-        strings::ALL_CATEGORIES.to_owned(),
+        t!("all_categories").into_owned(),
         None,
         current.is_none(),
     )];
@@ -984,18 +982,18 @@ fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
                 .color(theme.error()),
             style::label(
                 theme,
-                format!("{}: {}", pending.package.name, strings::UNVERIFIED_WARNING)
+                format!("{}: {}", pending.package.name, t!("unverified_warning"))
             )
             .size(13)
             .width(Length::Fill),
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                style::btn_content(style::icons::CHECK, strings::CONTINUE),
+                style::btn_content(style::icons::CHECK, t!("continue")),
             )
             .on_press(Message::ConfirmPending),
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                style::btn_content(style::icons::CLOSE, strings::CANCEL),
+                style::btn_content(style::icons::CLOSE, t!("cancel")),
             )
             .on_press(Message::CancelPending),
         ]
@@ -1120,36 +1118,24 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
     }
 
     let (status_text, status_icon, status_tone) = match status {
-        Status::NotInstalled => (
-            strings::NOT_INSTALLED,
-            style::icons::DOWNLOAD,
-            Tone::Secondary,
-        ),
-        Status::Installed => (
-            strings::INSTALLED,
-            style::icons::CHECK_CIRCLE,
-            Tone::Tertiary,
-        ),
-        Status::UpdateAvailable => (
-            strings::UPDATE_AVAILABLE,
-            style::icons::UPDATE,
-            Tone::Primary,
-        ),
+        Status::NotInstalled => (t!("not_installed"), style::icons::DOWNLOAD, Tone::Secondary),
+        Status::Installed => (t!("installed"), style::icons::CHECK_CIRCLE, Tone::Tertiary),
+        Status::UpdateAvailable => (t!("update_available"), style::icons::UPDATE, Tone::Primary),
     };
     let action = match (&package.source, status) {
         (PackageSource::Web(_), _) => Some((
             style::icons::OPEN_IN_NEW,
-            strings::OPEN_IN_BROWSER,
+            t!("open_in_browser"),
             Message::Open(package.id.clone()),
         )),
         (_, Status::NotInstalled) => Some((
             style::icons::DOWNLOAD,
-            strings::INSTALL,
+            t!("install"),
             Message::Install(package.id.clone()),
         )),
         (_, Status::UpdateAvailable) => Some((
             style::icons::UPDATE,
-            strings::UPDATE,
+            t!("update"),
             Message::Install(package.id.clone()),
         )),
         (_, Status::Installed) => None,
@@ -1162,7 +1148,7 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
         .on_press(message),
         None => m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::CHECK, strings::INSTALLED),
+            style::btn_content(style::icons::CHECK, t!("installed")),
         ),
     };
 
@@ -1209,7 +1195,7 @@ fn commons_tab<'a>(
 
     let guide_btn = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::LINK, strings::COMMONS_GUIDE),
+        style::btn_content(style::icons::LINK, t!("commons_guide")),
     )
     .on_press(Message::OpenCommonsGuide);
 
@@ -1220,7 +1206,7 @@ fn commons_tab<'a>(
                 style::icon(style::icons::SHARE)
                     .size(20)
                     .color(theme.on_surface_variant()),
-                style::label(theme, strings::COMMONS_NO_IDS).size(14),
+                style::label(theme, t!("commons_no_ids")).size(14),
             ]
             .spacing(8)
             .align_y(Vertical::Center)
@@ -1231,19 +1217,19 @@ fn commons_tab<'a>(
 
     let select_all_btn = m3::button(
         button::Style::tonal(theme, Accent::Secondary),
-        style::btn_content(style::icons::CHECK, strings::SELECT_ALL),
+        style::btn_content(style::icons::CHECK, t!("select_all")),
     )
     .on_press(Message::SelectAllCommons);
 
     let deselect_all_btn = m3::button(
         button::Style::tonal(theme, Accent::Secondary),
-        style::btn_content(style::icons::CLOSE, strings::DESELECT_ALL),
+        style::btn_content(style::icons::CLOSE, t!("deselect_all")),
     )
     .on_press(Message::DeselectAllCommons);
 
     let copy_all_btn = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::COPY, strings::COMMONS_COPY_ALL),
+        style::btn_content(style::icons::COPY, t!("commons_copy_all")),
     )
     .on_press(Message::CopySelectedCommons);
 
@@ -1316,7 +1302,7 @@ fn commons_tab<'a>(
 fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> {
     let background = card::Style::filled(theme).container_color;
     let input = TextInput::new("JSONマニフェストを入力...", &state.json_input, theme)
-        .with_label_text(strings::JSON_DIRECT_REGISTER, background)
+        .with_label_text(strings::label("json_direct_register"), background)
         .on_input(Message::JsonInputChanged)
         .padding(INPUT_PADDING);
 
@@ -1335,7 +1321,7 @@ fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Mess
     let mut body = column![
         row![
             style::icon(style::icons::CODE).size(20).color(theme.primary()),
-            style::label(theme, strings::JSON_DIRECT_REGISTER).size(18),
+            style::label(theme, t!("json_direct_register").into_owned()).size(18),
         ]
         .spacing(8)
         .align_y(Vertical::Center),
@@ -1382,16 +1368,16 @@ fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Mess
 fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> {
     let background = card::Style::filled(theme).container_color;
     let name = TextInput::new("", &state.name, theme)
-        .with_label_text(strings::NAME, background)
+        .with_label_text(strings::label("name"), background)
         .on_input(Message::NameChanged)
         .padding(INPUT_PADDING);
-    let group = TextInput::new(strings::GROUP_HINT, &state.group, theme)
-        .with_label_text(strings::GROUP, background)
+    let group = TextInput::new(&t!("group_hint"), &state.group, theme)
+        .with_label_text(strings::label("group"), background)
         .on_input(Message::GroupChanged)
         .padding(INPUT_PADDING);
     let save = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::SAVE, strings::SAVE),
+        style::btn_content(style::icons::SAVE, t!("save")),
     )
     .on_press_maybe(state.can_save().then_some(Message::SaveSettings));
 
@@ -1400,7 +1386,7 @@ fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> 
             style::icon(style::icons::EDIT)
                 .size(16)
                 .color(theme.primary()),
-            style::label(theme, strings::NAME).size(14),
+            style::label(theme, t!("name").into_owned()).size(14),
         ]
         .spacing(6)
         .align_y(Vertical::Center),
@@ -1409,7 +1395,7 @@ fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> 
             style::icon(style::icons::GROUP)
                 .size(16)
                 .color(theme.primary()),
-            style::label(theme, strings::GROUP).size(14),
+            style::label(theme, t!("group").into_owned()).size(14),
         ]
         .spacing(6)
         .align_y(Vertical::Center),
@@ -1435,37 +1421,25 @@ fn package_detail_view<'a>(
 
     let status = status_of(instance, package);
     let (status_text, status_icon, status_tone) = match status {
-        Status::NotInstalled => (
-            strings::NOT_INSTALLED,
-            style::icons::DOWNLOAD,
-            Tone::Secondary,
-        ),
-        Status::Installed => (
-            strings::INSTALLED,
-            style::icons::CHECK_CIRCLE,
-            Tone::Tertiary,
-        ),
-        Status::UpdateAvailable => (
-            strings::UPDATE_AVAILABLE,
-            style::icons::UPDATE,
-            Tone::Primary,
-        ),
+        Status::NotInstalled => (t!("not_installed"), style::icons::DOWNLOAD, Tone::Secondary),
+        Status::Installed => (t!("installed"), style::icons::CHECK_CIRCLE, Tone::Tertiary),
+        Status::UpdateAvailable => (t!("update_available"), style::icons::UPDATE, Tone::Primary),
     };
 
     let action = match (&package.source, status) {
         (PackageSource::Web(_), _) => Some((
             style::icons::OPEN_IN_NEW,
-            strings::OPEN_IN_BROWSER,
+            t!("open_in_browser"),
             Message::Open(package.id.clone()),
         )),
         (_, Status::NotInstalled) => Some((
             style::icons::DOWNLOAD,
-            strings::INSTALL,
+            t!("install"),
             Message::Install(package.id.clone()),
         )),
         (_, Status::UpdateAvailable) => Some((
             style::icons::UPDATE,
-            strings::UPDATE,
+            t!("update"),
             Message::Install(package.id.clone()),
         )),
         (_, Status::Installed) => None,
@@ -1478,7 +1452,7 @@ fn package_detail_view<'a>(
         .on_press(message),
         None => m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::CHECK, strings::INSTALLED),
+            style::btn_content(style::icons::CHECK, t!("installed")),
         ),
     };
 
@@ -1494,7 +1468,7 @@ fn package_detail_view<'a>(
         header = header.push(style::icon_chip::<Message>(
             theme,
             style::icons::WARNING,
-            strings::DEPRECATED_WARNING,
+            t!("deprecated_warning"),
             Tone::Error,
         ));
     }
@@ -1512,7 +1486,7 @@ fn package_detail_view<'a>(
 
     let author_btn = m3::button(
         button::Style::tonal(theme, Accent::Secondary),
-        style::dyn_btn_content(style::icons::PERSON, &package.author),
+        style::btn_content(style::icons::PERSON, &package.author),
     )
     .on_press(Message::SearchChanged(package.author.clone()));
 
@@ -1615,7 +1589,7 @@ fn package_detail_view<'a>(
             .map(|dep| {
                 m3::button(
                     button::Style::tonal(theme, Accent::Tertiary),
-                    style::dyn_btn_content(style::icons::EXTENSION, dep.as_str()),
+                    style::btn_content(style::icons::EXTENSION, dep.as_str()),
                 )
                 .on_press(Message::ViewPackageDetails(Some(dep.clone())))
                 .into()
@@ -1650,7 +1624,7 @@ fn package_detail_view<'a>(
             .map(|lic| {
                 m3::button(
                     button::Style::tonal(theme, Accent::Secondary),
-                    style::dyn_btn_content(style::icons::POLICY, lic.as_str()),
+                    style::btn_content(style::icons::POLICY, lic.as_str()),
                 )
                 .on_press(Message::ShowLicense(Some(lic.clone())))
                 .into()

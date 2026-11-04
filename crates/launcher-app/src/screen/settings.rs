@@ -1,9 +1,12 @@
+use std::borrow::Cow;
+
 use iced::alignment::Vertical;
 use iced::widget::{column, row, scrollable};
 use iced::{Element, Length, Padding};
 use iced_m3::theme::{Accent, ColorScheme, Mode, Theme};
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card, switch};
+use rust_i18n::t;
 
 use crate::strings;
 use crate::style;
@@ -47,27 +50,27 @@ pub struct Form {
 
 pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a, Message> {
     let background = card::Style::filled(theme).container_color;
-    let token = TextInput::new(strings::GITHUB_TOKEN_HINT, &form.token, theme)
-        .with_label_text(strings::GITHUB_TOKEN, background)
+    let token = TextInput::new(&t!("github_token_hint"), &form.token, theme)
+        .with_label_text(strings::label("github_token"), background)
         .on_input(Message::TokenChanged)
         .padding(INPUT_PADDING);
-    let dns = TextInput::new(strings::DNS_HINT, &form.dns, theme)
-        .with_label_text(strings::DNS, background)
+    let dns = TextInput::new(&t!("dns_hint"), &form.dns, theme)
+        .with_label_text(strings::label("dns"), background)
         .on_input(Message::DnsChanged)
         .padding(INPUT_PADDING);
     let save_dns = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::SAVE, strings::SAVE),
+        style::btn_content(style::icons::SAVE, t!("save")),
     )
     .on_press(Message::SaveDns);
     let save_token = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::SAVE, strings::SAVE),
+        style::btn_content(style::icons::SAVE, t!("save")),
     )
     .on_press(Message::SaveToken);
     let open = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::FOLDER_OPEN, strings::OPEN_FOLDER),
+        style::btn_content(style::icons::FOLDER_OPEN, t!("open_folder")),
     )
     .on_press(Message::OpenDataDirectory);
 
@@ -79,7 +82,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
     let dark_mode = row![
         row![
             style::icon(mode_glyph).size(20).color(theme.primary()),
-            style::label(theme, strings::DARK_MODE).size(15),
+            style::label(theme, t!("dark_mode")).size(15),
         ]
         .spacing(8)
         .align_y(Vertical::Center)
@@ -107,8 +110,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
                     style::icon(style::icons::FOLDER_OPEN)
                         .size(18)
                         .color(theme.primary()),
-                    style::label(theme, format!("{}: {data_dir}", strings::DATA_DIRECTORY))
-                        .size(14),
+                    style::label(theme, format!("{}: {data_dir}", t!("data_directory"))).size(14),
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center)
@@ -149,7 +151,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
                 style::icon(style::icons::LANGUAGE)
                     .size(18)
                     .color(theme.primary()),
-                style::label(theme, strings::LANGUAGE).size(14),
+                style::label(theme, t!("language")).size(14),
                 locale_selector(form, theme),
             ]
             .spacing(12)
@@ -167,7 +169,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
             style::icon(style::icons::SETTINGS)
                 .size(26)
                 .color(theme.primary()),
-            style::label(theme, strings::TAB_SETTINGS).size(24),
+            style::label(theme, t!("tab_settings").into_owned()).size(24),
         ]
         .spacing(8)
         .align_y(Vertical::Center),
@@ -180,7 +182,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
 }
 
 fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
-    let entry = |label: &'a str, value: Option<&'a str>| -> Element<'a, Message> {
+    let entry = |label: Cow<'a, str>, value: Option<&'a str>| -> Element<'a, Message> {
         let selected = form.font.as_deref() == value;
         let glyph = if selected {
             style::icons::CHECK_CIRCLE
@@ -209,17 +211,17 @@ fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
         .width(Length::Fill)
         .into()
     };
-    let entries = std::iter::once(entry(strings::FONT_DEFAULT, None)).chain(
+    let entries = std::iter::once(entry(t!("font_default"), None)).chain(
         form.fonts
             .iter()
-            .map(|name| entry(name.as_str(), Some(name.as_str()))),
+            .map(|name| entry(Cow::Borrowed(name.as_str()), Some(name.as_str()))),
     );
     column![
         row![
             style::icon(style::icons::FONT)
                 .size(16)
                 .color(theme.primary()),
-            style::label(theme, strings::FONT).size(14),
+            style::label(theme, t!("font")).size(14),
         ]
         .spacing(6)
         .align_y(Vertical::Center),
@@ -235,23 +237,23 @@ fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Mess
     let (status, status_icon) = match state {
         UpdateState::Idle => (None, None),
         UpdateState::Checking => (
-            Some(strings::CHECKING_UPDATE.to_owned()),
+            Some(t!("checking_update").into_owned()),
             Some(style::icons::SYNC),
         ),
         UpdateState::UpToDate => (
-            Some(strings::LAUNCHER_UP_TO_DATE.to_owned()),
+            Some(t!("launcher_up_to_date").into_owned()),
             Some(style::icons::CHECK_CIRCLE),
         ),
         UpdateState::Available(version) => (
-            Some(format!("{}: v{version}", strings::UPDATE_AVAILABLE)),
+            Some(format!("{}: v{version}", t!("update_available"))),
             Some(style::icons::UPDATE),
         ),
         UpdateState::Installing(_) => (
-            Some(strings::LAUNCHER_UPDATING.to_owned()),
+            Some(t!("launcher_updating").into_owned()),
             Some(style::icons::DOWNLOAD),
         ),
         UpdateState::Applied => (
-            Some(strings::LAUNCHER_UPDATED.to_owned()),
+            Some(t!("launcher_updated").into_owned()),
             Some(style::icons::CHECK_CIRCLE),
         ),
     };
@@ -259,14 +261,14 @@ fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Mess
         UpdateState::Idle | UpdateState::UpToDate => Some(
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                style::btn_content(style::icons::REFRESH, strings::CHECK_UPDATE),
+                style::btn_content(style::icons::REFRESH, t!("check_update")),
             )
             .on_press(Message::CheckUpdate),
         ),
         UpdateState::Available(_) => Some(
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                style::btn_content(style::icons::DOWNLOAD, strings::UPDATE),
+                style::btn_content(style::icons::DOWNLOAD, t!("update")),
             )
             .on_press(Message::ApplyUpdate),
         ),
@@ -279,7 +281,7 @@ fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Mess
                 .color(theme.primary()),
             style::label(
                 theme,
-                format!("{}: v{}", strings::LAUNCHER_VERSION, strings::APP_VERSION)
+                format!("{}: v{}", t!("launcher_version"), strings::APP_VERSION)
             )
             .size(14),
         ]

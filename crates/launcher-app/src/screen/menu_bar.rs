@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use iced::widget::{button, container, text};
 use iced::{Element, Length, Theme};
 use iced_aw::menu::{self, Item, Menu, MenuBar};
@@ -38,13 +39,13 @@ pub fn view(current: &Theme) -> Ui {
         })
         .collect();
     let theme_menu = Item::with_menu(
-        container(text(format!("{}  ›", strings::MENU_THEME)))
+        container(text(format!("{}  ›", t!("menu_theme"))))
             .width(Length::Fill)
             .padding(LABEL_PADDING),
         Menu::new(families).width(Length::Fixed(MENU_WIDTH)),
     );
     let settings = Item::with_menu(
-        container(text(strings::MENU_SETTINGS)).padding(LABEL_PADDING),
+        container(text(t!("menu_settings"))).padding(LABEL_PADDING),
         Menu::new(vec![theme_menu]).width(Length::Fixed(MENU_WIDTH)),
     );
     MenuBar::new(vec![settings])

@@ -90,14 +90,7 @@ pub fn icon<'a>(glyph: &'static str) -> Text<'a> {
     text(glyph).font(ICON_FONT)
 }
 
-pub fn btn_content<'a>(glyph: &'static str, label: &'static str) -> button::Content<'a> {
-    button::Content::Full {
-        icon: button_icon(glyph),
-        label: label.into(),
-    }
-}
-
-pub fn dyn_btn_content<'a>(
+pub fn btn_content<'a>(
     glyph: &'static str,
     label: impl Into<std::borrow::Cow<'a, str>>,
 ) -> button::Content<'a> {

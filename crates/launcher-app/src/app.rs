@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
 use iced_m3::widget::{self as m3, Badge, navrail};
 use launcher_core::{AppSelection, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo};
+use rust_i18n::t;
 use url::Url;
 
 use launcher_providers::Versions;
@@ -351,7 +353,7 @@ impl App {
                                 continue;
                             };
                             if let Ok((_, plan)) = services.clone().plan(kind, pkg.clone()).await {
-                                let title = format!("{}: {}", strings::TASK_INSTALL, pkg.name);
+                                let title = format!("{}: {}", t!("task_install"), pkg.name);
                                 let handle = services.board.add(title);
                                 services.clone().install_plugin(handle, id, pkg, plan).await;
                             }
@@ -427,7 +429,7 @@ impl App {
             Some((state, instance)) => {
                 self.with_notice(edit::view(state, instance, &self.theme).map(Message::Edit))
             }
-            None => style::label(&self.theme, strings::NO_SELECTION).into(),
+            None => style::label(&self.theme, t!("no_selection")).into(),
         }
     }
 
@@ -462,11 +464,11 @@ impl App {
     fn rail(&self, board: &[TaskInfo]) -> Element<'_, Message> {
         let active = board.iter().filter(|task| task.state.is_active()).count();
         let items = vec![
-            nav_item(ICON_INSTANCES, strings::TAB_INSTANCES, None, Screen::Main),
-            nav_item(ICON_NEW, strings::TAB_NEW, None, Screen::NewInstance),
+            nav_item(ICON_INSTANCES, t!("tab_instances"), None, Screen::Main),
+            nav_item(ICON_NEW, t!("tab_new"), None, Screen::NewInstance),
             nav_item(
                 ICON_TASKS,
-                strings::TAB_TASKS,
+                t!("tab_tasks"),
                 (active > 0).then(|| Badge {
                     label: Some(active.to_string().into()),
                 }),
@@ -474,7 +476,7 @@ impl App {
             ),
             nav_item(
                 ICON_SETTINGS,
-                strings::TAB_SETTINGS,
+                t!("tab_settings"),
                 matches!(self.settings.update, settings::UpdateState::Available(_))
                     .then_some(Badge { label: None }),
                 Screen::Settings,
@@ -529,10 +531,10 @@ impl App {
                     return Task::none();
                 };
                 let id = instance.config.id;
-                let name = format!("{}{}", instance.config.name, strings::COPY_SUFFIX);
+                let name = format!("{}{}", instance.config.name, t!("copy_suffix"));
                 let handle = self.services.board.add(format!(
                     "{}: {}",
-                    strings::TASK_DUPLICATE,
+                    t!("task_duplicate"),
                     instance.config.name
                 ));
                 Task::perform(
@@ -557,7 +559,7 @@ impl App {
                     return Task::none();
                 };
                 let id = instance.config.id;
-                let title = format!("{}: {}", strings::TASK_LAUNCH, instance.config.name);
+                let title = format!("{}: {}", t!("task_launch"), instance.config.name);
                 let handle = self.services.board.add(title);
                 Task::perform(self.services.clone().launch(handle, id), |()| {
                     Message::Redraw
@@ -569,7 +571,7 @@ impl App {
                     return Task::none();
                 };
                 let id = instance.config.id;
-                let title = format!("{}: {}", strings::TASK_LAUNCH, instance.config.name);
+                let title = format!("{}: {}", t!("task_launch"), instance.config.name);
                 let handle = self.services.board.add(title);
                 Task::perform(self.services.clone().launch(handle, id), |()| {
                     Message::Redraw
@@ -597,7 +599,7 @@ impl App {
                     return Task::none();
                 };
                 if instance.is_running() {
-                    self.notice = Some(strings::INSTANCE_RUNNING_ERROR.to_owned());
+                    self.notice = Some(t!("instance_running_error").into_owned());
                     self.pending_delete = None;
                     return Task::none();
                 }
@@ -605,7 +607,7 @@ impl App {
                 if self.pending_delete != Some(id) {
                     return Task::none();
                 }
-                let title = format!("{}: {}", strings::TASK_DELETE, instance.config.name);
+                let title = format!("{}: {}", t!("task_delete"), instance.config.name);
                 let handle = self.services.board.add(title);
                 self.pending_delete = None;
                 Task::perform(self.services.clone().delete(handle, id), |()| {
@@ -659,7 +661,7 @@ impl App {
                 let Some(request) = self.form.request() else {
                     return Task::none();
                 };
-                let title = format!("{}: {}", strings::TASK_CREATE, request.name);
+                let title = format!("{}: {}", t!("task_create"), request.name);
                 let handle = self.services.board.add(title);
                 self.pending_recommended =
                     self.form.kind == Kind::Aviutl2 && self.form.install_recommended;
@@ -699,7 +701,7 @@ impl App {
                     | M::SaveSettings
             )
         {
-            self.notice = Some(strings::INSTANCE_RUNNING_ERROR.to_owned());
+            self.notice = Some(t!("instance_running_error").into_owned());
             return Task::none();
         }
         match message {
@@ -760,7 +762,7 @@ impl App {
                 Task::none()
             }
             M::Remove(plugin_id) => {
-                let title = format!("{}: {plugin_id}", strings::TASK_REMOVE);
+                let title = format!("{}: {plugin_id}", t!("task_remove"));
                 let handle = self.services.board.add(title);
                 Task::perform(
                     self.services.clone().remove_plugin(handle, id, plugin_id),
@@ -807,7 +809,7 @@ impl App {
                     .iter()
                     .find(|instance| instance.config.id == id)
                     .map_or_else(String::new, |instance| instance.config.name.clone());
-                let title = format!("{}: {name}", strings::TASK_UPDATE_ALL);
+                let title = format!("{}: {name}", t!("task_update_all"));
                 let handle = self.services.board.add(title);
                 Task::perform(
                     self.services.clone().update_all(handle, id),
@@ -891,13 +893,13 @@ impl App {
                     .join("\n");
                 self.notice = Some(format!(
                     "{} ({}件)",
-                    strings::COMMONS_COPIED,
+                    t!("commons_copied"),
                     state.selected_commons.len()
                 ));
                 iced::clipboard::write(text)
             }
             M::CopySingleCommons(commons_id) => {
-                self.notice = Some(format!("{}: {commons_id}", strings::COMMONS_COPIED));
+                self.notice = Some(format!("{}: {commons_id}", t!("commons_copied")));
                 iced::clipboard::write(commons_id)
             }
             M::OpenCommonsUrl(commons_id) => {
@@ -1025,10 +1027,10 @@ impl App {
                     .map(str::parse)
                     .collect();
                 let Ok(servers) = parsed else {
-                    self.notice = Some(strings::DNS_INVALID.to_owned());
+                    self.notice = Some(t!("dns_invalid").into_owned());
                     return Task::none();
                 };
-                self.notice = Some(strings::DNS_RESTART.to_owned());
+                self.notice = Some(t!("dns_restart").into_owned());
                 Task::perform(self.services.clone().save_dns(servers), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
@@ -1036,7 +1038,7 @@ impl App {
             M::ThemeToggled => self.update(Message::ThemeToggled),
             M::FontSelected(name) => {
                 self.settings.font.clone_from(&name);
-                self.notice = Some(strings::FONT_RESTART.to_owned());
+                self.notice = Some(t!("font_restart").into_owned());
                 Task::perform(self.services.clone().save_font(name), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
@@ -1064,7 +1066,7 @@ impl App {
                     return Task::none();
                 };
                 let version = version.clone();
-                let title = format!("{}: v{version}", strings::TASK_SELF_UPDATE);
+                let title = format!("{}: v{version}", t!("task_self_update"));
                 let handle = self.services.board.add(title);
                 self.settings.update = settings::UpdateState::Installing(version.clone());
                 Task::perform(
@@ -1118,7 +1120,7 @@ impl App {
                         continue;
                     };
                     if let Ok((_, plan)) = services.clone().plan(Kind::Aviutl2, pkg.clone()).await {
-                        let title = format!("{}: {}", strings::TASK_INSTALL, pkg.name);
+                        let title = format!("{}: {}", t!("task_install"), pkg.name);
                         let handle = services.board.add(title);
                         services.clone().install_plugin(handle, id, pkg, plan).await;
                     }
@@ -1129,7 +1131,7 @@ impl App {
     }
 
     fn start_install(&self, id: InstanceId, package: Package, plan: InstallPlan) -> Task<Message> {
-        let title = format!("{}: {}", strings::TASK_INSTALL, package.name);
+        let title = format!("{}: {}", t!("task_install"), package.name);
         let handle = self.services.board.add(title);
         Task::perform(
             self.services
@@ -1168,7 +1170,7 @@ impl App {
     }
 
     fn start_download(&self, id: InstanceId, package: Package, browsed: Browsed) -> Task<Message> {
-        let title = format!("{}: {}", strings::TASK_DOWNLOAD, browsed.label());
+        let title = format!("{}: {}", t!("task_download"), browsed.label());
         let handle = self.services.board.add(title);
         Task::perform(
             self.services
@@ -1315,7 +1317,7 @@ impl App {
 
 fn nav_item(
     glyph: &'static str,
-    label: &'static str,
+    label: Cow<'static, str>,
     badge: Option<Badge<'static>>,
     screen: Screen,
 ) -> navrail::Item<'static, Message> {
@@ -1327,7 +1329,7 @@ fn nav_item(
         icon_active: icon.clone(),
         icon_inactive: icon,
         badge,
-        label: label.into(),
+        label,
         on_press: Message::TabSelected(screen),
     }
 }

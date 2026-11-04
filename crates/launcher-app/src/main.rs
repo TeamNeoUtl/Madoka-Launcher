@@ -15,6 +15,8 @@ use launcher_core::default_root;
 use ops::Services;
 use tracing::{error, info, warn};
 
+rust_i18n::i18n!("locales", fallback = "ja");
+
 const ICON_RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.rgba"));
 #[cfg(target_os = "linux")]
 const APPLICATION_ID: &str = "Madoka-Launcher";

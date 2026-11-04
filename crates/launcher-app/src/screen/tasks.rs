@@ -4,8 +4,8 @@ use iced::{Element, Length};
 use iced_m3::theme::{ColorScheme, Theme};
 use iced_m3::widget::{self, card, progress_bar};
 use launcher_core::{Progress, TaskInfo, TaskState};
+use rust_i18n::t;
 
-use crate::strings;
 use crate::style::{self, Tone};
 
 const BYTES_PER_MIB: u128 = 1_048_576;
@@ -18,7 +18,7 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
                 style::icon(style::icons::CHECK_CIRCLE)
                     .size(22)
                     .color(theme.tertiary()),
-                style::label(theme, strings::NO_TASKS).size(14),
+                style::label(theme, t!("no_tasks")).size(14),
             ]
             .spacing(8)
             .align_y(Vertical::Center),
@@ -35,7 +35,7 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
             style::icon(style::icons::TASKS)
                 .size(26)
                 .color(theme.primary()),
-            style::label(theme, strings::TAB_TASKS).size(24),
+            style::label(theme, t!("tab_tasks")).size(24),
             style::label(theme, format!("({})", tasks.len())).size(16),
         ]
         .spacing(8)
@@ -50,12 +50,12 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
 
 pub fn state_label(state: &TaskState) -> String {
     match state {
-        TaskState::Queued => strings::QUEUED.to_owned(),
+        TaskState::Queued => t!("queued").into_owned(),
         TaskState::Running { done, total, .. } => {
-            format!("{} {done}/{total}", strings::RUNNING)
+            format!("{} {done}/{total}", t!("running"))
         }
-        TaskState::Succeeded => strings::SUCCEEDED.to_owned(),
-        TaskState::Failed { .. } => strings::FAILED.to_owned(),
+        TaskState::Succeeded => t!("succeeded").into_owned(),
+        TaskState::Failed { .. } => t!("failed").into_owned(),
     }
 }
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use iced::alignment::Vertical;
@@ -6,6 +7,7 @@ use iced::{Element, Length};
 use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{Instance, InstanceId, Kind, TaskInfo};
+use rust_i18n::t;
 
 use super::tasks::detail_label;
 use crate::strings;
@@ -52,7 +54,7 @@ pub fn view(props: &Props<'_>) -> Ui {
             style::icon(style::icons::INSTANCES)
                 .size(26)
                 .color(theme.primary()),
-            style::label(theme, strings::TAB_INSTANCES).size(24),
+            style::label(theme, t!("tab_instances")).size(24),
             style::label(theme, format!("({})", props.instances.len())).size(16),
         ]
         .spacing(8)
@@ -60,13 +62,13 @@ pub fn view(props: &Props<'_>) -> Ui {
         .width(Length::Fill),
         compact(
             style::icons::REFRESH,
-            strings::REFRESH,
+            t!("refresh"),
             &button::Style::tonal(theme, Accent::Primary),
             Message::Refresh,
         ),
         compact(
             style::icons::ADD,
-            strings::ADD_INSTANCE,
+            t!("add_instance"),
             &button::Style::filled(theme, Accent::Primary),
             Message::ShowNew,
         ),
@@ -124,7 +126,7 @@ fn grid(
                 style::icon(style::icons::INFO)
                     .size(20)
                     .color(theme.on_surface_variant()),
-                style::label(theme, strings::NO_INSTANCES),
+                style::label(theme, t!("no_instances")),
             ]
             .spacing(8)
             .align_y(Vertical::Center),
@@ -147,7 +149,7 @@ fn grid(
     if !ungrouped.is_empty() {
         sections.push(section(
             theme,
-            strings::UNGROUPED,
+            &t!("ungrouped"),
             &ungrouped,
             selected,
             context,
@@ -243,7 +245,7 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
 
     let launch_btn = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::LAUNCH, strings::LAUNCH),
+        style::btn_content(style::icons::LAUNCH, t!("launch")),
     )
     .size(button::Size::default().width(Length::Fill))
     .on_press(Message::LaunchInstance(config.id));
@@ -265,37 +267,37 @@ fn context_menu(theme: &Theme) -> Ui {
     let entries: Vec<Ui> = vec![
         action(
             style::icons::LAUNCH,
-            strings::LAUNCH,
+            t!("launch"),
             &button::Style::filled(theme, Accent::Primary),
             Message::Launch,
         ),
         action(
             style::icons::EDIT,
-            strings::EDIT,
+            t!("edit"),
             &button::Style::tonal(theme, Accent::Primary),
             Message::Edit,
         ),
         action(
             style::icons::FOLDER_OPEN,
-            strings::OPEN_FOLDER,
+            t!("open_folder"),
             &button::Style::tonal(theme, Accent::Primary),
             Message::OpenFolder,
         ),
         action(
             style::icons::DUPLICATE,
-            strings::DUPLICATE,
+            t!("duplicate"),
             &button::Style::tonal(theme, Accent::Primary),
             Message::Duplicate,
         ),
         action(
             style::icons::DELETE,
-            strings::DELETE,
+            t!("delete"),
             &style::danger_button(theme),
             Message::Delete,
         ),
         action(
             style::icons::CLOSE,
-            strings::CLOSE,
+            t!("close"),
             &button::Style::tonal(theme, Accent::Primary),
             Message::ContextClose,
         ),
@@ -313,7 +315,7 @@ fn sidebar(theme: &Theme, instance: Option<&Instance>, confirming: bool) -> Ui {
                 style::icon(style::icons::INSTANCES)
                     .size(32)
                     .color(theme.on_surface_variant()),
-                style::label(theme, strings::NO_SELECTION).size(14),
+                style::label(theme, t!("no_selection")).size(14),
             ]
             .spacing(8)
             .align_x(iced::alignment::Horizontal::Center)
@@ -344,7 +346,7 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         lines = lines.push(field_with_icon(
             theme,
             style::icons::LAYERS,
-            strings::EDITION,
+            &t!("edition"),
             strings::edition_label(config.edition),
         ));
     }
@@ -352,19 +354,19 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         .push(field_with_icon(
             theme,
             style::icons::HISTORY,
-            strings::VERSION,
+            &t!("version"),
             &config.version_label(),
         ))
         .push(field_with_icon(
             theme,
             style::icons::GROUP,
-            strings::GROUP,
-            config.group.as_deref().unwrap_or(strings::UNGROUPED),
+            &t!("group"),
+            config.group.as_deref().unwrap_or(&t!("ungrouped")),
         ))
         .push(field_with_icon(
             theme,
             style::icons::EXTENSION,
-            strings::PLUGINS,
+            &t!("plugins"),
             &config.plugins.len().to_string(),
         ));
 
@@ -372,13 +374,13 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
         column![
             action(
                 style::icons::DELETE,
-                strings::DELETE_CONFIRM,
+                t!("delete_confirm"),
                 &style::danger_button(theme),
                 Message::ConfirmDelete,
             ),
             action(
                 style::icons::CANCEL,
-                strings::CANCEL,
+                t!("cancel"),
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::CancelDelete,
             ),
@@ -390,7 +392,7 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
             // Primary prominent launch button at top
             action(
                 style::icons::LAUNCH,
-                strings::LAUNCH,
+                t!("launch"),
                 &button::Style::filled(theme, Accent::Primary),
                 Message::Launch,
             ),
@@ -398,19 +400,19 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
             // Management actions
             action(
                 style::icons::EDIT,
-                strings::EDIT,
+                t!("edit"),
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::Edit,
             ),
             action(
                 style::icons::FOLDER_OPEN,
-                strings::OPEN_FOLDER,
+                t!("open_folder"),
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::OpenFolder,
             ),
             action(
                 style::icons::DUPLICATE,
-                strings::DUPLICATE,
+                t!("duplicate"),
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::Duplicate,
             ),
@@ -418,7 +420,7 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
             // Dangerous action separated at bottom
             action(
                 style::icons::DELETE,
-                strings::DELETE,
+                t!("delete"),
                 &style::danger_button(theme),
                 Message::Delete,
             ),
@@ -443,7 +445,12 @@ fn field_with_icon(theme: &Theme, glyph: &'static str, label: &str, value: &str)
     .into()
 }
 
-fn action(glyph: &'static str, label: &'static str, style: &button::Style, message: Message) -> Ui {
+fn action(
+    glyph: &'static str,
+    label: Cow<'static, str>,
+    style: &button::Style,
+    message: Message,
+) -> Ui {
     m3::button(*style, style::btn_content(glyph, label))
         .size(button::Size::default().width(Length::Fill))
         .on_press(message)
@@ -452,7 +459,7 @@ fn action(glyph: &'static str, label: &'static str, style: &button::Style, messa
 
 fn compact(
     glyph: &'static str,
-    label: &'static str,
+    label: Cow<'static, str>,
     style: &button::Style,
     message: Message,
 ) -> Ui {
@@ -472,7 +479,7 @@ fn status_bar(theme: &Theme, tasks: &[TaskInfo]) -> Ui {
                 theme,
                 format!(
                     "{}: {} | {}: {}",
-                    strings::ACTIVE_TASKS,
+                    t!("active_tasks"),
                     active.len(),
                     latest.title,
                     detail_label(&latest.state)
@@ -502,7 +509,7 @@ fn status_bar(theme: &Theme, tasks: &[TaskInfo]) -> Ui {
             style::icon(style::icons::CHECK_CIRCLE)
                 .size(15)
                 .color(theme.tertiary()),
-            style::label(theme, strings::NO_TASKS).size(12),
+            style::label(theme, t!("no_tasks")).size(12),
         ]
         .spacing(6)
         .align_y(Vertical::Center)

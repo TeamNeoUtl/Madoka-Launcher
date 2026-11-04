@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 use iced::alignment::Vertical;
@@ -9,6 +10,7 @@ use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{AppVersion, Edition, Host, Kind};
 use launcher_providers::{Versions, has_provider};
+use rust_i18n::t;
 
 use crate::ops::CreateRequest;
 use crate::strings;
@@ -67,7 +69,7 @@ pub struct VersionChoice {
 impl From<&AppVersion> for VersionChoice {
     fn from(version: &AppVersion) -> Self {
         let label = if version.prerelease {
-            format!("{} ({})", version.version, strings::PRERELEASE)
+            format!("{} ({})", version.version, t!("prerelease"))
         } else {
             version.version.clone()
         };
@@ -233,7 +235,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
                 style::icon(style::icons::CATEGORY)
                     .size(20)
                     .color(theme.primary()),
-                style::label(theme, strings::KIND).size(18),
+                style::label(theme, t!("kind")).size(18),
             ]
             .spacing(8)
             .align_y(Vertical::Center),
@@ -245,11 +247,11 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
 
     let form_style = card::Style::filled(theme);
     let name_input = TextInput::new("", &form.name, theme)
-        .with_label_text(strings::NAME, form_style.container_color)
+        .with_label_text(strings::label("name"), form_style.container_color)
         .on_input(Message::NameChanged)
         .padding(INPUT_PADDING);
-    let group_input = TextInput::new(strings::GROUP_HINT, &form.group, theme)
-        .with_label_text(strings::GROUP, form_style.container_color)
+    let group_input = TextInput::new(&t!("group_hint"), &form.group, theme)
+        .with_label_text(strings::label("group"), form_style.container_color)
         .on_input(Message::GroupChanged)
         .padding(INPUT_PADDING);
 
@@ -270,8 +272,8 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
 
     let mut fields = column![
         form_header,
-        labeled_with_icon(theme, style::icons::EDIT, strings::NAME, name_input),
-        labeled_with_icon(theme, style::icons::GROUP, strings::GROUP, group_input),
+        labeled_with_icon(theme, style::icons::EDIT, t!("name"), name_input),
+        labeled_with_icon(theme, style::icons::GROUP, t!("group"), group_input),
     ]
     .spacing(style::GAP);
     if form.kind == Kind::Ymm4 {
@@ -280,7 +282,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
     fields = fields.push(labeled_with_icon(
         theme,
         style::icons::HISTORY,
-        strings::VERSION,
+        t!("version"),
         version_picker(
             form,
             theme,
@@ -293,7 +295,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
         fields = fields.push(labeled_with_icon(
             theme,
             style::icons::EXTENSION,
-            strings::ADDON_VERSION,
+            t!("addon_version"),
             version_picker(
                 form,
                 theme,
@@ -306,19 +308,19 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
     if form.kind == Kind::Aviutl2 {
         fields = fields.push(
             checkbox(form.install_recommended)
-                .label(strings::RECOMMENDED_PLUGINS)
+                .label(t!("recommended_plugins"))
                 .on_toggle(Message::ToggleRecommended),
         );
     }
 
     let submit = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::ADD, strings::CREATE),
+        style::btn_content(style::icons::ADD, t!("create")),
     )
     .on_press_maybe(form.can_submit().then_some(Message::Submit));
     let cancel = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::CLOSE, strings::CANCEL),
+        style::btn_content(style::icons::CLOSE, t!("cancel")),
     )
     .on_press(Message::Cancel);
     let actions = row![submit, cancel].spacing(8);
@@ -331,7 +333,7 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
             style::icon(style::icons::ADD)
                 .size(26)
                 .color(theme.primary()),
-            style::label(theme, strings::TAB_NEW).size(24),
+            style::label(theme, t!("tab_new").into_owned()).size(24),
         ]
         .spacing(8)
         .align_y(Vertical::Center),
@@ -354,7 +356,7 @@ fn kind_entry<'a>(theme: &Theme, kind: Kind, current: Kind, host: Host) -> Eleme
         ),
         Availability::NoProvider => (
             card::Interaction::Disabled,
-            Some((strings::PLANNED.to_owned(), Tone::Tertiary)),
+            Some((t!("planned").into_owned(), Tone::Tertiary)),
         ),
     };
     let selected = badge.is_none() && kind == current;
@@ -385,7 +387,7 @@ fn kind_entry<'a>(theme: &Theme, kind: Kind, current: Kind, host: Host) -> Eleme
 fn labeled_with_icon<'a>(
     theme: &Theme,
     glyph: &'static str,
-    label: &'static str,
+    label: Cow<'a, str>,
     input: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     column![
@@ -411,7 +413,7 @@ fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
         button::Style::tonal(theme, Accent::Primary),
         vec![entry(Edition::Normal), entry(Edition::Lite)],
     );
-    labeled_with_icon(theme, style::icons::LAYERS, strings::EDITION, group)
+    labeled_with_icon(theme, style::icons::LAYERS, t!("edition"), group)
 }
 
 fn version_picker<'a>(
@@ -426,7 +428,7 @@ fn version_picker<'a>(
             style::icon(style::icons::SYNC)
                 .size(16)
                 .color(theme.primary()),
-            style::label(theme, strings::LOADING).size(14),
+            style::label(theme, t!("loading")).size(14),
         ]
         .spacing(8)
         .align_y(Vertical::Center)
@@ -436,13 +438,13 @@ fn version_picker<'a>(
                 style::icon(style::icons::ERROR)
                     .size(16)
                     .color(theme.error()),
-                style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+                style::label(theme, format!("{}: {reason}", t!("load_failed"))).size(12),
             ]
             .spacing(6)
             .align_y(Vertical::Center),
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                style::btn_content(style::icons::REFRESH, strings::RELOAD),
+                style::btn_content(style::icons::REFRESH, t!("reload")),
             )
             .on_press(Message::Reload),
         ]
@@ -452,7 +454,7 @@ fn version_picker<'a>(
             style::icon(style::icons::INFO)
                 .size(16)
                 .color(theme.on_surface_variant()),
-            style::label(theme, strings::NO_VERSION).size(14),
+            style::label(theme, t!("no_version")).size(14),
         ]
         .spacing(8)
         .align_y(Vertical::Center)
