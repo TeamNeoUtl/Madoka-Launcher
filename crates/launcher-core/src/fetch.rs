@@ -6,7 +6,7 @@ use url::Url;
 use crate::Error;
 
 /// Hosts that `https` downloads may use.
-pub const ALLOWED_HOSTS: [&str; 10] = [
+pub const ALLOWED_HOSTS: [&str; 11] = [
     "github.com",
     "api.github.com",
     "codeberg.org",
@@ -14,6 +14,7 @@ pub const ALLOWED_HOSTS: [&str; 10] = [
     "release-assets.githubusercontent.com",
     "spring-fragrance.mints.ne.jp",
     "drive.google.com",
+    "drive.usercontent.google.com",
     "docs.google.com",
     "rigaya3458.github.io",
     "booth.pm",

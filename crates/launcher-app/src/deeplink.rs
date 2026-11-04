@@ -7,17 +7,36 @@
 //! - Legacy `aviutl2-catalog://` is also accepted for compatibility.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use interprocess::local_socket::{
+    GenericFilePath, GenericNamespaced, ListenerOptions, Name, NameType, Stream, prelude::*,
+};
 use tracing::{debug, info, warn};
+
+/// Name of the local socket. One launcher process owns it.
+/// A named pipe on Windows, an abstract socket on Linux,
+/// and a socket file in the temporary directory where namespaced names are unsupported (macOS).
+const IPC_NAME: &str = "madoka-launcher.ipc";
+
+fn ipc_socket_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(IPC_NAME)
+}
+
+fn ipc_name() -> std::io::Result<Name<'static>> {
+    if GenericNamespaced::is_supported() {
+        IPC_NAME.to_ns_name::<GenericNamespaced>()
+    } else {
+        ipc_socket_path().to_fs_name::<GenericFilePath>()
+    }
+}
 
 static IPC_RX: Mutex<Option<std::sync::mpsc::Receiver<String>>> = Mutex::new(None);
 
 /// Initializes the IPC listener and registers the URL scheme with the OS.
-pub fn init(root: &Path) {
+pub fn init() {
     register_url_scheme();
-    if let (Some(rx), Ok(mut lock)) = (start_ipc_listener(root), IPC_RX.lock()) {
+    if let (Some(rx), Ok(mut lock)) = (start_ipc_listener(), IPC_RX.lock()) {
         *lock = Some(rx);
     }
 }
@@ -78,121 +97,73 @@ pub fn parse(url: &str) -> Option<DeepLinkAction> {
     None
 }
 
-/// Returns the IPC socket path for single-instance enforcement.
-pub fn ipc_path(root: &Path) -> PathBuf {
-    root.join("madoka.sock")
-}
-
-/// Tries to connect to an existing instance via the IPC socket and send the URL.
-/// Returns `true` if the message was delivered (the running instance will handle it).
-pub fn try_send_to_running(root: &Path, url: &str) -> bool {
-    let path = ipc_path(root);
-    if !path.exists() {
+/// Sends `url` to the running launcher process.
+/// Returns `true` when the message was delivered and the running process handles it.
+pub fn try_send_to_running(url: &str) -> bool {
+    let Ok(name) = ipc_name() else {
+        warn!("local socket name is unsupported");
         return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::net::UnixStream;
-        match UnixStream::connect(&path) {
-            Ok(mut stream) => {
-                let message = format!("{url}\n");
-                if stream.write_all(message.as_bytes()).is_ok() {
-                    info!("sent deep link to running instance: {url}");
-                    return true;
-                }
-                warn!("failed to write to IPC socket");
-                false
-            }
-            Err(_) => {
-                // Socket file exists but no one is listening — stale.
-                debug!("stale IPC socket, ignoring");
-                false
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        // On Windows, use a named pipe instead of a Unix socket.
-        let pipe_name = r"\\.\pipe\madoka-launcher-ipc";
-        match std::fs::OpenOptions::new().write(true).open(pipe_name) {
-            Ok(mut pipe) => {
-                let message = format!("{url}\n");
-                if pipe.write_all(message.as_bytes()).is_ok() {
-                    info!("sent deep link to running instance via named pipe: {url}");
-                    return true;
-                }
-                warn!("failed to write to named pipe");
-                false
-            }
-            Err(_) => false,
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (root, url);
-        false
-    }
-}
-
-/// Starts the IPC server that listens for incoming deep link URLs.
-/// The returned receiver yields parsed URLs sent by new process instances.
-///
-/// On Unix this creates a Unix domain socket at `<root>/madoka.sock`.
-/// On Windows this uses a named pipe.
-#[cfg(unix)]
-pub fn start_ipc_listener(root: &Path) -> Option<std::sync::mpsc::Receiver<String>> {
-    use std::os::unix::net::UnixListener;
-
-    let path = ipc_path(root);
-    // Remove stale socket file if it exists.
-    let _ = std::fs::remove_file(&path);
-
-    let listener = match UnixListener::bind(&path) {
-        Ok(listener) => listener,
+    };
+    let mut stream = match Stream::connect(name) {
+        Ok(stream) => stream,
         Err(err) => {
-            warn!("failed to create IPC socket {}: {err}", path.display());
-            return None;
+            debug!("no running instance: {err}");
+            return false;
         }
     };
-    info!("IPC listener started at {}", path.display());
+    let delivered = stream
+        .write_all(format!("{url}\n").as_bytes())
+        .and_then(|()| stream.flush());
+    match delivered {
+        Ok(()) => {
+            info!("sent deep link to running instance: {url}");
+            true
+        }
+        Err(err) => {
+            warn!("failed to write to IPC socket: {err}");
+            false
+        }
+    }
+}
+
+/// Starts the IPC server that listens for deep link URLs sent by new processes.
+/// Returns `None` when another process owns the socket or the OS rejects the name.
+pub fn start_ipc_listener() -> Option<std::sync::mpsc::Receiver<String>> {
+    let name = ipc_name()
+        .inspect_err(|err| warn!("invalid IPC name: {err}"))
+        .ok()?;
+    if !GenericNamespaced::is_supported() && Stream::connect(name.clone()).is_err() {
+        // No process listens on the socket file: it is left over from a crashed process.
+        let _ = std::fs::remove_file(ipc_socket_path());
+    }
+    let listener = ListenerOptions::new()
+        .name(name)
+        .create_sync()
+        .inspect_err(|err| warn!("failed to create IPC listener: {err}"))
+        .ok()?;
+    info!("IPC listener started");
 
     let (tx, rx) = std::sync::mpsc::channel();
-    let socket_path = path.clone();
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            match stream {
+        for connection in listener.incoming() {
+            match connection {
                 Ok(stream) => {
-                    let reader = BufReader::new(stream);
-                    for line in reader.lines().map_while(Result::ok) {
+                    for line in BufReader::new(stream).lines().map_while(Result::ok) {
                         let trimmed = line.trim().to_owned();
-                        if !trimmed.is_empty() {
-                            info!("IPC received: {trimmed}");
-                            let _ = tx.send(trimmed);
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        info!("IPC received: {trimmed}");
+                        if tx.send(trimmed).is_err() {
+                            return;
                         }
                     }
                 }
-                Err(err) => {
-                    warn!("IPC accept error: {err}");
-                }
+                Err(err) => warn!("IPC accept error: {err}"),
             }
         }
-        // Clean up when the listener thread exits.
-        let _ = std::fs::remove_file(&socket_path);
     });
     Some(rx)
-}
-
-#[cfg(windows)]
-pub fn start_ipc_listener(_root: &Path) -> Option<std::sync::mpsc::Receiver<String>> {
-    // Named-pipe listener for Windows — simplified implementation.
-    // Full implementation would use `windows-sys` for proper named pipe server.
-    // For now we accept URLs via CLI args on the second launch.
-    None
-}
-
-#[cfg(not(any(unix, windows)))]
-pub fn start_ipc_listener(_root: &Path) -> Option<std::sync::mpsc::Receiver<String>> {
-    None
 }
 
 /// Extracts a `madoka://` or `aviutl2-catalog://` URL from CLI arguments.
@@ -211,12 +182,12 @@ pub fn register_url_scheme() {
     {
         if let Ok(exe) = std::env::current_exe() {
             let data_dir = std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
+                .map(std::path::PathBuf::from)
                 .or_else(|| {
                     std::env::var_os("HOME")
-                        .map(|home| PathBuf::from(home).join(".local").join("share"))
+                        .map(|home| std::path::PathBuf::from(home).join(".local").join("share"))
                 })
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
             let app_dir = data_dir.join("applications");
             let _ = std::fs::create_dir_all(&app_dir);
             let desktop_path = app_dir.join("madoka-launcher.desktop");

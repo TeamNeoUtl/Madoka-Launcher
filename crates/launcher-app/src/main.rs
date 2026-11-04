@@ -26,15 +26,13 @@ fn main() -> ExitCode {
     };
 
     // If launched with a deep link URL, try sending it to an already running instance.
-    if let Some(url) =
-        deeplink::url_from_args().filter(|url| deeplink::try_send_to_running(&root, url))
-    {
+    if let Some(url) = deeplink::url_from_args().filter(|url| deeplink::try_send_to_running(url)) {
         info!("forwarded URL to running instance, exiting: {url}");
         return ExitCode::SUCCESS;
     }
 
     // Initialize IPC listener and OS scheme handler
-    deeplink::init(&root);
+    deeplink::init();
 
     let log = logging::init(&root);
     info!(

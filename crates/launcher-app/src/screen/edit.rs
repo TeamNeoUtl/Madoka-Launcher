@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use iced::alignment::Vertical;
 use iced::widget::{checkbox, column, container, row, scrollable, text};
@@ -9,6 +9,7 @@ use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{InstallPlan, Instance, InstanceId, Kind, Package, PackageSource};
 use launcher_providers::has_catalog;
 
+use crate::i18n::Key;
 use crate::strings;
 use crate::style::{self, Tone};
 
@@ -80,7 +81,8 @@ pub enum Message {
     TabSelected(Tab),
     SearchChanged(String),
     CategorySelected(Option<String>),
-    TagSelected(Option<String>),
+    TagToggled(String),
+    TagsCleared,
     SortOrderChanged(SortOrder),
     StatusFilterChanged(StatusFilter),
     ToggleHideDeprecated,
@@ -145,7 +147,7 @@ pub struct State {
     pub tab: Tab,
     pub search: String,
     pub category: Option<String>,
-    pub tag: Option<String>,
+    pub tags: BTreeSet<String>,
     pub sort_order: SortOrder,
     pub status_filter: StatusFilter,
     pub hide_deprecated: bool,
@@ -172,7 +174,7 @@ impl State {
             tab: Tab::Plugins,
             search: String::new(),
             category: None,
-            tag: None,
+            tags: BTreeSet::new(),
             sort_order: SortOrder::Popularity,
             status_filter: StatusFilter::All,
             hide_deprecated: false,
@@ -562,12 +564,12 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .on_press(Message::ScanManualPlugins),
         m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::EXPORT, strings::EXPORT_CONFIG),
+            style::btn_content(style::icons::EXPORT, strings::tr(Key::ExportConfig)),
         )
         .on_press(Message::ExportConfig),
         m3::button(
             button::Style::tonal(theme, Accent::Secondary),
-            style::btn_content(style::icons::IMPORT, strings::IMPORT_CONFIG),
+            style::btn_content(style::icons::IMPORT, strings::tr(Key::ImportConfig)),
         )
         .on_press(Message::ImportConfig),
     ]
@@ -759,7 +761,7 @@ fn browse_tab<'a>(
     tags.sort_unstable();
     tags.dedup();
     if !tags.is_empty() {
-        page = page.push(tag_bar(theme, &tags, state.tag.as_deref()));
+        page = page.push(tag_bar(theme, &tags, &state.tags));
     }
 
     if let Some(pending) = &state.pending {
@@ -781,12 +783,7 @@ fn browse_tab<'a>(
                 .as_ref()
                 .is_none_or(|category| package.categories.contains(category))
         })
-        .filter(|package| {
-            state
-                .tag
-                .as_ref()
-                .is_none_or(|tag| package.tags.contains(tag))
-        })
+        .filter(|package| state.tags.iter().all(|tag| package.tags.contains(tag)))
         .filter(|package| matches_query(package, &needle))
         .collect();
 
@@ -884,8 +881,8 @@ fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message>
         .into()
 }
 
-fn tag_bar<'a>(theme: &Theme, tags: &[&str], current: Option<&str>) -> Element<'a, Message> {
-    let entry = |label: String, value: Option<String>, selected: bool| -> Element<'a, Message> {
+fn tag_bar<'a>(theme: &Theme, tags: &[&str], selected: &BTreeSet<String>) -> Element<'a, Message> {
+    let entry = |label: String, message: Message, selected: bool| -> Element<'a, Message> {
         let color = style::tile_content(theme, selected);
         m3::card(
             style::tile_card(theme, selected),
@@ -900,19 +897,21 @@ fn tag_bar<'a>(theme: &Theme, tags: &[&str], current: Option<&str>) -> Element<'
             .spacing(4)
             .align_y(Vertical::Center),
         )
-        .interaction(card::Interaction::Press(Action::Direct(
-            Message::TagSelected(value),
-        )))
+        .interaction(card::Interaction::Press(Action::Direct(message)))
         .padding(Padding::from([3.0, 8.0]))
         .into()
     };
 
-    let mut entries = vec![entry("#すべて".to_owned(), None, current.is_none())];
+    let mut entries = vec![entry(
+        "#すべて".to_owned(),
+        Message::TagsCleared,
+        selected.is_empty(),
+    )];
     entries.extend(tags.iter().map(|tag| {
         entry(
             format!("#{tag}"),
-            Some((*tag).to_owned()),
-            current == Some(*tag),
+            Message::TagToggled((*tag).to_owned()),
+            selected.contains(*tag),
         )
     }));
 

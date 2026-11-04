@@ -78,6 +78,43 @@ impl ReqwestFetcher {
     }
 }
 
+impl ReqwestFetcher {
+    /// Sends a GET request to `target`. Errors name `origin`, the URL that the caller asked for.
+    async fn request(&self, origin: &Url, target: &Url) -> Result<reqwest::Response, Error> {
+        let fail = |message: String| Error::Fetch {
+            url: origin.to_string(),
+            message,
+        };
+        let started = Instant::now();
+        info!(%target, "fetch start");
+        let response = self.client.get(target.clone()).send().await.map_err(|e| {
+            warn!(%target, error = %describe(&e), "fetch request failed");
+            fail(describe(&e))
+        })?;
+        let status = response.status();
+        info!(
+            url = %origin,
+            status = status.as_u16(),
+            content_length = ?response.content_length(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "fetch response"
+        );
+        if status.is_success() {
+            Ok(response)
+        } else {
+            Err(fail(format!("status {}", status.as_u16())))
+        }
+    }
+}
+
+fn is_html(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/html"))
+}
+
 impl Fetcher for ReqwestFetcher {
     async fn fetch(
         &self,
@@ -90,33 +127,26 @@ impl Fetcher for ReqwestFetcher {
             message,
         };
         let started = Instant::now();
-        // Normalize Google Drive URLs to direct download
-        let target_url = if let Some(id) = crate::au2pkg::extract_google_drive_id(url) {
-            let direct = crate::au2pkg::google_drive_direct_url(&id);
-            Url::parse(&direct).unwrap_or_else(|_| url.clone())
-        } else {
-            url.clone()
-        };
-        info!(%target_url, dest = %dest.display(), "fetch start");
-        let mut response = self
-            .client
-            .get(target_url.clone())
-            .send()
-            .await
-            .map_err(|e| {
-                warn!(%target_url, error = %describe(&e), "fetch request failed");
-                fail(describe(&e))
-            })?;
-        let status = response.status();
-        info!(
-            %url,
-            status = status.as_u16(),
-            content_length = ?response.content_length(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "fetch response"
-        );
-        if !status.is_success() {
-            return Err(fail(format!("status {}", status.as_u16())));
+        let drive_id = crate::au2pkg::extract_google_drive_id(url);
+        let target_url = drive_id
+            .as_deref()
+            .and_then(|id| Url::parse(&crate::au2pkg::google_drive_direct_url(id)).ok())
+            .unwrap_or_else(|| url.clone());
+        info!(%target_url, dest = %dest.display(), "fetch");
+        let mut response = self.request(url, &target_url).await?;
+        if let Some(id) = drive_id.as_deref() {
+            if is_html(&response) {
+                let html = response.text().await.map_err(|e| fail(describe(&e)))?;
+                let confirm = crate::drive::confirm_url(&html)
+                    .or_else(|| crate::drive::fallback_url(id))
+                    .filter(is_allowed_url)
+                    .ok_or_else(|| fail("confirmation page has no download link".to_owned()))?;
+                info!(%confirm, "drive confirmation");
+                response = self.request(url, &confirm).await?;
+            }
+            if is_html(&response) {
+                return Err(fail("drive returned a page instead of a file".to_owned()));
+            }
         }
         let total = response.content_length();
         let mut file = tokio::fs::File::create(dest)

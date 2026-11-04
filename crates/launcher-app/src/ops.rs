@@ -610,71 +610,41 @@ impl Services {
         })
         .await?;
 
-        let dir = instance.dir.clone();
+        let app_dir = instance.app_dir();
+        let registered: std::collections::HashSet<String> = instance
+            .config
+            .plugins
+            .iter()
+            .map(|plugin| plugin.id.clone())
+            .collect();
         let found = tokio::task::spawn_blocking(move || {
+            let scanned = launcher_core::scan_xxh3_128(&app_dir);
             let mut detected_names = Vec::new();
-            let check_dirs = [
-                dir.join("Plugin"),
-                dir.join("Plugins"),
-                dir.join("Script"),
-                dir.join("Scripts"),
-            ];
-
-            // Scan files
-            let mut file_hashes = Vec::new();
-            for sub in &check_dirs {
-                if !sub.exists() {
-                    continue;
-                }
-                if let Ok(entries) = std::fs::read_dir(sub) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if !path.is_file() {
-                            continue;
-                        }
-                        if let (Ok(hash), Ok(rel)) = (
-                            launcher_core::Hash::of_file(launcher_core::HashAlgo::Xxh3_128, &path),
-                            path.strip_prefix(&dir),
-                        ) {
-                            file_hashes.push((rel.to_string_lossy().replace('\\', "/"), hash.hex));
-                        }
-                    }
-                }
-            }
-
-            // Match against catalog checks
             for pkg in &packages {
-                if instance.config.plugins.iter().any(|p| p.id == pkg.id) {
+                if registered.contains(&pkg.id) {
                     continue;
                 }
-                let mut matched = false;
-                if let PackageSource::Recipe(recipe) = &pkg.source {
-                    for check in &recipe.checks {
-                        for (rel_path, hex) in &file_hashes {
-                            if rel_path.ends_with(&check.location.rel) || &check.hash.hex == hex {
-                                matched = true;
-                                break;
-                            }
-                        }
-                        if matched {
-                            break;
-                        }
-                    }
+                let PackageSource::Recipe(recipe) = &pkg.source else {
+                    continue;
+                };
+                if !launcher_core::is_present(&app_dir, &recipe.checks, &scanned) {
+                    continue;
                 }
-                if matched {
-                    let version = pkg.latest_version().unwrap_or("-").to_owned();
-                    let record = PluginRecord {
-                        id: pkg.id.clone(),
-                        version,
-                        source: pkg.source.label(),
-                        files: Vec::new(),
-                        paused: false,
-                    };
-                    let _ = store.add_or_update_plugin(id, record);
+                let record = PluginRecord {
+                    id: pkg.id.clone(),
+                    version: recipe.version.clone(),
+                    source: pkg.source.label(),
+                    files: recipe
+                        .checks
+                        .iter()
+                        .map(|check| check.location.rel.clone())
+                        .collect(),
+                    paused: false,
+                };
+                if store.add_or_update_plugin(id, record).is_ok() {
                     detected_names.push(pkg.name.clone());
                 }
             }
-
             detected_names
         })
         .await

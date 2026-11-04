@@ -25,6 +25,7 @@ const ICON_NEW: &str = "\u{e145}";
 const ICON_TASKS: &str = "\u{e6b1}";
 const ICON_SETTINGS: &str = "\u{e8b8}";
 const RAIL_VERTICAL_PADDING: f32 = 16.0;
+const CONFIG_FILE_NAME: &str = "madoka-packages.json";
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -51,7 +52,8 @@ pub enum Message {
     UpdateChecked(bool, Result<Option<String>, String>),
     SelfUpdated(Result<(), String>),
     ManualPluginsScanned(Result<Vec<String>, String>),
-    ConfigClipboardRead(InstanceId, Option<String>),
+    ConfigImported(InstanceId, Option<String>),
+    ConfigExported(Result<Option<String>, String>),
     DeepLinkUrl(String),
     Redraw,
 }
@@ -286,15 +288,23 @@ impl App {
                     Task::none()
                 }
             },
-            Message::ConfigClipboardRead(id, content) => {
+            Message::ConfigExported(result) => {
+                self.notice = match result {
+                    Ok(Some(path)) => Some(format!("プラグイン構成を書き出しました: {path}")),
+                    Ok(None) => None,
+                    Err(error) => Some(format!("書き出しエラー: {error}")),
+                };
+                Task::none()
+            }
+            Message::ConfigImported(id, content) => {
                 let Some(content) = content.filter(|s| !s.trim().is_empty()) else {
-                    self.notice = Some("クリップボードが空です".to_owned());
+                    self.notice = Some("構成ファイルが空、または読み込めませんでした".to_owned());
                     return Task::none();
                 };
                 let parsed: Result<serde_json::Value, _> = serde_json::from_str(&content);
                 let Ok(value) = parsed else {
                     self.notice =
-                        Some("クリップボードの内容が有効な構成JSONではありません".to_owned());
+                        Some("構成ファイルの内容が有効な構成JSONではありません".to_owned());
                     return Task::none();
                 };
                 let mut target_ids = Vec::new();
@@ -816,8 +826,14 @@ impl App {
                 state.status_filter = filter;
                 Task::none()
             }
-            M::TagSelected(tag) => {
-                state.tag = tag;
+            M::TagToggled(tag) => {
+                if !state.tags.remove(&tag) {
+                    state.tags.insert(tag);
+                }
+                Task::none()
+            }
+            M::TagsCleared => {
+                state.tags.clear();
                 Task::none()
             }
             M::ToggleHideDeprecated => {
@@ -956,12 +972,10 @@ impl App {
                     })).collect::<Vec<_>>()
                 });
                 let text = serde_json::to_string_pretty(&export_data).unwrap_or_default();
-                self.notice =
-                    Some("プラグイン構成をクリップボードにエクスポートしました".to_owned());
-                iced::clipboard::write(text)
+                Task::perform(save_text(CONFIG_FILE_NAME, text), Message::ConfigExported)
             }
             M::ImportConfig => {
-                iced::clipboard::read().map(move |text| Message::ConfigClipboardRead(id, text))
+                Task::perform(pick_text(), move |text| Message::ConfigImported(id, text))
             }
             M::NameChanged(name) => {
                 state.name = name;
@@ -1034,7 +1048,8 @@ impl App {
                 } else {
                     strings::set_locale(crate::i18n::Locale::Ja);
                 }
-                self.notice = Some("言語設定を保存しました。再起動後に全画面へ完全反映されます。".to_owned());
+                self.notice =
+                    Some("言語設定を保存しました。再起動後に全画面へ完全反映されます。".to_owned());
                 Task::perform(self.services.clone().save_locale(locale), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
@@ -1315,4 +1330,30 @@ fn nav_item(
         label: label.into(),
         on_press: Message::TabSelected(screen),
     }
+}
+
+/// Writes `text` to a file that the user picks. `Ok(None)` means the user cancelled.
+async fn save_text(file_name: &'static str, text: String) -> Result<Option<String>, String> {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .set_file_name(file_name)
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    handle
+        .write(text.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(Some(handle.path().display().to_string()))
+}
+
+/// Reads a UTF-8 text file that the user picks. `None` means cancelled or unreadable.
+async fn pick_text() -> Option<String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .await?;
+    String::from_utf8(handle.read().await).ok()
 }

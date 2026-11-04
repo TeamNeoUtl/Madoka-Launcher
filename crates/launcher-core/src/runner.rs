@@ -232,13 +232,16 @@ fn read_tail(path: &Path) -> String {
 /// Checks if an executable belonging to this instance is currently running.
 #[must_use]
 pub fn is_instance_running(instance: &Instance) -> bool {
-    let mut system = System::new_with_specifics(
+    let Ok(mut system) = System::new_with_specifics(
         RefreshKind::nothing().with_processes(
             ProcessRefreshKind::nothing()
                 .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
                 .with_cwd(sysinfo::UpdateKind::OnlyIfNotSet),
         ),
-    );
+    )
+    .inspect_err(|error| tracing::warn!(%error, "process list is unavailable")) else {
+        return false;
+    };
     system.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::All,
         true,

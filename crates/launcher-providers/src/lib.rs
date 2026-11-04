@@ -3,6 +3,7 @@ mod aviutl;
 mod aviutl2;
 mod cache;
 mod dns;
+mod drive;
 mod error;
 mod fetch;
 mod freya;
