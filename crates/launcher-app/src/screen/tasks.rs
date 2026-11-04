@@ -143,10 +143,13 @@ fn task_card<M: Clone + 'static>(task: &TaskInfo, theme: &Theme) -> Element<'sta
                         .color(theme.primary()),
                     style::label(
                         theme,
-                        format!(
-                            "全体進捗: {done} / {total} ({}%)",
-                            (*done * 100 / total.max(&1))
+                        t!(
+                            "overall_progress",
+                            done = done,
+                            total = total,
+                            percent = *done * 100 / total.max(&1)
                         )
+                        .into_owned()
                     )
                     .size(12),
                 ]

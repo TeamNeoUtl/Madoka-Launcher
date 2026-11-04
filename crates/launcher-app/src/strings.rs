@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::{Mutex, PoisonError};
@@ -41,10 +42,10 @@ pub const fn kind_label(kind: Kind) -> &'static str {
     }
 }
 
-pub const fn edition_label(edition: Edition) -> &'static str {
+pub fn edition_label(edition: Edition) -> Cow<'static, str> {
     match edition {
-        Edition::Normal => "通常版",
-        Edition::Lite => "Lite 版",
+        Edition::Normal => t!("edition_normal"),
+        Edition::Lite => t!("edition_lite"),
     }
 }
 
@@ -56,5 +57,5 @@ pub const fn host_label(host: Host) -> &'static str {
 }
 
 pub fn unsupported_host_badge(host: Host) -> String {
-    format!("{} 未対応", host_label(host))
+    t!("unsupported_host", host = host_label(host)).into_owned()
 }

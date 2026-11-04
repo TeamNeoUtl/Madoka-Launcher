@@ -347,7 +347,7 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
             theme,
             style::icons::LAYERS,
             &t!("edition"),
-            strings::edition_label(config.edition),
+            &strings::edition_label(config.edition),
         ));
     }
     lines = lines

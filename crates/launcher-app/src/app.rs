@@ -273,40 +273,41 @@ impl App {
             }
             Message::ManualPluginsScanned(result) => match result {
                 Ok(names) if names.is_empty() => {
-                    self.notice =
-                        Some("手動配置された未登録プラグインは見つかりませんでした".to_owned());
+                    self.notice = Some(t!("manual_scan_none").into_owned());
                     Task::none()
                 }
                 Ok(names) => {
-                    self.notice = Some(format!(
-                        "{}件の手動配置プラグインを登録しました: {}",
-                        names.len(),
-                        names.join(", ")
-                    ));
+                    self.notice = Some(
+                        t!(
+                            "manual_scan_registered",
+                            count = names.len(),
+                            names = names.join(", ")
+                        )
+                        .into_owned(),
+                    );
                     self.reload()
                 }
                 Err(err) => {
-                    self.notice = Some(format!("手動検出エラー: {err}"));
+                    self.notice = Some(t!("manual_scan_error", error = err).into_owned());
                     Task::none()
                 }
             },
             Message::ConfigExported(result) => {
                 self.notice = match result {
-                    Ok(Some(path)) => Some(format!("プラグイン構成を書き出しました: {path}")),
+                    Ok(Some(path)) => Some(t!("config_exported", path = path).into_owned()),
                     Ok(None) => None,
-                    Err(error) => Some(format!("書き出しエラー: {error}")),
+                    Err(error) => Some(t!("config_export_error", error = error).into_owned()),
                 };
                 Task::none()
             }
             Message::ConfigImported(id, content) => {
                 let Some(content) = content.filter(|s| !s.trim().is_empty()) else {
-                    self.notice = Some("構成ファイルが空、または読み込めませんでした".to_owned());
+                    self.notice = Some(t!("config_empty").into_owned());
                     return Task::none();
                 };
                 let parsed: Result<serde_json::Value, _> = serde_json::from_str(&content);
                 let Ok(value) = parsed else {
-                    self.notice =
-                        Some("構成ファイルの内容が有効な構成JSONではありません".to_owned());
+                    self.notice = Some(t!("config_invalid").into_owned());
                     return Task::none();
                 };
                 let mut target_ids = Vec::new();
@@ -318,8 +319,7 @@ impl App {
                     }
                 }
                 if target_ids.is_empty() {
-                    self.notice =
-                        Some("インポート可能なプラグイン定義が見つかりませんでした".to_owned());
+                    self.notice = Some(t!("config_no_plugins").into_owned());
                     return Task::none();
                 }
                 let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
@@ -334,14 +334,11 @@ impl App {
                     .collect();
 
                 if missing.is_empty() {
-                    self.notice = Some("構成内の全プラグインは既に導入済みです".to_owned());
+                    self.notice = Some(t!("config_all_installed").into_owned());
                     return Task::none();
                 }
 
-                self.notice = Some(format!(
-                    "{}件の不足プラグインの導入を開始します",
-                    missing.len()
-                ));
+                self.notice = Some(t!("config_import_start", count = missing.len()).into_owned());
                 let services = self.services.clone();
                 Task::perform(
                     async move {
@@ -366,7 +363,7 @@ impl App {
                 if let Some(action) = deeplink::parse(&url) {
                     self.handle_deeplink_action(action)
                 } else {
-                    self.notice = Some(format!("不明なURL形式です: {url}"));
+                    self.notice = Some(t!("deeplink_unknown", url = url).into_owned());
                     Task::none()
                 }
             }
@@ -794,8 +791,7 @@ impl App {
                     }
                 }
                 if preview_items.is_empty() {
-                    self.notice =
-                        Some("更新可能なプラグインはありません（すべて最新です）".to_owned());
+                    self.notice = Some(t!("no_updates").into_owned());
                     Task::none()
                 } else {
                     state.update_preview = Some(preview_items);
@@ -892,9 +888,9 @@ impl App {
                     .collect::<Vec<_>>()
                     .join("\n");
                 self.notice = Some(format!(
-                    "{} ({}件)",
+                    "{} {}",
                     t!("commons_copied"),
-                    state.selected_commons.len()
+                    t!("items_count", count = state.selected_commons.len())
                 ));
                 iced::clipboard::write(text)
             }
@@ -1050,8 +1046,7 @@ impl App {
                 } else {
                     strings::set_locale(crate::i18n::Locale::Ja);
                 }
-                self.notice =
-                    Some("言語設定を保存しました。再起動後に全画面へ完全反映されます。".to_owned());
+                self.notice = Some(t!("locale_saved").into_owned());
                 Task::perform(self.services.clone().save_locale(locale), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
@@ -1274,7 +1269,7 @@ impl App {
                     .selected
                     .or_else(|| self.instances.first().map(|i| i.config.id));
                 let Some(id) = id else {
-                    self.notice = Some("インスタンスが存在しません".to_owned());
+                    self.notice = Some(t!("no_instance_exists").into_owned());
                     return Task::none();
                 };
                 self.selected = Some(id);
@@ -1294,7 +1289,7 @@ impl App {
                     .selected
                     .or_else(|| self.instances.first().map(|i| i.config.id));
                 let Some(id) = id else {
-                    self.notice = Some("インスタンスが存在しません".to_owned());
+                    self.notice = Some(t!("no_instance_exists").into_owned());
                     return Task::none();
                 };
                 self.selected = Some(id);

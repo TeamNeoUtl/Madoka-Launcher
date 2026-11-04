@@ -208,16 +208,16 @@ impl State {
     pub fn register_json_package(&mut self) -> Result<String, String> {
         let text = self.json_input.trim();
         if text.is_empty() {
-            return Err("JSONが空です".to_owned());
+            return Err(t!("json_empty").into_owned());
         }
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(text);
-        let value = parsed.map_err(|e| format!("無効なJSON構文です: {e}"))?;
+        let value = parsed.map_err(|e| t!("json_invalid", error = e).into_owned())?;
 
         // Extract package fields
         let id = value
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "id フィールドが必要です".to_owned())?;
+            .ok_or_else(|| t!("json_id_required").into_owned())?;
         let name = value
             .get("name")
             .and_then(|v| v.as_str())
@@ -270,7 +270,7 @@ impl State {
                 self.catalog = Catalog::Ready(vec![pkg]);
             }
         }
-        Ok(format!("パッケージ '{}' を登録しました！", id))
+        Ok(t!("json_registered", id = id).into_owned())
     }
 }
 
@@ -423,7 +423,7 @@ fn update_preview_modal<'a>(
                     .size(20)
                     .color(theme.primary()),
                 style::label(theme, t!("update_summary")).size(16),
-                style::label(theme, format!("({}件)", items.len())).size(14),
+                style::label(theme, t!("items_count", count = items.len()).into_owned()).size(14),
             ]
             .spacing(8)
             .align_y(Vertical::Center),
@@ -431,7 +431,7 @@ fn update_preview_modal<'a>(
             row![
                 m3::button(
                     button::Style::filled(theme, Accent::Primary),
-                    style::btn_content(style::icons::CHECK, "今すぐ更新を実行"),
+                    style::btn_content(style::icons::CHECK, t!("update_now")),
                 )
                 .on_press(Message::ConfirmUpdateAll),
                 m3::button(
@@ -509,7 +509,7 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             theme,
             style::icons::LAYERS,
             &t!("edition"),
-            strings::edition_label(config.edition),
+            &strings::edition_label(config.edition),
         ));
     }
     lines = lines.push(field_with_icon(
@@ -554,7 +554,7 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
     let toolbar = row![
         m3::button(
             button::Style::tonal(theme, Accent::Tertiary),
-            style::btn_content(style::icons::SYNC, "手動配置を検出"),
+            style::btn_content(style::icons::SYNC, t!("scan_manual")),
         )
         .on_press(Message::ScanManualPlugins),
         m3::button(
@@ -869,7 +869,7 @@ fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message>
     .align_y(Vertical::Center);
 
     let deprecated_toggle = checkbox(state.hide_deprecated)
-        .label("非推奨を隠す")
+        .label(t!("hide_deprecated").into_owned())
         .size(14)
         .on_toggle(|_| Message::ToggleHideDeprecated);
 
@@ -901,7 +901,7 @@ fn tag_bar<'a>(theme: &Theme, tags: &[&str], selected: &BTreeSet<String>) -> Ele
     };
 
     let mut entries = vec![entry(
-        "#すべて".to_owned(),
+        format!("#{}", t!("all_categories")),
         Message::TagsCleared,
         selected.is_empty(),
     )];
@@ -1086,7 +1086,7 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
         header_row = header_row.push(style::icon_chip::<Message>(
             theme,
             style::icons::WARNING,
-            "非推奨",
+            t!("deprecated"),
             Tone::Error,
         ));
     }
@@ -1154,7 +1154,7 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
 
     let details_btn = m3::button(
         button::Style::tonal(theme, Accent::Secondary),
-        style::btn_content(style::icons::DESCRIPTION, "詳細"),
+        style::btn_content(style::icons::DESCRIPTION, t!("details")),
     )
     .on_press(Message::ViewPackageDetails(Some(package.id.clone())));
 
@@ -1267,13 +1267,13 @@ fn commons_tab<'a>(
 
             let copy_btn = m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                style::btn_content(style::icons::COPY, "コピー"),
+                style::btn_content(style::icons::COPY, t!("copy")),
             )
             .on_press(Message::CopySingleCommons(commons_id.clone()));
 
             let open_btn = m3::button(
                 button::Style::tonal(theme, Accent::Secondary),
-                style::btn_content(style::icons::OPEN_IN_NEW, "開く"),
+                style::btn_content(style::icons::OPEN_IN_NEW, t!("open")),
             )
             .on_press(Message::OpenCommonsUrl(commons_id));
 
@@ -1301,35 +1301,33 @@ fn commons_tab<'a>(
 
 fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> {
     let background = card::Style::filled(theme).container_color;
-    let input = TextInput::new("JSONマニフェストを入力...", &state.json_input, theme)
+    let input = TextInput::new(&t!("json_placeholder"), &state.json_input, theme)
         .with_label_text(strings::label("json_direct_register"), background)
         .on_input(Message::JsonInputChanged)
         .padding(INPUT_PADDING);
 
     let load_sample = m3::button(
         button::Style::tonal(theme, Accent::Secondary),
-        style::btn_content(style::icons::CODE, "サンプルJSONを挿入"),
+        style::btn_content(style::icons::CODE, t!("insert_sample_json")),
     )
     .on_press(Message::LoadSampleJson);
 
     let submit = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::CHECK, "マニフェストを登録"),
+        style::btn_content(style::icons::CHECK, t!("register_manifest")),
     )
     .on_press(Message::RegisterJsonPackage);
 
     let mut body = column![
         row![
-            style::icon(style::icons::CODE).size(20).color(theme.primary()),
+            style::icon(style::icons::CODE)
+                .size(20)
+                .color(theme.primary()),
             style::label(theme, t!("json_direct_register").into_owned()).size(18),
         ]
         .spacing(8)
         .align_y(Vertical::Center),
-        style::label(
-            theme,
-            "AviUtl2やAPM互換のJSONパッケージ定義を入力して、ローカルカタログへ登録・テスト導入できます。"
-        )
-        .size(13),
+        style::label(theme, t!("json_register_help").into_owned()).size(13),
         row![load_sample, submit].spacing(8),
         input,
     ]
@@ -1415,7 +1413,7 @@ fn package_detail_view<'a>(
 ) -> Element<'a, Message> {
     let back_btn = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        style::btn_content(style::icons::BACK, "一覧に戻る"),
+        style::btn_content(style::icons::BACK, t!("back_to_list")),
     )
     .on_press(Message::ViewPackageDetails(None));
 
@@ -1494,7 +1492,9 @@ fn package_detail_view<'a>(
         style::icon(style::icons::PERSON)
             .size(16)
             .color(theme.primary()),
-        text("作者:").size(13).color(theme.outline()),
+        text(format!("{}:", t!("author")))
+            .size(13)
+            .color(theme.outline()),
         author_btn,
         style::icon(style::icons::LINK)
             .size(16)
@@ -1516,13 +1516,13 @@ fn package_detail_view<'a>(
 
         let prev_btn = m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::BACK, "前へ"),
+            style::btn_content(style::icons::BACK, t!("prev")),
         )
         .on_press(Message::PrevScreenshot(len));
 
         let next_btn = m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            style::btn_content(style::icons::LAUNCH, "次へ"),
+            style::btn_content(style::icons::LAUNCH, t!("next")),
         )
         .on_press(Message::NextScreenshot(len));
 
@@ -1533,7 +1533,8 @@ fn package_detail_view<'a>(
                     style::icon(style::icons::IMAGE)
                         .size(20)
                         .color(theme.primary()),
-                    text(format!("スクリーンショット ({}/{})", idx + 1, len)).size(14),
+                    text(t!("screenshot_position", index = idx + 1, total = len).into_owned())
+                        .size(14),
                     prev_btn,
                     next_btn,
                 ]
@@ -1569,7 +1570,7 @@ fn package_detail_view<'a>(
                 style::icon(style::icons::DESCRIPTION)
                     .size(18)
                     .color(theme.primary()),
-                style::label(theme, "パッケージ概要").size(16),
+                style::label(theme, t!("package_overview").into_owned()).size(16),
             ]
             .spacing(8)
             .align_y(Vertical::Center),
@@ -1603,7 +1604,7 @@ fn package_detail_view<'a>(
                     style::icon(style::icons::LAYERS)
                         .size(18)
                         .color(theme.primary()),
-                    style::label(theme, "前提・依存パッケージ").size(15),
+                    style::label(theme, t!("dependencies").into_owned()).size(15),
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center),
@@ -1638,7 +1639,7 @@ fn package_detail_view<'a>(
                     style::icon(style::icons::POLICY)
                         .size(18)
                         .color(theme.primary()),
-                    style::label(theme, "ライセンス").size(15),
+                    style::label(theme, t!("license").into_owned()).size(15),
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center),
@@ -1660,7 +1661,7 @@ fn package_detail_view<'a>(
                     style::icon(style::icons::HISTORY)
                         .size(18)
                         .color(theme.primary()),
-                    style::label(theme, "更新履歴 (Changelog)").size(15),
+                    style::label(theme, t!("changelog").into_owned()).size(15),
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center),
@@ -1683,10 +1684,10 @@ fn package_detail_view<'a>(
                     style::icon(style::icons::POLICY)
                         .size(20)
                         .color(theme.primary()),
-                    style::label(theme, "ライセンス条項").size(16),
+                    style::label(theme, t!("license_terms").into_owned()).size(16),
                     m3::button(
                         button::Style::tonal(theme, Accent::Primary),
-                        style::btn_content(style::icons::CLOSE, "閉じる"),
+                        style::btn_content(style::icons::CLOSE, t!("close")),
                     )
                     .on_press(Message::ShowLicense(None)),
                 ]

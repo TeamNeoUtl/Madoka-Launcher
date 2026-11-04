@@ -5,6 +5,7 @@ use iced::{Element, Length, Padding};
 use iced_m3::theme::{ColorScheme, Theme};
 use iced_m3::widget::{self as m3, card};
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
+use rust_i18n::t;
 
 use crate::style::{self, Tone};
 
@@ -126,7 +127,7 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
     flush_text(&mut current_text, &mut elements, theme);
 
     if elements.is_empty() {
-        text("説明はありません。")
+        text(t!("no_description").into_owned())
             .size(13)
             .color(theme.outline())
             .into()
