@@ -302,6 +302,13 @@ pub fn parse_apm_packages(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
                 updated: None,
                 page_url,
                 source,
+                niconi_commons_id: None,
+                tags: Vec::new(),
+                deprecated: false,
+                dependencies: Vec::new(),
+                licenses: Vec::new(),
+                changelog: None,
+                screenshots: Vec::new(),
             }
         })
         .collect())

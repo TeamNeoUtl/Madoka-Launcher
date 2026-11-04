@@ -62,6 +62,21 @@ pub mod icons {
     pub const GROUP: &str = "\u{e7ef}"; // group
     pub const HISTORY: &str = "\u{e897}"; // history / version
     pub const TUNE: &str = "\u{e1c4}"; // tune / settings
+    pub const SHARE: &str = "\u{e80d}"; // share
+    pub const COPY: &str = "\u{e14d}"; // content_copy
+    pub const LINK: &str = "\u{e157}"; // link
+    pub const TAG: &str = "\u{e54e}"; // label / tag
+    pub const SORT: &str = "\u{e164}"; // sort
+    pub const FILTER: &str = "\u{ef4f}"; // filter_list
+    pub const CODE: &str = "\u{e86f}"; // code / json
+    pub const PAUSE: &str = "\u{e034}"; // pause
+    pub const PLAY: &str = "\u{e037}"; // play
+    pub const EXPORT: &str = "\u{e2c6}"; // file_upload / export
+    pub const IMPORT: &str = "\u{e2c4}"; // file_download / import
+    pub const IMAGE: &str = "\u{e3f4}"; // image
+    pub const DESCRIPTION: &str = "\u{e873}"; // description
+    pub const PERSON: &str = "\u{e7fd}"; // person / author
+    pub const POLICY: &str = "\u{e899}"; // policy / license
 }
 
 pub fn button_icon(glyph: &'static str) -> Icon<'static> {
@@ -76,6 +91,16 @@ pub fn icon<'a>(glyph: &'static str) -> Text<'a> {
 }
 
 pub fn btn_content<'a>(glyph: &'static str, label: &'static str) -> button::Content<'a> {
+    button::Content::Full {
+        icon: button_icon(glyph),
+        label: label.into(),
+    }
+}
+
+pub fn dyn_btn_content<'a>(
+    glyph: &'static str,
+    label: impl Into<std::borrow::Cow<'a, str>>,
+) -> button::Content<'a> {
     button::Content::Full {
         icon: button_icon(glyph),
         label: label.into(),

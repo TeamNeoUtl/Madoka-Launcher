@@ -103,16 +103,7 @@ fn loc(root: Root, rel: &str) -> Location {
 
 fn package(id: &str) -> Package {
     let url = Url::parse("https://example.com/").unwrap();
-    Package {
-        id: id.to_owned(),
-        name: id.to_owned(),
-        summary: String::new(),
-        author: String::new(),
-        categories: Vec::new(),
-        updated: None,
-        page_url: url.clone(),
-        source: PackageSource::Web(url),
-    }
+    Package::simple(id, id, url.clone(), PackageSource::Web(url))
 }
 
 fn plan(steps: Vec<Step>, checks: Vec<FileCheck>) -> StagedPlan {

@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use iced::alignment::Vertical;
-use iced::widget::{column, container, row, scrollable, text};
+use iced::widget::{checkbox, column, container, row, scrollable, text};
 use iced::{Element, Length, Padding};
 use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::text_input::TextInput;
@@ -11,7 +13,7 @@ use crate::strings;
 use crate::style::{self, Tone};
 
 const TAB_LIST_WIDTH: f32 = 200.0;
-const ROW_HEIGHT: f32 = 74.0;
+const ROW_HEIGHT: f32 = 78.0;
 const ROW_GAP: f32 = 6.0;
 const ROW_PITCH: f32 = ROW_HEIGHT + ROW_GAP;
 const OVERSCAN: usize = 3;
@@ -25,10 +27,12 @@ pub enum Tab {
     Version,
     Plugins,
     Browse,
+    Commons,
+    JsonRegister,
     Settings,
 }
 
-const TABS: [(Tab, &str, &str); 4] = [
+const TABS: [(Tab, &str, &str); 6] = [
     (
         Tab::Version,
         strings::EDIT_TAB_VERSION,
@@ -40,6 +44,12 @@ const TABS: [(Tab, &str, &str); 4] = [
         style::icons::EXTENSION,
     ),
     (Tab::Browse, strings::EDIT_TAB_BROWSE, style::icons::SEARCH),
+    (Tab::Commons, strings::EDIT_TAB_COMMONS, style::icons::SHARE),
+    (
+        Tab::JsonRegister,
+        strings::JSON_DIRECT_REGISTER,
+        style::icons::CODE,
+    ),
     (
         Tab::Settings,
         strings::EDIT_TAB_SETTINGS,
@@ -47,12 +57,33 @@ const TABS: [(Tab, &str, &str); 4] = [
     ),
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+    #[default]
+    Popularity,
+    Trend,
+    Newest,
+    Updated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusFilter {
+    #[default]
+    All,
+    Installed,
+    NotInstalled,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Back,
     TabSelected(Tab),
     SearchChanged(String),
     CategorySelected(Option<String>),
+    TagSelected(Option<String>),
+    SortOrderChanged(SortOrder),
+    StatusFilterChanged(StatusFilter),
+    ToggleHideDeprecated,
     Scrolled(f32, f32),
     ReloadCatalog,
     /// Package id.
@@ -63,7 +94,31 @@ pub enum Message {
     CancelPending,
     /// Plugin id.
     Remove(String),
-    UpdateAll,
+    RequestUpdateAll,
+    ConfirmUpdateAll,
+    CancelUpdateAll,
+    TogglePausePlugin(String, bool),
+    ScanManualPlugins,
+    // Commons tab messages
+    ToggleCommonsSelect(String),
+    SelectAllCommons,
+    DeselectAllCommons,
+    CopySelectedCommons,
+    CopySingleCommons(String),
+    OpenCommonsUrl(String),
+    OpenCommonsGuide,
+    // JSON register tab messages
+    JsonInputChanged(String),
+    LoadSampleJson,
+    RegisterJsonPackage,
+    // Details & carousel
+    ViewPackageDetails(Option<String>),
+    NextScreenshot(usize),
+    PrevScreenshot(usize),
+    ShowLicense(Option<String>),
+    // Config export & import
+    ExportConfig,
+    ImportConfig,
     NameChanged(String),
     GroupChanged(String),
     SaveSettings,
@@ -82,16 +137,29 @@ pub struct Pending {
     pub plan: InstallPlan,
 }
 
+pub type UpdatePreviewItem = (String, String, String, Option<String>);
+
 pub struct State {
     pub id: InstanceId,
     pub kind: Kind,
     pub tab: Tab,
     pub search: String,
     pub category: Option<String>,
+    pub tag: Option<String>,
+    pub sort_order: SortOrder,
+    pub status_filter: StatusFilter,
+    pub hide_deprecated: bool,
     pub scroll_y: f32,
     pub viewport_height: f32,
     pub catalog: Catalog,
     pub pending: Option<Pending>,
+    pub selected_commons: HashSet<String>,
+    pub json_input: String,
+    pub json_status: Option<Result<String, String>>,
+    pub viewing_package_id: Option<String>,
+    pub active_screenshot_idx: usize,
+    pub license_dialog_content: Option<String>,
+    pub update_preview: Option<Vec<UpdatePreviewItem>>,
     pub name: String,
     pub group: String,
 }
@@ -104,10 +172,21 @@ impl State {
             tab: Tab::Plugins,
             search: String::new(),
             category: None,
+            tag: None,
+            sort_order: SortOrder::Popularity,
+            status_filter: StatusFilter::All,
+            hide_deprecated: false,
             scroll_y: 0.0,
             viewport_height: DEFAULT_VIEWPORT,
             catalog: Catalog::Idle,
             pending: None,
+            selected_commons: HashSet::new(),
+            json_input: String::new(),
+            json_status: None,
+            viewing_package_id: None,
+            active_screenshot_idx: 0,
+            license_dialog_content: None,
+            update_preview: None,
             name: instance.config.name.clone(),
             group: instance.config.group.clone().unwrap_or_default(),
         }
@@ -126,6 +205,75 @@ impl State {
 
     pub const fn needs_catalog(&self) -> bool {
         has_catalog(self.kind) && matches!(self.catalog, Catalog::Idle)
+    }
+
+    /// Tries to parse the json_input as a Package or RawEntry and append to catalog.
+    pub fn register_json_package(&mut self) -> Result<String, String> {
+        let text = self.json_input.trim();
+        if text.is_empty() {
+            return Err("JSONが空です".to_owned());
+        }
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(text);
+        let value = parsed.map_err(|e| format!("無効なJSON構文です: {e}"))?;
+
+        // Extract package fields
+        let id = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "id フィールドが必要です".to_owned())?;
+        let name = value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(id)
+            .to_owned();
+        let summary = value
+            .get("overview")
+            .or_else(|| value.get("summary"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let author = value
+            .get("author")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                value
+                    .get("developer")
+                    .and_then(|d| d.get("name"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("Unknown")
+            .to_owned();
+
+        let niconi_commons_id = value
+            .get("niconiCommonsId")
+            .or_else(|| value.get("niconi_commons_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+
+        let page_url = url::Url::parse("https://github.com").unwrap();
+        let mut pkg = Package::simple(
+            id,
+            name,
+            page_url,
+            PackageSource::Web(url::Url::parse("https://github.com").unwrap()),
+        );
+        pkg.summary = summary;
+        pkg.author = author;
+        pkg.niconi_commons_id = niconi_commons_id;
+
+        match &mut self.catalog {
+            Catalog::Ready(packages) => {
+                if let Some(pos) = packages.iter().position(|p| p.id == id) {
+                    packages[pos] = pkg;
+                } else {
+                    packages.insert(0, pkg);
+                }
+            }
+            _ => {
+                self.catalog = Catalog::Ready(vec![pkg]);
+            }
+        }
+        Ok(format!("パッケージ '{}' を登録しました！", id))
     }
 }
 
@@ -195,23 +343,113 @@ pub fn view<'a>(
     let tab_card = m3::card(card::Style::filled(theme), column(tabs).spacing(8))
         .width(Length::Fixed(TAB_LIST_WIDTH));
 
-    let content: Element<'a, Message> = match state.tab {
-        Tab::Version => version_tab(theme, instance),
-        Tab::Plugins => plugins_tab(theme, instance),
-        Tab::Browse => browse_tab(theme, state, instance),
-        Tab::Settings => settings_tab(theme, state),
+    let content: Element<'a, Message> = if let Some(pkg_id) = &state.viewing_package_id {
+        if let Some(package) = state.package(pkg_id) {
+            package_detail_view(theme, state, instance, package)
+        } else {
+            match state.tab {
+                Tab::Version => version_tab(theme, instance),
+                Tab::Plugins => plugins_tab(theme, instance),
+                Tab::Browse => browse_tab(theme, state, instance),
+                Tab::Commons => commons_tab(theme, state, instance),
+                Tab::JsonRegister => json_register_tab(theme, state),
+                Tab::Settings => settings_tab(theme, state),
+            }
+        }
+    } else {
+        match state.tab {
+            Tab::Version => version_tab(theme, instance),
+            Tab::Plugins => plugins_tab(theme, instance),
+            Tab::Browse => browse_tab(theme, state, instance),
+            Tab::Commons => commons_tab(theme, state, instance),
+            Tab::JsonRegister => json_register_tab(theme, state),
+            Tab::Settings => settings_tab(theme, state),
+        }
     };
     let content_card = m3::card(card::Style::filled(theme), content)
         .width(Length::Fill)
         .height(Length::Fill);
 
-    column![
+    let mut body = column![
         header,
         row![tab_card, content_card]
             .spacing(style::GAP)
             .height(Length::Fill)
     ]
-    .spacing(style::GAP)
+    .spacing(style::GAP);
+
+    if let Some(items) = &state.update_preview {
+        body = body.push(update_preview_modal(theme, items));
+    }
+
+    body.into()
+}
+
+fn update_preview_modal<'a>(
+    theme: &'a Theme,
+    items: &'a [UpdatePreviewItem],
+) -> Element<'a, Message> {
+    let rows: Vec<Element<'a, Message>> = items
+        .iter()
+        .map(|(name, cur, next, changelog)| {
+            let mut col = column![
+                row![
+                    style::icon(style::icons::EXTENSION)
+                        .size(16)
+                        .color(theme.primary()),
+                    style::label(theme, name.clone()).size(15),
+                    text(format!("{cur} → {next}"))
+                        .size(13)
+                        .color(theme.tertiary()),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+            ]
+            .spacing(4);
+
+            if let Some(log) = changelog {
+                col = col.push(text(log).size(12).color(theme.on_surface_variant()));
+            }
+
+            m3::card(style::tile_card(theme, false), col)
+                .padding(Padding::from([8.0, 12.0]))
+                .width(Length::Fill)
+                .into()
+        })
+        .collect();
+
+    m3::card(
+        card::Style::filled(theme),
+        column![
+            row![
+                style::icon(style::icons::UPDATE)
+                    .size(20)
+                    .color(theme.primary()),
+                style::label(theme, strings::UPDATE_SUMMARY).size(16),
+                style::label(theme, format!("({}件)", items.len())).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+            scrollable(column(rows).spacing(6)).height(Length::Fixed(200.0)),
+            row![
+                m3::button(
+                    button::Style::filled(theme, Accent::Primary),
+                    style::btn_content(style::icons::CHECK, "今すぐ更新を実行"),
+                )
+                .on_press(Message::ConfirmUpdateAll),
+                m3::button(
+                    button::Style::tonal(theme, Accent::Primary),
+                    style::btn_content(style::icons::CLOSE, strings::CANCEL),
+                )
+                .on_press(Message::CancelUpdateAll),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+        ]
+        .spacing(12)
+        .padding(Padding::from([14.0, 18.0])),
+    )
+    .width(Length::Fill)
     .into()
 }
 
@@ -310,21 +548,45 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
                 button::Style::filled(theme, Accent::Primary),
                 style::btn_content(style::icons::UPDATE, strings::UPDATE_ALL),
             )
-            .on_press(Message::UpdateAll),
+            .on_press(Message::RequestUpdateAll),
         )
         .into()
 }
 
 fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
+    let toolbar = row![
+        m3::button(
+            button::Style::tonal(theme, Accent::Tertiary),
+            style::btn_content(style::icons::SYNC, "手動配置を検出"),
+        )
+        .on_press(Message::ScanManualPlugins),
+        m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::EXPORT, strings::EXPORT_CONFIG),
+        )
+        .on_press(Message::ExportConfig),
+        m3::button(
+            button::Style::tonal(theme, Accent::Secondary),
+            style::btn_content(style::icons::IMPORT, strings::IMPORT_CONFIG),
+        )
+        .on_press(Message::ImportConfig),
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
+
     if instance.config.plugins.is_empty() {
-        return row![
-            style::icon(style::icons::EXTENSION)
-                .size(20)
-                .color(theme.on_surface_variant()),
-            style::label(theme, strings::NO_PLUGINS).size(14),
+        return column![
+            toolbar,
+            row![
+                style::icon(style::icons::EXTENSION)
+                    .size(20)
+                    .color(theme.on_surface_variant()),
+                style::label(theme, strings::NO_PLUGINS).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
         ]
-        .spacing(8)
-        .align_y(Vertical::Center)
+        .spacing(style::GAP)
         .into();
     }
     let rows: Vec<Element<'a, Message>> = instance
@@ -332,14 +594,25 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .plugins
         .iter()
         .map(|record| {
+            let mut badges = row![].spacing(6).align_y(Vertical::Center);
+            if record.paused {
+                badges = badges.push(style::icon_chip::<Message>(
+                    theme,
+                    style::icons::PAUSE,
+                    strings::PAUSED,
+                    Tone::Secondary,
+                ));
+            }
+
             let info = column![
                 row![
                     style::icon(style::icons::EXTENSION)
                         .size(16)
                         .color(theme.primary()),
                     style::label(theme, record.id.clone()).size(16),
+                    badges,
                 ]
-                .spacing(6)
+                .spacing(8)
                 .align_y(Vertical::Center),
                 row![
                     style::icon(style::icons::HISTORY)
@@ -362,6 +635,20 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             .spacing(3)
             .width(Length::Fill);
 
+            let pause_btn = if record.paused {
+                m3::button(
+                    button::Style::tonal(theme, Accent::Secondary),
+                    style::btn_content(style::icons::PLAY, strings::RESUME_UPDATE),
+                )
+                .on_press(Message::TogglePausePlugin(record.id.clone(), false))
+            } else {
+                m3::button(
+                    button::Style::tonal(theme, Accent::Tertiary),
+                    style::btn_content(style::icons::PAUSE, strings::PAUSE_UPDATE),
+                )
+                .on_press(Message::TogglePausePlugin(record.id.clone(), true))
+            };
+
             let remove = m3::button(
                 style::danger_button(theme),
                 style::btn_content(style::icons::DELETE, strings::DELETE),
@@ -370,8 +657,8 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
 
             m3::card(
                 style::tile_card(theme, false),
-                row![info, remove]
-                    .spacing(style::GAP)
+                row![info, pause_btn, remove]
+                    .spacing(8)
                     .align_y(Vertical::Center),
             )
             .padding(Padding::from([10.0, 16.0]))
@@ -379,10 +666,15 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
             .into()
         })
         .collect();
-    scrollable(column(rows).spacing(ROW_GAP))
-        .height(Length::Fill)
-        .style(style::scroll(theme))
-        .into()
+
+    column![
+        toolbar,
+        scrollable(column(rows).spacing(ROW_GAP))
+            .height(Length::Fill)
+            .style(style::scroll(theme))
+    ]
+    .spacing(style::GAP)
+    .into()
 }
 
 fn browse_tab<'a>(
@@ -447,6 +739,9 @@ fn browse_tab<'a>(
     let mut page =
         column![row![search, refresh].spacing(8).align_y(Vertical::Center)].spacing(style::GAP);
 
+    // Filter and sort controls
+    page = page.push(sort_and_filter_bar(theme, state));
+
     let mut categories: Vec<&str> = packages
         .iter()
         .flat_map(|package| package.categories.iter().map(String::as_str))
@@ -456,21 +751,58 @@ fn browse_tab<'a>(
     if !categories.is_empty() {
         page = page.push(category_bar(theme, &categories, state.category.as_deref()));
     }
+
+    let mut tags: Vec<&str> = packages
+        .iter()
+        .flat_map(|package| package.tags.iter().map(String::as_str))
+        .collect();
+    tags.sort_unstable();
+    tags.dedup();
+    if !tags.is_empty() {
+        page = page.push(tag_bar(theme, &tags, state.tag.as_deref()));
+    }
+
     if let Some(pending) = &state.pending {
         page = page.push(pending_card(theme, pending));
     }
 
     let needle = state.search.trim().to_lowercase();
-    let shown: Vec<&Package> = packages
+    let mut shown: Vec<&Package> = packages
         .iter()
+        .filter(|package| !state.hide_deprecated || !package.deprecated)
+        .filter(|package| match state.status_filter {
+            StatusFilter::All => true,
+            StatusFilter::Installed => status_of(instance, package) != Status::NotInstalled,
+            StatusFilter::NotInstalled => status_of(instance, package) == Status::NotInstalled,
+        })
         .filter(|package| {
             state
                 .category
                 .as_ref()
                 .is_none_or(|category| package.categories.contains(category))
         })
+        .filter(|package| {
+            state
+                .tag
+                .as_ref()
+                .is_none_or(|tag| package.tags.contains(tag))
+        })
         .filter(|package| matches_query(package, &needle))
         .collect();
+
+    match state.sort_order {
+        SortOrder::Popularity => {}
+        SortOrder::Trend => {
+            shown.sort_by_key(|a| a.name.to_lowercase());
+        }
+        SortOrder::Newest => {
+            shown.sort_by(|a, b| b.name.cmp(&a.name));
+        }
+        SortOrder::Updated => {
+            shown.sort_by(|a, b| b.latest_version().cmp(&a.latest_version()));
+        }
+    }
+
     if shown.is_empty() {
         return page
             .push(
@@ -486,6 +818,109 @@ fn browse_tab<'a>(
             .into();
     }
     page.push(package_list(theme, &shown, instance, state))
+        .into()
+}
+
+fn sort_and_filter_bar<'a>(theme: &Theme, state: &State) -> Element<'a, Message> {
+    let status_btn = |filter: StatusFilter, label: &'static str| -> Element<'a, Message> {
+        let active = state.status_filter == filter;
+        let color = style::tile_content(theme, active);
+        m3::card(
+            style::tile_card(theme, active),
+            text(label).size(12).color(color),
+        )
+        .interaction(card::Interaction::Press(Action::Direct(
+            Message::StatusFilterChanged(filter),
+        )))
+        .padding(Padding::from([4.0, 10.0]))
+        .into()
+    };
+
+    let sort_btn = |order: SortOrder, label: &'static str| -> Element<'a, Message> {
+        let active = state.sort_order == order;
+        let color = style::tile_content(theme, active);
+        m3::card(
+            style::tile_card(theme, active),
+            text(label).size(12).color(color),
+        )
+        .interaction(card::Interaction::Press(Action::Direct(
+            Message::SortOrderChanged(order),
+        )))
+        .padding(Padding::from([4.0, 10.0]))
+        .into()
+    };
+
+    let status_row = row![
+        style::icon(style::icons::FILTER)
+            .size(14)
+            .color(theme.primary()),
+        status_btn(StatusFilter::All, strings::STATUS_ALL),
+        status_btn(StatusFilter::Installed, strings::STATUS_INSTALLED),
+        status_btn(StatusFilter::NotInstalled, strings::STATUS_NOT_INSTALLED),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center);
+
+    let sort_row = row![
+        style::icon(style::icons::SORT)
+            .size(14)
+            .color(theme.primary()),
+        sort_btn(SortOrder::Popularity, strings::SORT_POPULARITY),
+        sort_btn(SortOrder::Trend, strings::SORT_TREND),
+        sort_btn(SortOrder::Newest, strings::SORT_NEWEST),
+        sort_btn(SortOrder::Updated, strings::SORT_UPDATED),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center);
+
+    let deprecated_toggle = checkbox(state.hide_deprecated)
+        .label("非推奨を隠す")
+        .size(14)
+        .on_toggle(|_| Message::ToggleHideDeprecated);
+
+    row![status_row, sort_row, deprecated_toggle]
+        .spacing(16)
+        .align_y(Vertical::Center)
+        .into()
+}
+
+fn tag_bar<'a>(theme: &Theme, tags: &[&str], current: Option<&str>) -> Element<'a, Message> {
+    let entry = |label: String, value: Option<String>, selected: bool| -> Element<'a, Message> {
+        let color = style::tile_content(theme, selected);
+        m3::card(
+            style::tile_card(theme, selected),
+            row![
+                style::icon(style::icons::TAG).size(12).color(if selected {
+                    theme.on_primary_container()
+                } else {
+                    theme.primary()
+                }),
+                text(label).size(12).color(color),
+            ]
+            .spacing(4)
+            .align_y(Vertical::Center),
+        )
+        .interaction(card::Interaction::Press(Action::Direct(
+            Message::TagSelected(value),
+        )))
+        .padding(Padding::from([3.0, 8.0]))
+        .into()
+    };
+
+    let mut entries = vec![entry("#すべて".to_owned(), None, current.is_none())];
+    entries.extend(tags.iter().map(|tag| {
+        entry(
+            format!("#{tag}"),
+            Some((*tag).to_owned()),
+            current == Some(*tag),
+        )
+    }));
+
+    scrollable(row(entries).spacing(6))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
+        .style(style::scroll(theme))
         .into()
 }
 
@@ -640,20 +1075,50 @@ fn truncated(summary: &str) -> String {
 }
 
 fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<'a, Message> {
-    let info = column![
-        row![
-            style::icon(style::icons::EXTENSION)
-                .size(16)
-                .color(theme.primary()),
-            style::label(theme, package.name.clone()).size(16),
-            style::label(theme, format!("by {}", package.author)).size(12),
-        ]
-        .spacing(6)
-        .align_y(Vertical::Center),
+    let mut header_row = row![
+        style::icon(style::icons::EXTENSION)
+            .size(16)
+            .color(theme.primary()),
+        style::label(theme, package.name.clone()).size(16),
+        style::label(theme, format!("by {}", package.author)).size(12),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center);
+
+    if package.deprecated {
+        header_row = header_row.push(style::icon_chip::<Message>(
+            theme,
+            style::icons::WARNING,
+            "非推奨",
+            Tone::Error,
+        ));
+    }
+
+    if let Some(commons_id) = &package.niconi_commons_id {
+        header_row = header_row.push(style::icon_chip::<Message>(
+            theme,
+            style::icons::SHARE,
+            commons_id,
+            Tone::Tertiary,
+        ));
+    }
+
+    let mut info = column![
+        header_row,
         style::label(theme, truncated(&package.summary)).size(12),
     ]
     .spacing(2)
     .width(Length::Fill);
+
+    if !package.tags.is_empty() {
+        let tag_chips: Vec<Element<'a, Message>> = package
+            .tags
+            .iter()
+            .take(3)
+            .map(|t| text(format!("#{t}")).size(11).color(theme.outline()).into())
+            .collect();
+        info = info.push(row(tag_chips).spacing(6));
+    }
 
     let (status_text, status_icon, status_tone) = match status {
         Status::NotInstalled => (
@@ -702,13 +1167,21 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
         ),
     };
 
+    let details_btn = m3::button(
+        button::Style::tonal(theme, Accent::Secondary),
+        style::btn_content(style::icons::DESCRIPTION, "詳細"),
+    )
+    .on_press(Message::ViewPackageDetails(Some(package.id.clone())));
+
     let body = row![
         info,
+        details_btn,
         style::icon_chip::<Message>(theme, status_icon, status_text, status_tone),
         act
     ]
     .spacing(style::GAP)
     .align_y(Vertical::Center);
+
     container(
         m3::card(style::tile_card(theme, false), body)
             .padding(Padding::from([8.0, 14.0]))
@@ -717,6 +1190,194 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
     )
     .padding(Padding::default().bottom(ROW_GAP))
     .into()
+}
+
+fn commons_tab<'a>(
+    theme: &'a Theme,
+    state: &'a State,
+    instance: &'a Instance,
+) -> Element<'a, Message> {
+    // Collect all installed plugins that have a niconi_commons_id
+    let mut items = Vec::new();
+    for record in &instance.config.plugins {
+        let Some(pkg) = state.package(&record.id) else {
+            continue;
+        };
+        if let Some(commons_id) = &pkg.niconi_commons_id {
+            items.push((record.id.clone(), pkg.name.clone(), commons_id.clone()));
+        }
+    }
+
+    let guide_btn = m3::button(
+        button::Style::tonal(theme, Accent::Primary),
+        style::btn_content(style::icons::LINK, strings::COMMONS_GUIDE),
+    )
+    .on_press(Message::OpenCommonsGuide);
+
+    if items.is_empty() {
+        return column![
+            row![guide_btn].align_y(Vertical::Center),
+            row![
+                style::icon(style::icons::SHARE)
+                    .size(20)
+                    .color(theme.on_surface_variant()),
+                style::label(theme, strings::COMMONS_NO_IDS).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
+        ]
+        .spacing(style::GAP)
+        .into();
+    }
+
+    let select_all_btn = m3::button(
+        button::Style::tonal(theme, Accent::Secondary),
+        style::btn_content(style::icons::CHECK, strings::SELECT_ALL),
+    )
+    .on_press(Message::SelectAllCommons);
+
+    let deselect_all_btn = m3::button(
+        button::Style::tonal(theme, Accent::Secondary),
+        style::btn_content(style::icons::CLOSE, strings::DESELECT_ALL),
+    )
+    .on_press(Message::DeselectAllCommons);
+
+    let copy_all_btn = m3::button(
+        button::Style::filled(theme, Accent::Primary),
+        style::btn_content(style::icons::COPY, strings::COMMONS_COPY_ALL),
+    )
+    .on_press(Message::CopySelectedCommons);
+
+    let toolbar = row![copy_all_btn, select_all_btn, deselect_all_btn, guide_btn]
+        .spacing(8)
+        .align_y(Vertical::Center);
+
+    let rows: Vec<Element<'a, Message>> = items
+        .into_iter()
+        .map(|(plugin_id, name, commons_id)| {
+            let is_selected = state.selected_commons.contains(&commons_id);
+            let id_for_chk = commons_id.clone();
+            let chk = checkbox(is_selected)
+                .on_toggle(move |_| Message::ToggleCommonsSelect(id_for_chk.clone()));
+
+            let info = column![
+                row![
+                    style::icon(style::icons::EXTENSION)
+                        .size(16)
+                        .color(theme.primary()),
+                    style::label(theme, name).size(15),
+                    style::icon_chip::<Message>(
+                        theme,
+                        style::icons::SHARE,
+                        &commons_id,
+                        Tone::Tertiary
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                style::label(theme, plugin_id).size(12),
+            ]
+            .spacing(2)
+            .width(Length::Fill);
+
+            let copy_btn = m3::button(
+                button::Style::tonal(theme, Accent::Primary),
+                style::btn_content(style::icons::COPY, "コピー"),
+            )
+            .on_press(Message::CopySingleCommons(commons_id.clone()));
+
+            let open_btn = m3::button(
+                button::Style::tonal(theme, Accent::Secondary),
+                style::btn_content(style::icons::OPEN_IN_NEW, "開く"),
+            )
+            .on_press(Message::OpenCommonsUrl(commons_id));
+
+            m3::card(
+                style::tile_card(theme, is_selected),
+                row![chk, info, copy_btn, open_btn]
+                    .spacing(8)
+                    .align_y(Vertical::Center),
+            )
+            .padding(Padding::from([10.0, 16.0]))
+            .width(Length::Fill)
+            .into()
+        })
+        .collect();
+
+    column![
+        toolbar,
+        scrollable(column(rows).spacing(ROW_GAP))
+            .height(Length::Fill)
+            .style(style::scroll(theme))
+    ]
+    .spacing(style::GAP)
+    .into()
+}
+
+fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> {
+    let background = card::Style::filled(theme).container_color;
+    let input = TextInput::new("JSONマニフェストを入力...", &state.json_input, theme)
+        .with_label_text(strings::JSON_DIRECT_REGISTER, background)
+        .on_input(Message::JsonInputChanged)
+        .padding(INPUT_PADDING);
+
+    let load_sample = m3::button(
+        button::Style::tonal(theme, Accent::Secondary),
+        style::btn_content(style::icons::CODE, "サンプルJSONを挿入"),
+    )
+    .on_press(Message::LoadSampleJson);
+
+    let submit = m3::button(
+        button::Style::filled(theme, Accent::Primary),
+        style::btn_content(style::icons::CHECK, "マニフェストを登録"),
+    )
+    .on_press(Message::RegisterJsonPackage);
+
+    let mut body = column![
+        row![
+            style::icon(style::icons::CODE).size(20).color(theme.primary()),
+            style::label(theme, strings::JSON_DIRECT_REGISTER).size(18),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center),
+        style::label(
+            theme,
+            "AviUtl2やAPM互換のJSONパッケージ定義を入力して、ローカルカタログへ登録・テスト導入できます。"
+        )
+        .size(13),
+        row![load_sample, submit].spacing(8),
+        input,
+    ]
+    .spacing(style::GAP);
+
+    if let Some(status) = &state.json_status {
+        match status {
+            Ok(msg) => {
+                body = body.push(
+                    row![
+                        style::icon(style::icons::CHECK_CIRCLE)
+                            .size(16)
+                            .color(theme.primary()),
+                        style::label(theme, msg.clone()).size(13),
+                    ]
+                    .spacing(6),
+                );
+            }
+            Err(err) => {
+                body = body.push(
+                    row![
+                        style::icon(style::icons::ERROR)
+                            .size(16)
+                            .color(theme.error()),
+                        style::label(theme, err.clone()).size(13),
+                    ]
+                    .spacing(6),
+                );
+            }
+        }
+    }
+
+    body.into()
 }
 
 fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> {
@@ -759,4 +1420,316 @@ fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> 
     .spacing(style::GAP);
 
     fields.into()
+}
+
+fn package_detail_view<'a>(
+    theme: &'a Theme,
+    state: &'a State,
+    instance: &'a Instance,
+    package: &'a Package,
+) -> Element<'a, Message> {
+    let back_btn = m3::button(
+        button::Style::tonal(theme, Accent::Primary),
+        style::btn_content(style::icons::BACK, "一覧に戻る"),
+    )
+    .on_press(Message::ViewPackageDetails(None));
+
+    let status = status_of(instance, package);
+    let (status_text, status_icon, status_tone) = match status {
+        Status::NotInstalled => (
+            strings::NOT_INSTALLED,
+            style::icons::DOWNLOAD,
+            Tone::Secondary,
+        ),
+        Status::Installed => (
+            strings::INSTALLED,
+            style::icons::CHECK_CIRCLE,
+            Tone::Tertiary,
+        ),
+        Status::UpdateAvailable => (
+            strings::UPDATE_AVAILABLE,
+            style::icons::UPDATE,
+            Tone::Primary,
+        ),
+    };
+
+    let action = match (&package.source, status) {
+        (PackageSource::Web(_), _) => Some((
+            style::icons::OPEN_IN_NEW,
+            strings::OPEN_IN_BROWSER,
+            Message::Open(package.id.clone()),
+        )),
+        (_, Status::NotInstalled) => Some((
+            style::icons::DOWNLOAD,
+            strings::INSTALL,
+            Message::Install(package.id.clone()),
+        )),
+        (_, Status::UpdateAvailable) => Some((
+            style::icons::UPDATE,
+            strings::UPDATE,
+            Message::Install(package.id.clone()),
+        )),
+        (_, Status::Installed) => None,
+    };
+    let act = match action {
+        Some((glyph, label, message)) => m3::button(
+            button::Style::filled(theme, Accent::Primary),
+            style::btn_content(glyph, label),
+        )
+        .on_press(message),
+        None => m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::CHECK, strings::INSTALLED),
+        ),
+    };
+
+    let mut header = row![
+        back_btn,
+        style::label(theme, package.name.clone()).size(22),
+        style::icon_chip::<Message>(theme, status_icon, status_text, status_tone),
+    ]
+    .spacing(12)
+    .align_y(Vertical::Center);
+
+    if package.deprecated {
+        header = header.push(style::icon_chip::<Message>(
+            theme,
+            style::icons::WARNING,
+            strings::DEPRECATED_WARNING,
+            Tone::Error,
+        ));
+    }
+
+    if let Some(commons_id) = &package.niconi_commons_id {
+        header = header.push(style::icon_chip::<Message>(
+            theme,
+            style::icons::SHARE,
+            commons_id,
+            Tone::Tertiary,
+        ));
+    }
+
+    header = header.push(act);
+
+    let author_btn = m3::button(
+        button::Style::tonal(theme, Accent::Secondary),
+        style::dyn_btn_content(style::icons::PERSON, &package.author),
+    )
+    .on_press(Message::SearchChanged(package.author.clone()));
+
+    let meta_bar = row![
+        style::icon(style::icons::PERSON)
+            .size(16)
+            .color(theme.primary()),
+        text("作者:").size(13).color(theme.outline()),
+        author_btn,
+        style::icon(style::icons::LINK)
+            .size(16)
+            .color(theme.primary()),
+        text(format!("ID: {}", package.id))
+            .size(13)
+            .color(theme.outline()),
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
+
+    let mut content = column![header, meta_bar].spacing(12);
+
+    // 6-19: Screenshot carousel
+    if !package.screenshots.is_empty() {
+        let len = package.screenshots.len();
+        let idx = state.active_screenshot_idx.min(len - 1);
+        let current_url = &package.screenshots[idx];
+
+        let prev_btn = m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::BACK, "前へ"),
+        )
+        .on_press(Message::PrevScreenshot(len));
+
+        let next_btn = m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::LAUNCH, "次へ"),
+        )
+        .on_press(Message::NextScreenshot(len));
+
+        let carousel_card = m3::card(
+            card::Style::filled(theme),
+            column![
+                row![
+                    style::icon(style::icons::IMAGE)
+                        .size(20)
+                        .color(theme.primary()),
+                    text(format!("スクリーンショット ({}/{})", idx + 1, len)).size(14),
+                    prev_btn,
+                    next_btn,
+                ]
+                .spacing(12)
+                .align_y(Vertical::Center),
+                m3::card(
+                    style::tile_card(theme, false),
+                    row![
+                        style::icon(style::icons::IMAGE)
+                            .size(32)
+                            .color(theme.primary()),
+                        text(current_url).size(13).color(theme.on_surface_variant()),
+                    ]
+                    .spacing(12)
+                    .padding(Padding::from([16.0, 20.0]))
+                    .align_y(Vertical::Center),
+                )
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(Padding::from([10.0, 14.0])),
+        )
+        .width(Length::Fill);
+
+        content = content.push(carousel_card);
+    }
+
+    // 6-20: Markdown overview
+    let summary_card = m3::card(
+        card::Style::filled(theme),
+        column![
+            row![
+                style::icon(style::icons::DESCRIPTION)
+                    .size(18)
+                    .color(theme.primary()),
+                style::label(theme, "パッケージ概要").size(16),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+            crate::screen::markdown::view(theme, &package.summary),
+        ]
+        .spacing(8)
+        .padding(Padding::from([12.0, 16.0])),
+    )
+    .width(Length::Fill);
+    content = content.push(summary_card);
+
+    // 6-21: Dependencies
+    if !package.dependencies.is_empty() {
+        let dep_chips: Vec<Element<'a, Message>> = package
+            .dependencies
+            .iter()
+            .map(|dep| {
+                m3::button(
+                    button::Style::tonal(theme, Accent::Tertiary),
+                    style::dyn_btn_content(style::icons::EXTENSION, dep.as_str()),
+                )
+                .on_press(Message::ViewPackageDetails(Some(dep.clone())))
+                .into()
+            })
+            .collect();
+
+        let dep_card = m3::card(
+            card::Style::filled(theme),
+            column![
+                row![
+                    style::icon(style::icons::LAYERS)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, "前提・依存パッケージ").size(15),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                row(dep_chips).spacing(8),
+            ]
+            .spacing(8)
+            .padding(Padding::from([10.0, 14.0])),
+        )
+        .width(Length::Fill);
+        content = content.push(dep_card);
+    }
+
+    // 6-23: Licenses
+    if !package.licenses.is_empty() {
+        let lic_chips: Vec<Element<'a, Message>> = package
+            .licenses
+            .iter()
+            .map(|lic| {
+                m3::button(
+                    button::Style::tonal(theme, Accent::Secondary),
+                    style::dyn_btn_content(style::icons::POLICY, lic.as_str()),
+                )
+                .on_press(Message::ShowLicense(Some(lic.clone())))
+                .into()
+            })
+            .collect();
+
+        let lic_card = m3::card(
+            card::Style::filled(theme),
+            column![
+                row![
+                    style::icon(style::icons::POLICY)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, "ライセンス").size(15),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                row(lic_chips).spacing(8),
+            ]
+            .spacing(8)
+            .padding(Padding::from([10.0, 14.0])),
+        )
+        .width(Length::Fill);
+        content = content.push(lic_card);
+    }
+
+    // 6-24: Changelog
+    if let Some(changelog) = &package.changelog {
+        let changelog_card = m3::card(
+            card::Style::filled(theme),
+            column![
+                row![
+                    style::icon(style::icons::HISTORY)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, "更新履歴 (Changelog)").size(15),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                scrollable(text(changelog).size(13).color(theme.on_surface_variant()))
+                    .height(Length::Fixed(150.0)),
+            ]
+            .spacing(8)
+            .padding(Padding::from([10.0, 14.0])),
+        )
+        .width(Length::Fill);
+        content = content.push(changelog_card);
+    }
+
+    // License modal popup if active
+    if let Some(lic_text) = &state.license_dialog_content {
+        let modal = m3::card(
+            card::Style::filled(theme),
+            column![
+                row![
+                    style::icon(style::icons::POLICY)
+                        .size(20)
+                        .color(theme.primary()),
+                    style::label(theme, "ライセンス条項").size(16),
+                    m3::button(
+                        button::Style::tonal(theme, Accent::Primary),
+                        style::btn_content(style::icons::CLOSE, "閉じる"),
+                    )
+                    .on_press(Message::ShowLicense(None)),
+                ]
+                .spacing(12)
+                .align_y(Vertical::Center),
+                scrollable(text(lic_text).size(13)).height(Length::Fixed(200.0)),
+            ]
+            .spacing(10)
+            .padding(Padding::from([14.0, 18.0])),
+        )
+        .width(Length::Fill);
+        content = content.push(modal);
+    }
+
+    scrollable(content)
+        .height(Length::Fill)
+        .style(style::scroll(theme))
+        .into()
 }

@@ -13,6 +13,7 @@ use url::Url;
 
 use launcher_providers::Versions;
 
+use crate::deeplink::{self, DeepLinkAction};
 use crate::ops::{Browsed, Loaded, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
 use crate::screen::{main_screen, new_instance, settings, tasks};
@@ -43,11 +44,15 @@ pub enum Message {
     /// Packages that the update of the instance leaves to the browser window.
     UpdatedAll(InstanceId, Vec<Package>),
     Created(Option<InstanceId>),
+    InstallRecommended(InstanceId),
     Finished,
     Opened(Result<(), String>),
     Browsed(InstanceId, Box<Package>, Result<Option<Browsed>, String>),
     UpdateChecked(bool, Result<Option<String>, String>),
     SelfUpdated(Result<(), String>),
+    ManualPluginsScanned(Result<Vec<String>, String>),
+    ConfigClipboardRead(InstanceId, Option<String>),
+    DeepLinkUrl(String),
     Redraw,
 }
 
@@ -86,16 +91,21 @@ pub struct App {
     settings: settings::Form,
     browse_queue: VecDeque<(InstanceId, Package, Url)>,
     browsing: bool,
+    pending_recommended: bool,
 }
 
 impl App {
     pub fn new(services: Services) -> (Self, Task<Message>) {
         let mode = services.theme_name().map_or(Mode::Dark, style::mode_of);
+        if let Some(code) = services.locale_code() {
+            strings::set_locale(crate::i18n::Locale::from_str(code).unwrap_or_default());
+        }
         let form = new_instance::Form::new(services.host);
         let settings = settings::Form {
             token: services.token().unwrap_or_default().to_owned(),
             font: services.font_name().map(str::to_owned),
             fonts: Vec::new(),
+            locale: services.locale_code().map(str::to_owned),
             update: settings::UpdateState::Checking,
             dns: services
                 .dns_servers()
@@ -118,13 +128,18 @@ impl App {
             settings,
             browse_queue: VecDeque::new(),
             browsing: false,
+            pending_recommended: false,
         };
+        let initial_deeplink = deeplink::url_from_args()
+            .map(|url| Task::done(Message::DeepLinkUrl(url)))
+            .unwrap_or_else(Task::none);
         let load = Task::batch([
             app.reload(),
             Task::perform(crate::ops::installed_fonts(), |result| {
                 Message::FontsLoaded(result.map_err(|error| error.to_string()))
             }),
             app.check_update(false),
+            initial_deeplink,
         ]);
         (app, load)
     }
@@ -203,8 +218,14 @@ impl App {
                 if id.is_some() {
                     self.selected = id;
                 }
-                self.reload()
+                let reload = self.reload();
+                if let Some(id) = id.filter(|_| self.pending_recommended) {
+                    self.pending_recommended = false;
+                    return Task::batch([reload, Task::done(Message::InstallRecommended(id))]);
+                }
+                reload
             }
+            Message::InstallRecommended(id) => self.install_recommended_plugins(id),
             Message::Finished => self.reload(),
             Message::Browsed(id, package, result) => {
                 self.browsing = false;
@@ -246,7 +267,103 @@ impl App {
                 };
                 Task::none()
             }
-            Message::Redraw => Task::none(),
+            Message::ManualPluginsScanned(result) => match result {
+                Ok(names) if names.is_empty() => {
+                    self.notice =
+                        Some("手動配置された未登録プラグインは見つかりませんでした".to_owned());
+                    Task::none()
+                }
+                Ok(names) => {
+                    self.notice = Some(format!(
+                        "{}件の手動配置プラグインを登録しました: {}",
+                        names.len(),
+                        names.join(", ")
+                    ));
+                    self.reload()
+                }
+                Err(err) => {
+                    self.notice = Some(format!("手動検出エラー: {err}"));
+                    Task::none()
+                }
+            },
+            Message::ConfigClipboardRead(id, content) => {
+                let Some(content) = content.filter(|s| !s.trim().is_empty()) else {
+                    self.notice = Some("クリップボードが空です".to_owned());
+                    return Task::none();
+                };
+                let parsed: Result<serde_json::Value, _> = serde_json::from_str(&content);
+                let Ok(value) = parsed else {
+                    self.notice =
+                        Some("クリップボードの内容が有効な構成JSONではありません".to_owned());
+                    return Task::none();
+                };
+                let mut target_ids = Vec::new();
+                if let Some(plugins) = value.get("plugins").and_then(serde_json::Value::as_array) {
+                    for p in plugins {
+                        if let Some(pid) = p.get("id").and_then(serde_json::Value::as_str) {
+                            target_ids.push(pid.to_owned());
+                        }
+                    }
+                }
+                if target_ids.is_empty() {
+                    self.notice =
+                        Some("インポート可能なプラグイン定義が見つかりませんでした".to_owned());
+                    return Task::none();
+                }
+                let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
+                    return Task::none();
+                };
+                let kind = inst.config.kind;
+                let already_installed: std::collections::HashSet<_> =
+                    inst.config.plugins.iter().map(|p| p.id.as_str()).collect();
+                let missing: Vec<String> = target_ids
+                    .into_iter()
+                    .filter(|pid| !already_installed.contains(pid.as_str()))
+                    .collect();
+
+                if missing.is_empty() {
+                    self.notice = Some("構成内の全プラグインは既に導入済みです".to_owned());
+                    return Task::none();
+                }
+
+                self.notice = Some(format!(
+                    "{}件の不足プラグインの導入を開始します",
+                    missing.len()
+                ));
+                let services = self.services.clone();
+                Task::perform(
+                    async move {
+                        let Ok(catalog) = services.clone().catalog(kind, false).await else {
+                            return;
+                        };
+                        for pid in missing {
+                            let Some(pkg) = catalog.iter().find(|p| p.id == pid).cloned() else {
+                                continue;
+                            };
+                            if let Ok((_, plan)) = services.clone().plan(kind, pkg.clone()).await {
+                                let title = format!("{}: {}", strings::TASK_INSTALL, pkg.name);
+                                let handle = services.board.add(title);
+                                services.clone().install_plugin(handle, id, pkg, plan).await;
+                            }
+                        }
+                    },
+                    |()| Message::Finished,
+                )
+            }
+            Message::DeepLinkUrl(url) => {
+                if let Some(action) = deeplink::parse(&url) {
+                    self.handle_deeplink_action(action)
+                } else {
+                    self.notice = Some(format!("不明なURL形式です: {url}"));
+                    Task::none()
+                }
+            }
+            Message::Redraw => {
+                if let Some(url) = deeplink::poll_incoming() {
+                    return Task::done(Message::DeepLinkUrl(url));
+                }
+                Task::none()
+            }
         }
     }
 
@@ -329,11 +446,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if self.services.board.has_active() {
-            iced::time::every(REDRAW_INTERVAL).map(|_| Message::Redraw)
-        } else {
-            Subscription::none()
-        }
+        iced::time::every(REDRAW_INTERVAL).map(|_| Message::Redraw)
     }
 
     fn rail(&self, board: &[TaskInfo]) -> Element<'_, Message> {
@@ -473,6 +586,11 @@ impl App {
                 let Some(instance) = self.selected_instance() else {
                     return Task::none();
                 };
+                if instance.is_running() {
+                    self.notice = Some(strings::INSTANCE_RUNNING_ERROR.to_owned());
+                    self.pending_delete = None;
+                    return Task::none();
+                }
                 let id = instance.config.id;
                 if self.pending_delete != Some(id) {
                     return Task::none();
@@ -519,6 +637,10 @@ impl App {
                 self.form.addon_selected = Some(choice);
                 Task::none()
             }
+            M::ToggleRecommended(checked) => {
+                self.form.install_recommended = checked;
+                Task::none()
+            }
             M::Reload => {
                 self.form.begin_load();
                 self.load_versions()
@@ -529,6 +651,8 @@ impl App {
                 };
                 let title = format!("{}: {}", strings::TASK_CREATE, request.name);
                 let handle = self.services.board.add(title);
+                self.pending_recommended =
+                    self.form.kind == Kind::Aviutl2 && self.form.install_recommended;
                 self.form = new_instance::Form::new(self.services.host);
                 self.screen = Screen::Main;
                 Task::perform(
@@ -549,6 +673,25 @@ impl App {
             return Task::none();
         };
         let id = state.id;
+        let is_running = self
+            .instances
+            .iter()
+            .find(|inst| inst.config.id == id)
+            .is_some_and(launcher_core::Instance::is_running);
+        if is_running
+            && matches!(
+                message,
+                M::Install(_)
+                    | M::ConfirmPending
+                    | M::Remove(_)
+                    | M::RequestUpdateAll
+                    | M::ConfirmUpdateAll
+                    | M::SaveSettings
+            )
+        {
+            self.notice = Some(strings::INSTANCE_RUNNING_ERROR.to_owned());
+            return Task::none();
+        }
         match message {
             M::Back => {
                 self.edit = None;
@@ -614,7 +757,41 @@ impl App {
                     |()| Message::Finished,
                 )
             }
-            M::UpdateAll => {
+            M::RequestUpdateAll => {
+                let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
+                    return Task::none();
+                };
+                let mut preview_items = Vec::new();
+                for record in &inst.config.plugins {
+                    if record.paused {
+                        continue;
+                    }
+                    let Some(pkg) = state.package(&record.id) else {
+                        continue;
+                    };
+                    let Some(latest) = pkg.latest_version() else {
+                        continue;
+                    };
+                    if latest != record.version {
+                        preview_items.push((
+                            pkg.name.clone(),
+                            record.version.clone(),
+                            latest.to_owned(),
+                            pkg.changelog.clone(),
+                        ));
+                    }
+                }
+                if preview_items.is_empty() {
+                    self.notice =
+                        Some("更新可能なプラグインはありません（すべて最新です）".to_owned());
+                    Task::none()
+                } else {
+                    state.update_preview = Some(preview_items);
+                    Task::none()
+                }
+            }
+            M::ConfirmUpdateAll => {
+                state.update_preview = None;
                 let name = self
                     .instances
                     .iter()
@@ -626,6 +803,165 @@ impl App {
                     self.services.clone().update_all(handle, id),
                     move |packages| Message::UpdatedAll(id, packages),
                 )
+            }
+            M::CancelUpdateAll => {
+                state.update_preview = None;
+                Task::none()
+            }
+            M::SortOrderChanged(order) => {
+                state.sort_order = order;
+                Task::none()
+            }
+            M::StatusFilterChanged(filter) => {
+                state.status_filter = filter;
+                Task::none()
+            }
+            M::TagSelected(tag) => {
+                state.tag = tag;
+                Task::none()
+            }
+            M::ToggleHideDeprecated => {
+                state.hide_deprecated = !state.hide_deprecated;
+                Task::none()
+            }
+            M::TogglePausePlugin(plugin_id, paused) => Task::perform(
+                self.services
+                    .clone()
+                    .set_plugin_paused(id, plugin_id, paused),
+                |result| Message::Updated(result.map_err(|error| error.to_string())),
+            ),
+            M::ScanManualPlugins => {
+                let packages = match &state.catalog {
+                    Catalog::Ready(pkgs) => pkgs.clone(),
+                    _ => Vec::new(),
+                };
+                let services = self.services.clone();
+                Task::perform(
+                    services.scan_and_register_manual_plugins(id, packages),
+                    |result| Message::ManualPluginsScanned(result.map_err(|e| e.to_string())),
+                )
+            }
+            M::ToggleCommonsSelect(commons_id) => {
+                if state.selected_commons.contains(&commons_id) {
+                    state.selected_commons.remove(&commons_id);
+                } else {
+                    state.selected_commons.insert(commons_id);
+                }
+                Task::none()
+            }
+            M::SelectAllCommons => {
+                if let Some(inst) = self.instances.iter().find(|i| i.config.id == id) {
+                    for record in &inst.config.plugins {
+                        let Some(pkg) = state.package(&record.id) else {
+                            continue;
+                        };
+                        if let Some(commons_id) = &pkg.niconi_commons_id {
+                            state.selected_commons.insert(commons_id.clone());
+                        }
+                    }
+                }
+                Task::none()
+            }
+            M::DeselectAllCommons => {
+                state.selected_commons.clear();
+                Task::none()
+            }
+            M::CopySelectedCommons => {
+                let text = state
+                    .selected_commons
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.notice = Some(format!(
+                    "{} ({}件)",
+                    strings::COMMONS_COPIED,
+                    state.selected_commons.len()
+                ));
+                iced::clipboard::write(text)
+            }
+            M::CopySingleCommons(commons_id) => {
+                self.notice = Some(format!("{}: {commons_id}", strings::COMMONS_COPIED));
+                iced::clipboard::write(commons_id)
+            }
+            M::OpenCommonsUrl(commons_id) => {
+                if let Ok(url) =
+                    url::Url::parse(&format!("https://commons.nicovideo.jp/works/{commons_id}"))
+                {
+                    let _ = launcher_core::open_url(&url, launcher_core::Host::current());
+                }
+                Task::none()
+            }
+            M::OpenCommonsGuide => {
+                if let Ok(url) = url::Url::parse(strings::COMMONS_GUIDE_URL) {
+                    let _ = launcher_core::open_url(&url, launcher_core::Host::current());
+                }
+                Task::none()
+            }
+            M::JsonInputChanged(input) => {
+                state.json_input = input;
+                Task::none()
+            }
+            M::LoadSampleJson => {
+                state.json_input = r#"{
+  "id": "example.myplugin",
+  "name": "My Custom Plugin",
+  "overview": "自作のAviUtl2用プラグインです。",
+  "developer": {
+    "name": "Author"
+  },
+  "niconiCommonsId": "nc123456",
+  "tags": ["フィルター", "自作"]
+}"#
+                .to_owned();
+                Task::none()
+            }
+            M::RegisterJsonPackage => {
+                state.json_status = Some(state.register_json_package());
+                Task::none()
+            }
+            M::ViewPackageDetails(pkg_id) => {
+                state.viewing_package_id = pkg_id;
+                state.active_screenshot_idx = 0;
+                Task::none()
+            }
+            M::NextScreenshot(len) => {
+                if len > 0 {
+                    state.active_screenshot_idx = (state.active_screenshot_idx + 1) % len;
+                }
+                Task::none()
+            }
+            M::PrevScreenshot(len) => {
+                if len > 0 {
+                    state.active_screenshot_idx = (state.active_screenshot_idx + len - 1) % len;
+                }
+                Task::none()
+            }
+            M::ShowLicense(content) => {
+                state.license_dialog_content = content;
+                Task::none()
+            }
+            M::ExportConfig => {
+                let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
+                    return Task::none();
+                };
+                let export_data = serde_json::json!({
+                    "name": inst.config.name,
+                    "kind": inst.config.kind,
+                    "app_version": inst.config.app_version,
+                    "plugins": inst.config.plugins.iter().map(|p| serde_json::json!({
+                        "id": p.id,
+                        "version": p.version,
+                        "paused": p.paused,
+                    })).collect::<Vec<_>>()
+                });
+                let text = serde_json::to_string_pretty(&export_data).unwrap_or_default();
+                self.notice =
+                    Some("プラグイン構成をクリップボードにエクスポートしました".to_owned());
+                iced::clipboard::write(text)
+            }
+            M::ImportConfig => {
+                iced::clipboard::read().map(move |text| Message::ConfigClipboardRead(id, text))
             }
             M::NameChanged(name) => {
                 state.name = name;
@@ -691,6 +1027,18 @@ impl App {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
             }
+            M::LocaleSelected(locale) => {
+                self.settings.locale = locale.clone();
+                if let Some(code) = &locale {
+                    strings::set_locale(crate::i18n::Locale::from_str(code).unwrap_or_default());
+                } else {
+                    strings::set_locale(crate::i18n::Locale::Ja);
+                }
+                self.notice = Some("言語設定を保存しました。再起動後に全画面へ完全反映されます。".to_owned());
+                Task::perform(self.services.clone().save_locale(locale), |result| {
+                    Message::Saved(result.map_err(|error| error.to_string()))
+                })
+            }
             M::CheckUpdate => {
                 self.settings.update = settings::UpdateState::Checking;
                 self.notice = None;
@@ -740,6 +1088,29 @@ impl App {
                 Task::none()
             }
         }
+    }
+
+    fn install_recommended_plugins(&self, id: InstanceId) -> Task<Message> {
+        let services = self.services.clone();
+        Task::perform(
+            async move {
+                let Ok(packages) = services.clone().catalog(Kind::Aviutl2, false).await else {
+                    return;
+                };
+                let targets = ["rigaya.x264guiEx", "Mr-Ojii.L-SMASH-Works"];
+                for target_id in targets {
+                    let Some(pkg) = packages.iter().find(|p| p.id == target_id).cloned() else {
+                        continue;
+                    };
+                    if let Ok((_, plan)) = services.clone().plan(Kind::Aviutl2, pkg.clone()).await {
+                        let title = format!("{}: {}", strings::TASK_INSTALL, pkg.name);
+                        let handle = services.board.add(title);
+                        services.clone().install_plugin(handle, id, pkg, plan).await;
+                    }
+                }
+            },
+            |()| Message::Finished,
+        )
     }
 
     fn start_install(&self, id: InstanceId, package: Package, plan: InstallPlan) -> Task<Message> {
@@ -872,6 +1243,58 @@ impl App {
         self.instances
             .iter()
             .find(|instance| instance.config.id == id)
+    }
+
+    fn handle_deeplink_action(&mut self, action: DeepLinkAction) -> Task<Message> {
+        match action {
+            DeepLinkAction::ShowUpdates => {
+                let select = self.select_screen(Screen::Settings);
+                let check = self.check_update(true);
+                Task::batch([select, check])
+            }
+            DeepLinkAction::ViewPackage(pkg_id) => {
+                let id = self
+                    .selected
+                    .or_else(|| self.instances.first().map(|i| i.config.id));
+                let Some(id) = id else {
+                    self.notice = Some("インスタンスが存在しません".to_owned());
+                    return Task::none();
+                };
+                self.selected = Some(id);
+                let Some(instance) = self.selected_instance() else {
+                    return Task::none();
+                };
+                let mut state = edit::State::new(instance);
+                state.tab = Tab::Browse;
+                state.viewing_package_id = Some(pkg_id);
+                state.catalog = Catalog::Loading;
+                self.edit = Some(state);
+                self.screen = Screen::Edit;
+                self.load_catalog(false)
+            }
+            DeepLinkAction::InstallPackage(pkg_id) => {
+                let id = self
+                    .selected
+                    .or_else(|| self.instances.first().map(|i| i.config.id));
+                let Some(id) = id else {
+                    self.notice = Some("インスタンスが存在しません".to_owned());
+                    return Task::none();
+                };
+                self.selected = Some(id);
+                let Some(instance) = self.selected_instance() else {
+                    return Task::none();
+                };
+                let mut state = edit::State::new(instance);
+                state.tab = Tab::Browse;
+                state.viewing_package_id = Some(pkg_id.clone());
+                state.catalog = Catalog::Loading;
+                self.edit = Some(state);
+                self.screen = Screen::Edit;
+                let load = self.load_catalog(false);
+                let trigger_install = Task::done(Message::Edit(edit::Message::Install(pkg_id)));
+                Task::batch([load, trigger_install])
+            }
+        }
     }
 }
 

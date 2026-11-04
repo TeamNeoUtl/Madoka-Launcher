@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{Error, Host, Instance, InstanceConfig, InstanceId, NewInstance};
+use crate::{Error, Host, Instance, InstanceConfig, InstanceId, NewInstance, PluginRecord};
 
 const INSTANCES_DIR: &str = "instances";
 const TEMP_SUFFIX: &str = ".tmp";
@@ -135,6 +135,52 @@ impl InstanceStore {
         let mut instance = self.load(id)?;
         instance.config.app_version = app_version;
         instance.config.addon_version = addon_version;
+        self.save(&instance)?;
+        Ok(instance)
+    }
+
+    /// Sets the paused state of a plugin.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NotFound` when the plugin is not installed, and the errors of `load` and `save`.
+    pub fn set_plugin_paused(
+        &self,
+        id: InstanceId,
+        plugin_id: &str,
+        paused: bool,
+    ) -> Result<Instance, Error> {
+        let mut instance = self.load(id)?;
+        let Some(record) = instance
+            .config
+            .plugins
+            .iter_mut()
+            .find(|record| record.id == plugin_id)
+        else {
+            return Err(Error::NotFound(id));
+        };
+        record.paused = paused;
+        self.save(&instance)?;
+        Ok(instance)
+    }
+
+    /// Adds or updates a plugin record for the instance.
+    pub fn add_or_update_plugin(
+        &self,
+        id: InstanceId,
+        record: PluginRecord,
+    ) -> Result<Instance, Error> {
+        let mut instance = self.load(id)?;
+        if let Some(existing) = instance
+            .config
+            .plugins
+            .iter_mut()
+            .find(|p| p.id == record.id)
+        {
+            *existing = record;
+        } else {
+            instance.config.plugins.push(record);
+        }
         self.save(&instance)?;
         Ok(instance)
     }

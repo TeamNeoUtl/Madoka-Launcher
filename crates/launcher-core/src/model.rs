@@ -61,6 +61,8 @@ pub struct PluginRecord {
     pub version: String,
     pub source: String,
     pub files: Vec<String>,
+    #[serde(default)]
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +163,11 @@ impl Instance {
     #[must_use]
     pub fn app_dir(&self) -> PathBuf {
         self.dir.join(Self::APP_DIR)
+    }
+
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        crate::runner::is_instance_running(self)
     }
 }
 

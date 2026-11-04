@@ -246,6 +246,7 @@ impl<F: Fetcher> Installer<F> {
                 .into_iter()
                 .map(|file| format!("{plugin_dir}/{file}"))
                 .collect(),
+            paused: false,
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
@@ -347,6 +348,7 @@ impl<F: Fetcher> Installer<F> {
             version: staging.version.to_owned(),
             source: package.source.label(),
             files: relative_files(&app_dir, &created.files)?,
+            paused: false,
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;

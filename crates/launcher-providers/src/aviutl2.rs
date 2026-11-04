@@ -46,6 +46,20 @@ struct RawEntry {
     installer: RawInstaller,
     #[serde(default)]
     version: Vec<RawVersion>,
+    #[serde(default, rename = "niconiCommonsId")]
+    niconi_commons_id: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    deprecation: Option<Value>,
+    #[serde(default)]
+    dependencies: Vec<String>,
+    #[serde(default)]
+    licenses: Vec<String>,
+    #[serde(default)]
+    changelog: Option<Value>,
+    #[serde(default)]
+    images: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +220,26 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
                 || PackageSource::Web(page_url.clone()),
                 PackageSource::Recipe,
             );
+            let deprecated = entry.deprecation.is_some();
+            let screenshots = entry
+                .images
+                .as_ref()
+                .and_then(|img| img.get("detailImages"))
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let changelog = entry
+                .changelog
+                .as_ref()
+                .and_then(|c| c.get("markdownSource").or_else(|| c.get("text")))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+
             Package {
                 categories: vec![entry.r#type],
                 id: entry.id,
@@ -215,6 +249,13 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
                 updated: None,
                 page_url,
                 source,
+                niconi_commons_id: entry.niconi_commons_id,
+                tags: entry.tags,
+                deprecated,
+                dependencies: entry.dependencies,
+                licenses: entry.licenses,
+                changelog,
+                screenshots,
             }
         })
         .collect();

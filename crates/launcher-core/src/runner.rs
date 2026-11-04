@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -226,4 +227,45 @@ fn read_tail(path: &Path) -> String {
     let bytes = fs::read(path).unwrap_or_default();
     let start = bytes.len().saturating_sub(LOG_TAIL_BYTES);
     String::from_utf8_lossy(&bytes[start..]).trim().to_owned()
+}
+
+/// Checks if an executable belonging to this instance is currently running.
+#[must_use]
+pub fn is_instance_running(instance: &Instance) -> bool {
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+                .with_cwd(sysinfo::UpdateKind::OnlyIfNotSet),
+        ),
+    );
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+            .with_cwd(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+
+    let instance_dir = &instance.dir;
+    let stems = instance.config.kind.executable_stems();
+
+    for process in system.processes().values() {
+        if process
+            .exe()
+            .is_some_and(|exe| exe.starts_with(instance_dir))
+        {
+            return true;
+        }
+        let proc_name = process.name().to_string_lossy();
+        let stem = proc_name.strip_suffix(".exe").unwrap_or(&proc_name);
+        if stems.iter().any(|s| s.eq_ignore_ascii_case(stem))
+            && process
+                .cwd()
+                .is_some_and(|cwd| cwd.starts_with(instance_dir))
+        {
+            return true;
+        }
+    }
+    false
 }

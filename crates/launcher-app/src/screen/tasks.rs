@@ -135,13 +135,32 @@ fn task_card<M: Clone + 'static>(task: &TaskInfo, theme: &Theme) -> Element<'sta
             total,
             transfer,
         } => {
-            body = match transfer {
-                Some(progress) => body.push(transfer_bar(theme, *progress)),
-                None => body.push(bar(
-                    theme,
-                    Some(f32::from(*done) / f32::from(*total).max(1.0)),
-                )),
-            };
+            let overall_fraction = f32::from(*done) / f32::from(*total).max(1.0);
+            let overall_bar = column![
+                row![
+                    style::icon(style::icons::SYNC)
+                        .size(13)
+                        .color(theme.primary()),
+                    style::label(
+                        theme,
+                        format!(
+                            "全体進捗: {done} / {total} ({}%)",
+                            (*done * 100 / total.max(&1))
+                        )
+                    )
+                    .size(12),
+                ]
+                .spacing(4)
+                .align_y(Vertical::Center),
+                bar(theme, Some(overall_fraction)),
+            ]
+            .spacing(4);
+
+            body = body.push(overall_bar);
+
+            if let Some(progress) = transfer {
+                body = body.push(transfer_bar(theme, *progress));
+            }
         }
         TaskState::Failed { reason } => {
             body = body.push(

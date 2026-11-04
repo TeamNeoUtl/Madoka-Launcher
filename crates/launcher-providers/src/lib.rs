@@ -1,3 +1,4 @@
+pub mod au2pkg;
 mod aviutl;
 mod aviutl2;
 mod cache;

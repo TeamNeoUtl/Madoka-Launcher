@@ -128,6 +128,7 @@ pub struct Services {
     root: PathBuf,
     theme: Option<String>,
     font: Option<String>,
+    locale: Option<String>,
     dns_servers: Vec<IpAddr>,
     dns: Dns,
     browsed: Arc<ReqwestFetcher>,
@@ -147,6 +148,7 @@ impl Services {
         let config_has_token = token.is_some();
         let theme = config.theme;
         let font = config.font;
+        let locale = config.locale;
         let dns_servers = config.dns;
         let dns = Dns::new(&dns_servers);
         let http = ReqwestHttp::with_dns(&user_agent, token.clone(), dns.clone())
@@ -164,6 +166,7 @@ impl Services {
             board: TaskBoard::default(),
             theme,
             font,
+            locale,
             dns_servers,
             dns,
             browsed,
@@ -235,6 +238,22 @@ impl Services {
         blocking(move || {
             let mut config = Config::load(&root)?;
             config.theme = Some(name);
+            config.save(&root)
+        })
+        .await
+    }
+
+    /// Selected locale code stored in `config.toml`.
+    pub fn locale_code(&self) -> Option<&str> {
+        self.locale.as_deref()
+    }
+
+    /// Writes the locale code to `config.toml`.
+    pub async fn save_locale(self, locale: Option<String>) -> Result<(), OpError> {
+        let root = self.root.clone();
+        blocking(move || {
+            let mut config = Config::load(&root)?;
+            config.locale = locale;
             config.save(&root)
         })
         .await
@@ -564,6 +583,106 @@ impl Services {
         blocking(move || store.update(id, name, group).map(|_| ())).await
     }
 
+    pub async fn set_plugin_paused(
+        self,
+        id: InstanceId,
+        plugin_id: String,
+        paused: bool,
+    ) -> Result<(), OpError> {
+        let _guard = self.locks.lock(id).await;
+        let store = self.store.clone();
+        blocking(move || store.set_plugin_paused(id, &plugin_id, paused).map(|_| ())).await
+    }
+
+    /// Scans the instance directories (Plugin, Script) for manually added files,
+    /// hashes them with XXH3-128, and matches them against the catalog.
+    /// Matched plugins are automatically registered into the instance configuration.
+    pub async fn scan_and_register_manual_plugins(
+        self,
+        id: InstanceId,
+        packages: Vec<Package>,
+    ) -> Result<Vec<String>, OpError> {
+        let _guard = self.locks.lock(id).await;
+        let store = self.store.clone();
+        let instance = blocking({
+            let store = store.clone();
+            move || store.load(id)
+        })
+        .await?;
+
+        let dir = instance.dir.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            let mut detected_names = Vec::new();
+            let check_dirs = [
+                dir.join("Plugin"),
+                dir.join("Plugins"),
+                dir.join("Script"),
+                dir.join("Scripts"),
+            ];
+
+            // Scan files
+            let mut file_hashes = Vec::new();
+            for sub in &check_dirs {
+                if !sub.exists() {
+                    continue;
+                }
+                if let Ok(entries) = std::fs::read_dir(sub) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if !path.is_file() {
+                            continue;
+                        }
+                        if let (Ok(hash), Ok(rel)) = (
+                            launcher_core::Hash::of_file(launcher_core::HashAlgo::Xxh3_128, &path),
+                            path.strip_prefix(&dir),
+                        ) {
+                            file_hashes.push((rel.to_string_lossy().replace('\\', "/"), hash.hex));
+                        }
+                    }
+                }
+            }
+
+            // Match against catalog checks
+            for pkg in &packages {
+                if instance.config.plugins.iter().any(|p| p.id == pkg.id) {
+                    continue;
+                }
+                let mut matched = false;
+                if let PackageSource::Recipe(recipe) = &pkg.source {
+                    for check in &recipe.checks {
+                        for (rel_path, hex) in &file_hashes {
+                            if rel_path.ends_with(&check.location.rel) || &check.hash.hex == hex {
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if matched {
+                            break;
+                        }
+                    }
+                }
+                if matched {
+                    let version = pkg.latest_version().unwrap_or("-").to_owned();
+                    let record = PluginRecord {
+                        id: pkg.id.clone(),
+                        version,
+                        source: pkg.source.label(),
+                        files: Vec::new(),
+                        paused: false,
+                    };
+                    let _ = store.add_or_update_plugin(id, record);
+                    detected_names.push(pkg.name.clone());
+                }
+            }
+
+            detected_names
+        })
+        .await
+        .map_err(|e| OpError::Worker(e.to_string()))?;
+
+        Ok(found)
+    }
+
     pub async fn install_plugin(
         self,
         handle: TaskHandle,
@@ -855,6 +974,7 @@ fn newer_than(
 fn outdated_packages(plugins: &[PluginRecord], packages: &[Package]) -> Vec<Package> {
     plugins
         .iter()
+        .filter(|record| !record.paused)
         .filter_map(|record| {
             let package = packages.iter().find(|package| package.id == record.id)?;
             let latest = package.latest_version()?;

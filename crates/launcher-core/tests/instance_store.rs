@@ -19,6 +19,7 @@ fn plugin(files: &[&str]) -> PluginRecord {
         version: "1.0".to_owned(),
         source: "github:owner/repo".to_owned(),
         files: files.iter().map(|f| (*f).to_owned()).collect(),
+        paused: false,
     }
 }
 

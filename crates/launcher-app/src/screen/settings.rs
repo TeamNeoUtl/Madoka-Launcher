@@ -20,6 +20,7 @@ pub enum Message {
     SaveDns,
     ThemeToggled,
     FontSelected(Option<String>),
+    LocaleSelected(Option<String>),
     OpenDataDirectory,
     CheckUpdate,
     ApplyUpdate,
@@ -40,6 +41,7 @@ pub struct Form {
     pub dns: String,
     pub font: Option<String>,
     pub fonts: Vec<String>,
+    pub locale: Option<String>,
     pub update: UpdateState,
 }
 
@@ -147,13 +149,10 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
                 style::icon(style::icons::LANGUAGE)
                     .size(18)
                     .color(theme.primary()),
-                style::label(
-                    theme,
-                    format!("{}: {}", strings::LANGUAGE, strings::LANGUAGE_VALUE)
-                )
-                .size(14),
+                style::label(theme, strings::LANGUAGE).size(14),
+                locale_selector(form, theme),
             ]
-            .spacing(8)
+            .spacing(12)
             .align_y(Vertical::Center),
         ]
         .spacing(style::PADDING),
@@ -304,4 +303,34 @@ fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Mess
         line = line.push(action);
     }
     line.into()
+}
+
+fn locale_selector<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
+    use crate::i18n::Locale;
+    let current_code = form.locale.as_deref().unwrap_or("ja");
+    let current_locale = Locale::from_str(current_code).unwrap_or(Locale::Ja);
+
+    let chips: Vec<Element<'a, Message>> = Locale::ALL
+        .iter()
+        .map(|&locale| {
+            let selected = locale == current_locale;
+            let color = style::tile_content(theme, selected);
+            let code = if locale == Locale::Ja {
+                None
+            } else {
+                Some(locale.as_str().to_owned())
+            };
+            m3::card(
+                style::tile_card(theme, selected),
+                iced::widget::text(locale.label()).size(12).color(color),
+            )
+            .interaction(card::Interaction::Press(Action::Direct(
+                Message::LocaleSelected(code),
+            )))
+            .padding(Padding::from([4.0, 10.0]))
+            .into()
+        })
+        .collect();
+
+    row(chips).spacing(6).align_y(Vertical::Center).into()
 }

@@ -1,4 +1,35 @@
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use launcher_core::{Edition, Host, Kind};
+
+use crate::i18n::{self, Key, Locale};
+
+static CURRENT_LOCALE: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_locale(locale: Locale) {
+    let val = match locale {
+        Locale::Ja => 0,
+        Locale::En => 1,
+        Locale::Ko => 2,
+        Locale::ZhCn => 3,
+        Locale::ZhTw => 4,
+    };
+    CURRENT_LOCALE.store(val, Ordering::Relaxed);
+}
+
+pub fn current_locale() -> Locale {
+    match CURRENT_LOCALE.load(Ordering::Relaxed) {
+        1 => Locale::En,
+        2 => Locale::Ko,
+        3 => Locale::ZhCn,
+        4 => Locale::ZhTw,
+        _ => Locale::Ja,
+    }
+}
+
+pub fn tr(key: Key) -> &'static str {
+    i18n::t(current_locale(), key)
+}
 
 pub const APP_TITLE: &str = "Madoka Launcher";
 
@@ -65,6 +96,33 @@ pub const UNVERIFIED_WARNING: &str = "ハッシュ検証なし。導入を続行
 pub const CONTINUE: &str = "続行";
 pub const FILES: &str = "ファイル数";
 
+pub const INSTANCE_RUNNING_ERROR: &str =
+    "本体が起動中のため操作できません。ソフトを終了してから再試行してください。";
+pub const RECOMMENDED_PLUGINS: &str = "推奨プラグインも同時に導入する (x264guiEx, L-SMASH-Works)";
+pub const EDIT_TAB_COMMONS: &str = "ニコニ・コモンズ";
+pub const COMMONS_COPY_ALL: &str = "選択したコモンズIDをまとめてコピー";
+pub const COMMONS_COPIED: &str = "クリップボードにコピーしました";
+pub const COMMONS_GUIDE: &str = "親作品（コンテンツツリー）登録ガイド";
+pub const COMMONS_GUIDE_URL: &str = "https://qa.nicovideo.jp/faq/show/847?site_domain=default";
+pub const COMMONS_NO_IDS: &str = "コモンズIDが設定されたプラグインはありません";
+pub const SELECT_ALL: &str = "すべて選択";
+pub const DESELECT_ALL: &str = "選択解除";
+pub const JSON_DIRECT_REGISTER: &str = "JSONマニフェスト登録";
+pub const PAUSED: &str = "更新保留中";
+pub const PAUSE_UPDATE: &str = "更新を保留";
+pub const RESUME_UPDATE: &str = "保留を解除";
+pub const EXPORT_CONFIG: &str = "パッケージ構成をエクスポート";
+pub const IMPORT_CONFIG: &str = "パッケージ構成をインポート";
+pub const UPDATE_SUMMARY: &str = "更新内容のプレビュー";
+pub const SORT_POPULARITY: &str = "人気順";
+pub const SORT_TREND: &str = "トレンド順";
+pub const SORT_NEWEST: &str = "新着順";
+pub const SORT_UPDATED: &str = "更新順";
+pub const STATUS_ALL: &str = "すべて";
+pub const STATUS_INSTALLED: &str = "導入済み";
+pub const STATUS_NOT_INSTALLED: &str = "未導入";
+pub const DEPRECATED_WARNING: &str = "このパッケージは非推奨です。";
+
 pub const DATA_DIRECTORY: &str = "データディレクトリ";
 pub const GITHUB_TOKEN: &str = "GitHub トークン";
 pub const GITHUB_TOKEN_HINT: &str = "空欄: 未認証 (60 req/h)";
@@ -83,6 +141,7 @@ pub const LAUNCHER_UP_TO_DATE: &str = "最新";
 pub const LAUNCHER_UPDATING: &str = "更新中";
 pub const LAUNCHER_UPDATED: &str = "更新済み。再起動後に反映";
 pub const LANGUAGE: &str = "言語";
+#[allow(dead_code)]
 pub const LANGUAGE_VALUE: &str = "日本語";
 pub const COPY_SUFFIX: &str = "のコピー";
 

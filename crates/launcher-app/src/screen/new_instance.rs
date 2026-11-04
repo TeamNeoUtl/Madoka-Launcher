@@ -1,7 +1,7 @@
 use std::fmt;
 
 use iced::alignment::Vertical;
-use iced::widget::{column, row, scrollable};
+use iced::widget::{checkbox, column, row, scrollable};
 use iced::{Element, Length, Padding};
 use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::button_group::connected;
@@ -35,6 +35,7 @@ pub enum Message {
     EditionSelected(Edition),
     VersionSelected(VersionChoice),
     AddonSelected(VersionChoice),
+    ToggleRecommended(bool),
     Reload,
     Submit,
     Cancel,
@@ -100,6 +101,7 @@ pub struct Form {
     pub choices: Vec<VersionChoice>,
     pub addon_selected: Option<VersionChoice>,
     pub addon_choices: Vec<VersionChoice>,
+    pub install_recommended: bool,
     pub load: Load,
     versions: Vec<AppVersion>,
     addon_versions: Vec<AppVersion>,
@@ -120,6 +122,7 @@ impl Form {
             choices: Vec::new(),
             addon_selected: None,
             addon_choices: Vec::new(),
+            install_recommended: true,
             load: Load::Idle,
             versions: Vec::new(),
             addon_versions: Vec::new(),
@@ -299,6 +302,13 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
                 Message::AddonSelected,
             ),
         ));
+    }
+    if form.kind == Kind::Aviutl2 {
+        fields = fields.push(
+            checkbox(form.install_recommended)
+                .label(strings::RECOMMENDED_PLUGINS)
+                .on_toggle(Message::ToggleRecommended),
+        );
     }
 
     let submit = m3::button(

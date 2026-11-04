@@ -125,19 +125,15 @@ fn artifact(name: &str, bytes: &[u8]) -> Artifact {
 }
 
 fn package(repo: &str) -> Package {
-    Package {
-        id: format!("github:o/{repo}"),
-        name: repo.to_owned(),
-        summary: String::new(),
-        author: String::new(),
-        categories: Vec::new(),
-        updated: None,
-        page_url: Url::parse(&format!("https://github.com/o/{repo}")).unwrap(),
-        source: PackageSource::GithubRepo {
+    Package::simple(
+        format!("github:o/{repo}"),
+        repo,
+        Url::parse(&format!("https://github.com/o/{repo}")).unwrap(),
+        PackageSource::GithubRepo {
             owner: "o".to_owned(),
             repo: repo.to_owned(),
         },
-    }
+    )
 }
 
 fn all_files(dir: &Path) -> Vec<PathBuf> {
@@ -633,16 +629,7 @@ async fn install_app_without_zip_modes_leaves_files_non_executable() {
 
 fn web_package(page: &str) -> Package {
     let url = Url::parse(page).unwrap();
-    Package {
-        id: url.to_string(),
-        name: "web".to_owned(),
-        summary: String::new(),
-        author: String::new(),
-        categories: Vec::new(),
-        updated: None,
-        page_url: url.clone(),
-        source: PackageSource::Web(url),
-    }
+    Package::simple(url.to_string(), "web", url.clone(), PackageSource::Web(url))
 }
 
 fn write_zip(f: &Fixture, name: &str, entries: &[(&str, &[u8])]) -> PathBuf {

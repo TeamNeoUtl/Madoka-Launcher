@@ -20,6 +20,9 @@ pub struct Config {
     /// Family name of the UI font. `None` selects the iced default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font: Option<String>,
+    /// Selected locale code (e.g. "ja", "en", "ko", "zh-CN", "zh-TW").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
     /// DNS servers of the launcher requests. Empty selects the built-in default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dns: Vec<IpAddr>,

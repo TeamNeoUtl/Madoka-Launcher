@@ -90,11 +90,23 @@ impl Fetcher for ReqwestFetcher {
             message,
         };
         let started = Instant::now();
-        info!(%url, dest = %dest.display(), "fetch start");
-        let mut response = self.client.get(url.clone()).send().await.map_err(|e| {
-            warn!(%url, error = %describe(&e), "fetch request failed");
-            fail(describe(&e))
-        })?;
+        // Normalize Google Drive URLs to direct download
+        let target_url = if let Some(id) = crate::au2pkg::extract_google_drive_id(url) {
+            let direct = crate::au2pkg::google_drive_direct_url(&id);
+            Url::parse(&direct).unwrap_or_else(|_| url.clone())
+        } else {
+            url.clone()
+        };
+        info!(%target_url, dest = %dest.display(), "fetch start");
+        let mut response = self
+            .client
+            .get(target_url.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(%target_url, error = %describe(&e), "fetch request failed");
+                fail(describe(&e))
+            })?;
         let status = response.status();
         info!(
             %url,

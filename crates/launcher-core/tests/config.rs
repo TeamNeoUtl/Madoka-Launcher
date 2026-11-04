@@ -31,6 +31,7 @@ fn save_then_load_returns_the_same_value() {
         github_token: Some("abc".to_owned()),
         theme: Some("Tokyo Night".to_owned()),
         font: Some("Noto Sans".to_owned()),
+        locale: Some("ja".to_owned()),
         dns: vec!["94.140.14.14".parse().unwrap()],
     };
     config.save(dir.path()).unwrap();

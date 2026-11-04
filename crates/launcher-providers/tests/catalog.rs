@@ -422,16 +422,7 @@ fn recipe_package(origin: Origin, hash: bool) -> Package {
         steps: vec![Step::Extract],
         checks: Vec::new(),
     };
-    Package {
-        id: "d/p".to_owned(),
-        name: "p".to_owned(),
-        summary: String::new(),
-        author: String::new(),
-        categories: Vec::new(),
-        updated: None,
-        page_url: url,
-        source: PackageSource::Recipe(recipe),
-    }
+    Package::simple("d/p", "p", url, PackageSource::Recipe(recipe))
 }
 
 fn release_json(assets: &[&str]) -> Vec<u8> {

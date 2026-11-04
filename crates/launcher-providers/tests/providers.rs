@@ -142,20 +142,15 @@ fn index_entry(types: &str, name: &str, url: &str, extra: &str) -> String {
 }
 
 fn github_package(owner: &str, repo: &str) -> Package {
-    let page_url = Url::parse(&format!("https://github.com/{owner}/{repo}")).unwrap();
-    Package {
-        id: format!("github:{owner}/{repo}"),
-        name: "p".to_owned(),
-        summary: String::new(),
-        author: String::new(),
-        categories: Vec::new(),
-        updated: None,
-        page_url,
-        source: PackageSource::GithubRepo {
+    Package::simple(
+        format!("github:{owner}/{repo}"),
+        "p",
+        Url::parse(&format!("https://github.com/{owner}/{repo}")).unwrap(),
+        PackageSource::GithubRepo {
             owner: owner.to_owned(),
             repo: repo.to_owned(),
         },
-    }
+    )
 }
 
 fn latest_url(repo: &str) -> String {

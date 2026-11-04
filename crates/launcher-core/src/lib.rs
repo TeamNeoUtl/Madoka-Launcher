@@ -28,6 +28,8 @@ pub use installer::Installer;
 pub use lock::InstanceLocks;
 pub use model::{Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord};
 pub use paths::default_root;
-pub use runner::{Launched, PROBE_WINDOW, find_executable, open_directory, open_url};
+pub use runner::{
+    Launched, PROBE_WINDOW, find_executable, is_instance_running, open_directory, open_url,
+};
 pub use store::{InstanceStore, ListFailure, Listing};
 pub use task::{TaskBoard, TaskHandle, TaskId, TaskInfo, TaskSink, TaskState};

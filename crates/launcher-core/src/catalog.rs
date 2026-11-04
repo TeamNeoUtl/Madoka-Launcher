@@ -245,9 +245,49 @@ pub struct Package {
     pub updated: Option<String>,
     pub page_url: Url,
     pub source: PackageSource,
+    #[serde(default)]
+    pub niconi_commons_id: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub licenses: Vec<String>,
+    #[serde(default)]
+    pub changelog: Option<String>,
+    #[serde(default)]
+    pub screenshots: Vec<String>,
 }
 
 impl Package {
+    #[must_use]
+    pub fn simple(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        page_url: Url,
+        source: PackageSource,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            summary: String::new(),
+            author: String::new(),
+            categories: Vec::new(),
+            updated: None,
+            page_url,
+            source,
+            niconi_commons_id: None,
+            tags: Vec::new(),
+            deprecated: false,
+            dependencies: Vec::new(),
+            licenses: Vec::new(),
+            changelog: None,
+            screenshots: Vec::new(),
+        }
+    }
+
     /// Version string that `PluginRecord::version` holds after the installation.
     /// `None` when the catalog does not tell it.
     #[must_use]

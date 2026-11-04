@@ -108,6 +108,13 @@ pub fn parse_ymm4_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
             updated: Some(entry.date),
             page_url,
             source,
+            niconi_commons_id: None,
+            tags: Vec::new(),
+            deprecated: false,
+            dependencies: Vec::new(),
+            licenses: Vec::new(),
+            changelog: None,
+            screenshots: Vec::new(),
         });
     }
     if packages.is_empty() {

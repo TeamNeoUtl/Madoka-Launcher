@@ -6,13 +6,17 @@ use url::Url;
 use crate::Error;
 
 /// Hosts that `https` downloads may use.
-pub const ALLOWED_HOSTS: [&str; 6] = [
+pub const ALLOWED_HOSTS: [&str; 10] = [
     "github.com",
     "api.github.com",
     "codeberg.org",
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
     "spring-fragrance.mints.ne.jp",
+    "drive.google.com",
+    "docs.google.com",
+    "rigaya3458.github.io",
+    "booth.pm",
 ];
 
 /// Hosts that `http` downloads may use. The installer requires a hash for such a download.
