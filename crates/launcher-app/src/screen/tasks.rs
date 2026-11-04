@@ -14,7 +14,14 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
     let list: Element<'static, M> = if tasks.is_empty() {
         widget::card(
             card::Style::filled(theme),
-            style::label(theme, strings::NO_TASKS),
+            row![
+                style::icon(style::icons::CHECK_CIRCLE)
+                    .size(22)
+                    .color(theme.tertiary()),
+                style::label(theme, strings::NO_TASKS).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
         )
         .width(Length::Fill)
         .into()
@@ -24,7 +31,15 @@ pub fn view<M: Clone + 'static>(tasks: &[TaskInfo], theme: &Theme) -> Element<'s
             .into()
     };
     column![
-        style::label(theme, strings::TAB_TASKS).size(24),
+        row![
+            style::icon(style::icons::TASKS)
+                .size(26)
+                .color(theme.primary()),
+            style::label(theme, strings::TAB_TASKS).size(24),
+            style::label(theme, format!("({})", tasks.len())).size(16),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center),
         scrollable(list)
             .height(Length::Fill)
             .style(style::scroll(theme)),
@@ -41,6 +56,15 @@ pub fn state_label(state: &TaskState) -> String {
         }
         TaskState::Succeeded => strings::SUCCEEDED.to_owned(),
         TaskState::Failed { .. } => strings::FAILED.to_owned(),
+    }
+}
+
+pub fn state_icon(state: &TaskState) -> &'static str {
+    match state {
+        TaskState::Queued => style::icons::HOURGLASS,
+        TaskState::Running { .. } => style::icons::SYNC,
+        TaskState::Succeeded => style::icons::CHECK_CIRCLE,
+        TaskState::Failed { .. } => style::icons::ERROR,
     }
 }
 
@@ -83,13 +107,27 @@ const fn tone(state: &TaskState) -> Tone {
 
 fn task_card<M: Clone + 'static>(task: &TaskInfo, theme: &Theme) -> Element<'static, M> {
     let head = row![
-        style::label(theme, task.title.clone())
-            .size(16)
-            .width(Length::Fill),
-        style::chip::<M>(theme, state_label(&task.state), tone(&task.state)),
+        row![
+            style::icon(state_icon(&task.state))
+                .size(18)
+                .color(theme.primary()),
+            style::label(theme, task.title.clone())
+                .size(16)
+                .width(Length::Fill),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .width(Length::Fill),
+        style::icon_chip::<M>(
+            theme,
+            state_icon(&task.state),
+            state_label(&task.state),
+            tone(&task.state)
+        ),
     ]
     .spacing(style::GAP)
     .align_y(Vertical::Center);
+
     let mut body = column![head].spacing(8);
     match &task.state {
         TaskState::Running {
@@ -107,14 +145,22 @@ fn task_card<M: Clone + 'static>(task: &TaskInfo, theme: &Theme) -> Element<'sta
         }
         TaskState::Failed { reason } => {
             body = body.push(
-                text(reason.trim_end().to_owned())
-                    .size(12)
-                    .color(theme.error()),
+                row![
+                    style::icon(style::icons::ERROR)
+                        .size(14)
+                        .color(theme.error()),
+                    text(reason.trim_end().to_owned())
+                        .size(12)
+                        .color(theme.error()),
+                ]
+                .spacing(6)
+                .align_y(Vertical::Center),
             );
         }
         TaskState::Queued | TaskState::Succeeded => {}
     }
     widget::card(card::Style::filled(theme), body)
+        .padding(14.0)
         .width(Length::Fill)
         .into()
 }
@@ -138,7 +184,14 @@ fn transfer_bar<M: 'static>(theme: &Theme, progress: Progress) -> Element<'stati
         .map(|total| fraction(progress.done, total));
     column![
         bar(theme, fraction),
-        style::label(theme, transfer_label(progress)).size(12)
+        row![
+            style::icon(style::icons::DOWNLOAD)
+                .size(13)
+                .color(theme.on_surface_variant()),
+            style::label(theme, transfer_label(progress)).size(12),
+        ]
+        .spacing(4)
+        .align_y(Vertical::Center)
     ]
     .spacing(4)
     .into()

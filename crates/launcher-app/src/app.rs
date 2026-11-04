@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use iced::widget::{column, container, row};
 use iced::{Element, Length, Subscription, Task};
-use iced_m3::theme::{Mode, Theme};
+use iced_m3::theme::{ColorScheme, Mode, Theme};
 use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
 use iced_m3::widget::{self as m3, Badge, navrail};
@@ -312,7 +312,14 @@ impl App {
         column![
             m3::card(
                 card::Style::filled(&self.theme),
-                style::label(&self.theme, notice.to_owned()).size(12),
+                row![
+                    style::icon(style::icons::INFO)
+                        .size(16)
+                        .color(self.theme.on_surface()),
+                    style::label(&self.theme, notice.to_owned()).size(12),
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center),
             )
             .width(Length::Fill),
             content
@@ -423,6 +430,18 @@ impl App {
                 self.reload()
             }
             M::Launch => {
+                let Some(instance) = self.selected_instance() else {
+                    return Task::none();
+                };
+                let id = instance.config.id;
+                let title = format!("{}: {}", strings::TASK_LAUNCH, instance.config.name);
+                let handle = self.services.board.add(title);
+                Task::perform(self.services.clone().launch(handle, id), |()| {
+                    Message::Redraw
+                })
+            }
+            M::LaunchInstance(id) => {
+                self.selected = Some(id);
                 let Some(instance) = self.selected_instance() else {
                     return Task::none();
                 };

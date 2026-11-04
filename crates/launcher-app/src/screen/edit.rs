@@ -1,7 +1,7 @@
 use iced::alignment::Vertical;
 use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Padding};
-use iced_m3::theme::{Accent, Theme};
+use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{InstallPlan, Instance, InstanceId, Kind, Package, PackageSource};
@@ -11,13 +11,13 @@ use crate::strings;
 use crate::style::{self, Tone};
 
 const TAB_LIST_WIDTH: f32 = 200.0;
-const ROW_HEIGHT: f32 = 72.0;
-const ROW_GAP: f32 = 4.0;
+const ROW_HEIGHT: f32 = 74.0;
+const ROW_GAP: f32 = 6.0;
 const ROW_PITCH: f32 = ROW_HEIGHT + ROW_GAP;
 const OVERSCAN: usize = 3;
 const DEFAULT_VIEWPORT: f32 = 600.0;
 const SUMMARY_CHARS: usize = 90;
-const ENTRY_PADDING: [f32; 2] = [8.0, 16.0];
+const ENTRY_PADDING: [f32; 2] = [10.0, 16.0];
 const INPUT_PADDING: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,11 +28,23 @@ pub enum Tab {
     Settings,
 }
 
-const TABS: [(Tab, &str); 4] = [
-    (Tab::Version, strings::EDIT_TAB_VERSION),
-    (Tab::Plugins, strings::EDIT_TAB_PLUGINS),
-    (Tab::Browse, strings::EDIT_TAB_BROWSE),
-    (Tab::Settings, strings::EDIT_TAB_SETTINGS),
+const TABS: [(Tab, &str, &str); 4] = [
+    (
+        Tab::Version,
+        strings::EDIT_TAB_VERSION,
+        style::icons::HISTORY,
+    ),
+    (
+        Tab::Plugins,
+        strings::EDIT_TAB_PLUGINS,
+        style::icons::EXTENSION,
+    ),
+    (Tab::Browse, strings::EDIT_TAB_BROWSE, style::icons::SEARCH),
+    (
+        Tab::Settings,
+        strings::EDIT_TAB_SETTINGS,
+        style::icons::TUNE,
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -152,20 +164,33 @@ pub fn view<'a>(
     theme: &'a Theme,
 ) -> Element<'a, Message> {
     let header = row![
-        style::label(theme, instance.config.name.clone())
-            .size(24)
-            .width(Length::Fill),
         m3::button(
             button::Style::tonal(theme, Accent::Primary),
-            button::Content::Label(strings::BACK.into()),
+            style::btn_content(style::icons::BACK, strings::BACK),
         )
         .on_press(Message::Back),
+        row![
+            style::icon(style::kind_icon(instance.config.kind))
+                .size(26)
+                .color(theme.primary()),
+            style::label(theme, instance.config.name.clone()).size(24),
+            style::icon_chip::<Message>(
+                theme,
+                style::kind_icon(instance.config.kind),
+                strings::kind_label(instance.config.kind),
+                style::kind_tone(instance.config.kind),
+            ),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .width(Length::Fill),
     ]
+    .spacing(12)
     .align_y(Vertical::Center);
 
     let tabs: Vec<Element<'a, Message>> = TABS
         .iter()
-        .map(|(tab, label)| tab_entry(theme, *tab, label, state.tab == *tab))
+        .map(|(tab, label, glyph)| tab_entry(theme, *tab, label, glyph, state.tab == *tab))
         .collect();
     let tab_card = m3::card(card::Style::filled(theme), column(tabs).spacing(8))
         .width(Length::Fixed(TAB_LIST_WIDTH));
@@ -194,11 +219,23 @@ fn tab_entry<'a>(
     theme: &Theme,
     tab: Tab,
     label: &'static str,
+    glyph: &'static str,
     selected: bool,
 ) -> Element<'a, Message> {
+    let color = style::tile_content(theme, selected);
+    let icon_color = if selected {
+        theme.on_primary_container()
+    } else {
+        theme.primary()
+    };
     m3::card(
         style::tile_card(theme, selected),
-        text(label).color(style::tile_content(theme, selected)),
+        row![
+            style::icon(glyph).size(18).color(icon_color),
+            text(label).size(14).color(color),
+        ]
+        .spacing(10)
+        .align_y(Vertical::Center),
     )
     .interaction(card::Interaction::Press(Action::Direct(
         Message::TabSelected(tab),
@@ -208,39 +245,62 @@ fn tab_entry<'a>(
     .into()
 }
 
-fn field<'a>(theme: &Theme, label: &str, value: &str) -> Element<'a, Message> {
-    style::label(theme, format!("{label}: {value}"))
-        .size(14)
-        .into()
+fn field_with_icon<'a>(
+    theme: &Theme,
+    glyph: &'static str,
+    label: &str,
+    value: &str,
+) -> Element<'a, Message> {
+    row![
+        style::icon(glyph).size(16).color(theme.primary()),
+        style::label(theme, format!("{label}: {value}")).size(14),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center)
+    .into()
 }
 
 fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
     let config = &instance.config;
-    let mut lines = column![style::chip::<Message>(
+    let mut lines = column![style::icon_chip::<Message>(
         theme,
+        style::kind_icon(config.kind),
         strings::kind_label(config.kind),
         style::kind_tone(config.kind)
     ),]
-    .spacing(8);
+    .spacing(10);
     if config.kind == Kind::Ymm4 {
-        lines = lines.push(field(
+        lines = lines.push(field_with_icon(
             theme,
+            style::icons::LAYERS,
             strings::EDITION,
             strings::edition_label(config.edition),
         ));
     }
-    lines = lines.push(field(theme, strings::VERSION, &config.app_version));
+    lines = lines.push(field_with_icon(
+        theme,
+        style::icons::HISTORY,
+        strings::VERSION,
+        &config.app_version,
+    ));
     if let Some(addon) = &config.addon_version {
-        lines = lines.push(field(theme, strings::ADDON_VERSION, addon));
+        lines = lines.push(field_with_icon(
+            theme,
+            style::icons::EXTENSION,
+            strings::ADDON_VERSION,
+            addon,
+        ));
     }
     lines = lines
-        .push(field(
+        .push(field_with_icon(
             theme,
+            style::icons::GROUP,
             strings::GROUP,
             config.group.as_deref().unwrap_or(strings::UNGROUPED),
         ))
-        .push(field(
+        .push(field_with_icon(
             theme,
+            style::icons::EXTENSION,
             strings::PLUGINS,
             &config.plugins.len().to_string(),
         ));
@@ -248,7 +308,7 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .push(
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                button::Content::Label(strings::UPDATE_ALL.into()),
+                style::btn_content(style::icons::UPDATE, strings::UPDATE_ALL),
             )
             .on_press(Message::UpdateAll),
         )
@@ -257,7 +317,15 @@ fn version_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
 
 fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
     if instance.config.plugins.is_empty() {
-        return style::label(theme, strings::NO_PLUGINS).into();
+        return row![
+            style::icon(style::icons::EXTENSION)
+                .size(20)
+                .color(theme.on_surface_variant()),
+            style::label(theme, strings::NO_PLUGINS).size(14),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into();
     }
     let rows: Vec<Element<'a, Message>> = instance
         .config
@@ -265,31 +333,48 @@ fn plugins_tab<'a>(theme: &Theme, instance: &Instance) -> Element<'a, Message> {
         .iter()
         .map(|record| {
             let info = column![
-                style::label(theme, record.id.clone()).size(16),
-                style::label(
-                    theme,
-                    format!(
-                        "{} | {}: {}",
-                        record.version,
-                        strings::FILES,
-                        record.files.len()
+                row![
+                    style::icon(style::icons::EXTENSION)
+                        .size(16)
+                        .color(theme.primary()),
+                    style::label(theme, record.id.clone()).size(16),
+                ]
+                .spacing(6)
+                .align_y(Vertical::Center),
+                row![
+                    style::icon(style::icons::HISTORY)
+                        .size(12)
+                        .color(theme.on_surface_variant()),
+                    style::label(
+                        theme,
+                        format!(
+                            "{} | {}: {}",
+                            record.version,
+                            strings::FILES,
+                            record.files.len()
+                        )
                     )
-                )
-                .size(12),
+                    .size(12),
+                ]
+                .spacing(4)
+                .align_y(Vertical::Center),
             ]
-            .spacing(2)
+            .spacing(3)
             .width(Length::Fill);
+
             let remove = m3::button(
                 style::danger_button(theme),
-                button::Content::Label(strings::DELETE.into()),
+                style::btn_content(style::icons::DELETE, strings::DELETE),
             )
             .on_press(Message::Remove(record.id.clone()));
+
             m3::card(
                 style::tile_card(theme, false),
                 row![info, remove]
                     .spacing(style::GAP)
                     .align_y(Vertical::Center),
             )
+            .padding(Padding::from([10.0, 16.0]))
             .width(Length::Fill)
             .into()
         })
@@ -306,16 +391,41 @@ fn browse_tab<'a>(
     instance: &'a Instance,
 ) -> Element<'a, Message> {
     if !has_catalog(state.kind) {
-        return style::label(theme, strings::NO_CATALOG).into();
+        return row![
+            style::icon(style::icons::INFO)
+                .size(20)
+                .color(theme.on_surface_variant()),
+            style::label(theme, strings::NO_CATALOG).size(14),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into();
     }
     let packages = match &state.catalog {
-        Catalog::Idle | Catalog::Loading => return style::label(theme, strings::LOADING).into(),
+        Catalog::Idle | Catalog::Loading => {
+            return row![
+                style::icon(style::icons::SYNC)
+                    .size(20)
+                    .color(theme.primary()),
+                style::label(theme, strings::LOADING).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
+            .into();
+        }
         Catalog::Failed(reason) => {
             return column![
-                style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+                row![
+                    style::icon(style::icons::ERROR)
+                        .size(16)
+                        .color(theme.error()),
+                    style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+                ]
+                .spacing(6)
+                .align_y(Vertical::Center),
                 m3::button(
                     button::Style::tonal(theme, Accent::Primary),
-                    button::Content::Label(strings::RELOAD.into()),
+                    style::btn_content(style::icons::REFRESH, strings::RELOAD),
                 )
                 .on_press(Message::ReloadCatalog),
             ]
@@ -331,7 +441,7 @@ fn browse_tab<'a>(
         .padding(INPUT_PADDING);
     let refresh = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        button::Content::Label(strings::REFRESH.into()),
+        style::btn_content(style::icons::REFRESH, strings::REFRESH),
     )
     .on_press(Message::ReloadCatalog);
     let mut page =
@@ -362,7 +472,18 @@ fn browse_tab<'a>(
         .filter(|package| matches_query(package, &needle))
         .collect();
     if shown.is_empty() {
-        return page.push(style::label(theme, strings::NO_MATCH)).into();
+        return page
+            .push(
+                row![
+                    style::icon(style::icons::SEARCH)
+                        .size(16)
+                        .color(theme.on_surface_variant()),
+                    style::label(theme, strings::NO_MATCH).size(14),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+            )
+            .into();
     }
     page.push(package_list(theme, &shown, instance, state))
         .into()
@@ -374,11 +495,25 @@ fn category_bar<'a>(
     current: Option<&str>,
 ) -> Element<'a, Message> {
     let entry = |label: String, value: Option<String>, selected: bool| -> Element<'a, Message> {
+        let glyph = if value.is_none() {
+            style::icons::CATEGORY
+        } else {
+            style::icons::EXTENSION
+        };
+        let color = style::tile_content(theme, selected);
+        let icon_color = if selected {
+            theme.on_primary_container()
+        } else {
+            theme.primary()
+        };
         m3::card(
             style::tile_card(theme, selected),
-            text(label)
-                .size(13)
-                .color(style::tile_content(theme, selected)),
+            row![
+                style::icon(glyph).size(14).color(icon_color),
+                text(label).size(13).color(color),
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center),
         )
         .interaction(card::Interaction::Press(Action::Direct(
             Message::CategorySelected(value),
@@ -410,6 +545,9 @@ fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
     m3::card(
         card::Style::filled(theme),
         row![
+            style::icon(style::icons::WARNING)
+                .size(20)
+                .color(theme.error()),
             style::label(
                 theme,
                 format!("{}: {}", pending.package.name, strings::UNVERIFIED_WARNING)
@@ -418,12 +556,12 @@ fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
             .width(Length::Fill),
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                button::Content::Label(strings::CONTINUE.into()),
+                style::btn_content(style::icons::CHECK, strings::CONTINUE),
             )
             .on_press(Message::ConfirmPending),
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                button::Content::Label(strings::CANCEL.into()),
+                style::btn_content(style::icons::CLOSE, strings::CANCEL),
             )
             .on_press(Message::CancelPending),
         ]
@@ -503,46 +641,77 @@ fn truncated(summary: &str) -> String {
 
 fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<'a, Message> {
     let info = column![
-        style::label(theme, package.name.clone()).size(16),
-        style::label(theme, package.author.clone()).size(12),
+        row![
+            style::icon(style::icons::EXTENSION)
+                .size(16)
+                .color(theme.primary()),
+            style::label(theme, package.name.clone()).size(16),
+            style::label(theme, format!("by {}", package.author)).size(12),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center),
         style::label(theme, truncated(&package.summary)).size(12),
     ]
     .spacing(2)
     .width(Length::Fill);
 
-    let (status_text, status_tone) = match status {
-        Status::NotInstalled => (strings::NOT_INSTALLED, Tone::Secondary),
-        Status::Installed => (strings::INSTALLED, Tone::Tertiary),
-        Status::UpdateAvailable => (strings::UPDATE_AVAILABLE, Tone::Primary),
+    let (status_text, status_icon, status_tone) = match status {
+        Status::NotInstalled => (
+            strings::NOT_INSTALLED,
+            style::icons::DOWNLOAD,
+            Tone::Secondary,
+        ),
+        Status::Installed => (
+            strings::INSTALLED,
+            style::icons::CHECK_CIRCLE,
+            Tone::Tertiary,
+        ),
+        Status::UpdateAvailable => (
+            strings::UPDATE_AVAILABLE,
+            style::icons::UPDATE,
+            Tone::Primary,
+        ),
     };
     let action = match (&package.source, status) {
-        (PackageSource::Web(_), _) => {
-            Some((strings::OPEN_IN_BROWSER, Message::Open(package.id.clone())))
-        }
-        (_, Status::NotInstalled) => Some((strings::INSTALL, Message::Install(package.id.clone()))),
-        (_, Status::UpdateAvailable) => {
-            Some((strings::UPDATE, Message::Install(package.id.clone())))
-        }
+        (PackageSource::Web(_), _) => Some((
+            style::icons::OPEN_IN_NEW,
+            strings::OPEN_IN_BROWSER,
+            Message::Open(package.id.clone()),
+        )),
+        (_, Status::NotInstalled) => Some((
+            style::icons::DOWNLOAD,
+            strings::INSTALL,
+            Message::Install(package.id.clone()),
+        )),
+        (_, Status::UpdateAvailable) => Some((
+            style::icons::UPDATE,
+            strings::UPDATE,
+            Message::Install(package.id.clone()),
+        )),
         (_, Status::Installed) => None,
     };
-    let label = action
-        .as_ref()
-        .map_or(strings::INSTALLED, |(label, _)| *label);
-    let act = m3::button(
-        button::Style::filled(theme, Accent::Primary),
-        button::Content::Label(label.into()),
-    )
-    .on_press_maybe(action.map(|(_, message)| message));
+    let act = match action {
+        Some((glyph, label, message)) => m3::button(
+            button::Style::filled(theme, Accent::Primary),
+            style::btn_content(glyph, label),
+        )
+        .on_press(message),
+        None => m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::CHECK, strings::INSTALLED),
+        ),
+    };
 
     let body = row![
         info,
-        style::chip::<Message>(theme, status_text, status_tone),
+        style::icon_chip::<Message>(theme, status_icon, status_text, status_tone),
         act
     ]
     .spacing(style::GAP)
     .align_y(Vertical::Center);
     container(
         m3::card(style::tile_card(theme, false), body)
+            .padding(Padding::from([8.0, 14.0]))
             .width(Length::Fill)
             .height(Length::Fixed(ROW_HEIGHT)),
     )
@@ -562,8 +731,32 @@ fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> 
         .padding(INPUT_PADDING);
     let save = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        button::Content::Label(strings::SAVE.into()),
+        style::btn_content(style::icons::SAVE, strings::SAVE),
     )
     .on_press_maybe(state.can_save().then_some(Message::SaveSettings));
-    column![name, group, save].spacing(style::GAP).into()
+
+    let fields = column![
+        row![
+            style::icon(style::icons::EDIT)
+                .size(16)
+                .color(theme.primary()),
+            style::label(theme, strings::NAME).size(14),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center),
+        name,
+        row![
+            style::icon(style::icons::GROUP)
+                .size(16)
+                .color(theme.primary()),
+            style::label(theme, strings::GROUP).size(14),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center),
+        group,
+        save
+    ]
+    .spacing(style::GAP);
+
+    fields.into()
 }

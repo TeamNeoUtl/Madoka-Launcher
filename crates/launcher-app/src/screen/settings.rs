@@ -1,7 +1,7 @@
 use iced::alignment::Vertical;
 use iced::widget::{column, row, scrollable};
 use iced::{Element, Length, Padding};
-use iced_m3::theme::{Accent, Mode, Theme};
+use iced_m3::theme::{Accent, ColorScheme, Mode, Theme};
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card, switch};
 
@@ -10,7 +10,7 @@ use crate::style;
 
 const INPUT_PADDING: f32 = 12.0;
 const ENTRY_PADDING: [f32; 2] = [8.0, 16.0];
-const FONT_LIST_HEIGHT: f32 = 220.0;
+const FONT_LIST_HEIGHT: f32 = 180.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -55,51 +55,126 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
         .padding(INPUT_PADDING);
     let save_dns = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        button::Content::Label(strings::SAVE.into()),
+        style::btn_content(style::icons::SAVE, strings::SAVE),
     )
     .on_press(Message::SaveDns);
-    let save = m3::button(
+    let save_token = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        button::Content::Label(strings::SAVE.into()),
+        style::btn_content(style::icons::SAVE, strings::SAVE),
     )
     .on_press(Message::SaveToken);
     let open = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        button::Content::Label(strings::OPEN_FOLDER.into()),
+        style::btn_content(style::icons::FOLDER_OPEN, strings::OPEN_FOLDER),
     )
     .on_press(Message::OpenDataDirectory);
 
+    let mode_glyph = if theme.mode == Mode::Dark {
+        style::icons::DARK_MODE
+    } else {
+        style::icons::LIGHT_MODE
+    };
     let dark_mode = row![
-        style::label(theme, strings::DARK_MODE).width(Length::Fill),
+        row![
+            style::icon(mode_glyph).size(20).color(theme.primary()),
+            style::label(theme, strings::DARK_MODE).size(15),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .width(Length::Fill),
         switch(theme, theme.mode == Mode::Dark).on_toggle(Message::ThemeToggled),
     ]
     .spacing(8)
     .align_y(Vertical::Center);
 
-    let body = column![
-        dark_mode,
-        font_picker(form, theme),
-        version_row(&form.update, theme),
-        row![
-            style::label(theme, format!("{}: {data_dir}", strings::DATA_DIRECTORY))
-                .size(14)
+    // Appearance Section
+    let appearance_section = m3::card(
+        card::Style::filled(theme),
+        column![dark_mode, font_picker(form, theme),].spacing(style::PADDING),
+    )
+    .padding(style::PADDING)
+    .width(Length::Fill);
+
+    // System & Storage Section
+    let system_section = m3::card(
+        card::Style::filled(theme),
+        column![
+            version_row(&form.update, theme),
+            row![
+                row![
+                    style::icon(style::icons::FOLDER_OPEN)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, format!("{}: {data_dir}", strings::DATA_DIRECTORY))
+                        .size(14),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center)
                 .width(Length::Fill),
-            open
+                open
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+        ]
+        .spacing(style::PADDING),
+    )
+    .padding(style::PADDING)
+    .width(Length::Fill);
+
+    // Network & API Section
+    let network_section = m3::card(
+        card::Style::filled(theme),
+        column![
+            row![
+                style::icon(style::icons::KEY)
+                    .size(18)
+                    .color(theme.primary()),
+                token,
+                save_token
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+            row![
+                style::icon(style::icons::NETWORK)
+                    .size(18)
+                    .color(theme.primary()),
+                dns,
+                save_dns
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+            row![
+                style::icon(style::icons::LANGUAGE)
+                    .size(18)
+                    .color(theme.primary()),
+                style::label(
+                    theme,
+                    format!("{}: {}", strings::LANGUAGE, strings::LANGUAGE_VALUE)
+                )
+                .size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+        ]
+        .spacing(style::PADDING),
+    )
+    .padding(style::PADDING)
+    .width(Length::Fill);
+
+    let body = column![appearance_section, system_section, network_section,].spacing(style::GAP);
+
+    column![
+        row![
+            style::icon(style::icons::SETTINGS)
+                .size(26)
+                .color(theme.primary()),
+            style::label(theme, strings::TAB_SETTINGS).size(24),
         ]
         .spacing(8)
         .align_y(Vertical::Center),
-        row![token, save].spacing(8).align_y(Vertical::Center),
-        row![dns, save_dns].spacing(8).align_y(Vertical::Center),
-        style::label(
-            theme,
-            format!("{}: {}", strings::LANGUAGE, strings::LANGUAGE_VALUE)
-        )
-        .size(14),
-    ]
-    .spacing(style::GAP);
-    column![
-        style::label(theme, strings::TAB_SETTINGS).size(24),
-        m3::card(card::Style::filled(theme), body).width(Length::Fill),
+        scrollable(body)
+            .height(Length::Fill)
+            .style(style::scroll(theme)),
     ]
     .spacing(style::GAP)
     .into()
@@ -108,9 +183,25 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
 fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
     let entry = |label: &'a str, value: Option<&'a str>| -> Element<'a, Message> {
         let selected = form.font.as_deref() == value;
+        let glyph = if selected {
+            style::icons::CHECK_CIRCLE
+        } else {
+            style::icons::FONT
+        };
+        let color = style::tile_content(theme, selected);
+        let icon_color = if selected {
+            theme.on_primary_container()
+        } else {
+            theme.primary()
+        };
         m3::card(
             style::tile_card(theme, selected),
-            style::label(theme, label).color(style::tile_content(theme, selected)),
+            row![
+                style::icon(glyph).size(16).color(icon_color),
+                style::label(theme, label).color(color),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
         )
         .interaction(card::Interaction::Press(Action::Direct(
             Message::FontSelected(value.map(str::to_owned)),
@@ -125,55 +216,89 @@ fn font_picker<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
             .map(|name| entry(name.as_str(), Some(name.as_str()))),
     );
     column![
-        style::label(theme, strings::FONT).size(14),
+        row![
+            style::icon(style::icons::FONT)
+                .size(16)
+                .color(theme.primary()),
+            style::label(theme, strings::FONT).size(14),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center),
         scrollable(column(entries).spacing(4))
             .height(Length::Fixed(FONT_LIST_HEIGHT))
             .style(style::scroll(theme)),
     ]
-    .spacing(4)
+    .spacing(6)
     .into()
 }
 
 fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Message> {
-    let status = match state {
-        UpdateState::Idle => None,
-        UpdateState::Checking => Some(strings::CHECKING_UPDATE.to_owned()),
-        UpdateState::UpToDate => Some(strings::LAUNCHER_UP_TO_DATE.to_owned()),
-        UpdateState::Available(version) => {
-            Some(format!("{}: v{version}", strings::UPDATE_AVAILABLE))
-        }
-        UpdateState::Installing(_) => Some(strings::LAUNCHER_UPDATING.to_owned()),
-        UpdateState::Applied => Some(strings::LAUNCHER_UPDATED.to_owned()),
+    let (status, status_icon) = match state {
+        UpdateState::Idle => (None, None),
+        UpdateState::Checking => (
+            Some(strings::CHECKING_UPDATE.to_owned()),
+            Some(style::icons::SYNC),
+        ),
+        UpdateState::UpToDate => (
+            Some(strings::LAUNCHER_UP_TO_DATE.to_owned()),
+            Some(style::icons::CHECK_CIRCLE),
+        ),
+        UpdateState::Available(version) => (
+            Some(format!("{}: v{version}", strings::UPDATE_AVAILABLE)),
+            Some(style::icons::UPDATE),
+        ),
+        UpdateState::Installing(_) => (
+            Some(strings::LAUNCHER_UPDATING.to_owned()),
+            Some(style::icons::DOWNLOAD),
+        ),
+        UpdateState::Applied => (
+            Some(strings::LAUNCHER_UPDATED.to_owned()),
+            Some(style::icons::CHECK_CIRCLE),
+        ),
     };
     let action = match state {
         UpdateState::Idle | UpdateState::UpToDate => Some(
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                button::Content::Label(strings::CHECK_UPDATE.into()),
+                style::btn_content(style::icons::REFRESH, strings::CHECK_UPDATE),
             )
             .on_press(Message::CheckUpdate),
         ),
         UpdateState::Available(_) => Some(
             m3::button(
                 button::Style::filled(theme, Accent::Primary),
-                button::Content::Label(strings::UPDATE.into()),
+                style::btn_content(style::icons::DOWNLOAD, strings::UPDATE),
             )
             .on_press(Message::ApplyUpdate),
         ),
         UpdateState::Checking | UpdateState::Installing(_) | UpdateState::Applied => None,
     };
     let mut line = row![
-        style::label(
-            theme,
-            format!("{}: v{}", strings::LAUNCHER_VERSION, strings::APP_VERSION)
-        )
-        .size(14)
+        row![
+            style::icon(style::icons::UPDATE)
+                .size(18)
+                .color(theme.primary()),
+            style::label(
+                theme,
+                format!("{}: v{}", strings::LAUNCHER_VERSION, strings::APP_VERSION)
+            )
+            .size(14),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
         .width(Length::Fill)
     ]
     .spacing(8)
     .align_y(Vertical::Center);
-    if let Some(status) = status {
-        line = line.push(style::label(theme, status).size(14));
+    if let (Some(status), Some(icon_glyph)) = (status, status_icon) {
+        line = line.push(
+            row![
+                style::icon(icon_glyph).size(15).color(theme.primary()),
+                style::label(theme, status).size(14),
+            ]
+            .spacing(4)
+            .align_y(Vertical::Center),
+        );
     }
     if let Some(action) = action {
         line = line.push(action);

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use iced::alignment::Vertical;
-use iced::widget::{column, mouse_area, row, scrollable, text};
+use iced::widget::{Space, column, mouse_area, row, scrollable, text};
 use iced::{Element, Length};
-use iced_m3::theme::{Accent, Theme};
+use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::{self as m3, Action, button, card};
 use launcher_core::{Instance, InstanceId, Kind, TaskInfo};
 
@@ -14,7 +14,7 @@ use crate::style;
 type Ui = Element<'static, Message>;
 
 const COLUMNS: usize = 3;
-const TILE_WIDTH: f32 = 210.0;
+const TILE_WIDTH: f32 = 230.0;
 const SIDEBAR_WIDTH: f32 = 280.0;
 const TILE_PADDING: f32 = 14.0;
 
@@ -24,6 +24,7 @@ pub enum Message {
     ShowNew,
     Refresh,
     Launch,
+    LaunchInstance(InstanceId),
     OpenFolder,
     Edit,
     Duplicate,
@@ -47,18 +48,27 @@ pub struct Props<'a> {
 pub fn view(props: &Props<'_>) -> Ui {
     let theme = props.theme;
     let header = row![
-        style::label(theme, strings::TAB_INSTANCES)
-            .size(24)
-            .width(Length::Fill),
+        row![
+            style::icon(style::icons::INSTANCES)
+                .size(26)
+                .color(theme.primary()),
+            style::label(theme, strings::TAB_INSTANCES).size(24),
+            style::label(theme, format!("({})", props.instances.len())).size(16),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .width(Length::Fill),
         compact(
+            style::icons::REFRESH,
             strings::REFRESH,
             &button::Style::tonal(theme, Accent::Primary),
-            Message::Refresh
+            Message::Refresh,
         ),
         compact(
+            style::icons::ADD,
             strings::ADD_INSTANCE,
             &button::Style::filled(theme, Accent::Primary),
-            Message::ShowNew
+            Message::ShowNew,
         ),
     ]
     .spacing(8)
@@ -86,14 +96,19 @@ pub fn view(props: &Props<'_>) -> Ui {
         page = page.push(
             m3::card(
                 card::Style::filled(theme),
-                style::label(theme, notice.to_owned()).size(12),
+                row![
+                    style::icon(style::icons::INFO)
+                        .size(16)
+                        .color(theme.on_surface()),
+                    style::label(theme, notice.to_owned()).size(12),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
             )
             .width(Length::Fill),
         );
     }
-    page.push(body)
-        .push(style::label(theme, status_line(props.tasks)).size(12))
-        .into()
+    page.push(body).push(status_bar(theme, props.tasks)).into()
 }
 
 fn grid(
@@ -105,7 +120,14 @@ fn grid(
     if instances.is_empty() {
         return m3::card(
             card::Style::filled(theme),
-            style::label(theme, strings::NO_INSTANCES),
+            row![
+                style::icon(style::icons::INFO)
+                    .size(20)
+                    .color(theme.on_surface_variant()),
+                style::label(theme, strings::NO_INSTANCES),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
         )
         .width(Length::Fill)
         .into();
@@ -120,7 +142,7 @@ fn grid(
     }
     let mut sections: Vec<Ui> = named
         .into_iter()
-        .map(|(name, list)| section(theme, name, &list, selected, context))
+        .map(|(name, list)| section(theme, name, &list, selected, context, false))
         .collect();
     if !ungrouped.is_empty() {
         sections.push(section(
@@ -129,6 +151,7 @@ fn grid(
             &ungrouped,
             selected,
             context,
+            true,
         ));
     }
     column(sections).spacing(style::GAP).into()
@@ -140,7 +163,13 @@ fn section(
     list: &[&Instance],
     selected: Option<InstanceId>,
     context: Option<InstanceId>,
+    is_ungrouped: bool,
 ) -> Ui {
+    let icon_glyph = if is_ungrouped {
+        style::icons::FOLDER
+    } else {
+        style::icons::FOLDER_OPEN
+    };
     let rows: Vec<Ui> = list
         .chunks(COLUMNS)
         .map(|chunk| {
@@ -161,7 +190,13 @@ fn section(
     m3::card(
         card::Style::filled(theme),
         column![
-            style::label(theme, title.to_owned()).size(18),
+            row![
+                style::icon(icon_glyph).size(18).color(theme.primary()),
+                style::label(theme, title.to_owned()).size(18),
+                style::label(theme, format!("({})", list.len())).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
             column(rows).spacing(style::GAP)
         ]
         .spacing(style::GAP),
@@ -173,16 +208,47 @@ fn section(
 fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
     let config = &instance.config;
     let color = style::tile_content(theme, selected);
-    let content = column![
-        style::chip::<Message>(
+
+    let top_row = row![
+        style::icon_chip::<Message>(
             theme,
+            style::kind_icon(config.kind),
             strings::kind_label(config.kind),
-            style::kind_tone(config.kind)
+            style::kind_tone(config.kind),
         ),
-        text(config.name.clone()).size(17).color(color),
-        text(config.version_label()).size(12).color(color),
+        Space::new().width(Length::Fill),
+        if !config.plugins.is_empty() {
+            row![
+                style::icon(style::icons::EXTENSION).size(14).color(color),
+                text(config.plugins.len().to_string()).size(12).color(color),
+            ]
+            .spacing(3)
+            .align_y(Vertical::Center)
+        } else {
+            row![]
+        }
     ]
-    .spacing(6);
+    .align_y(Vertical::Center);
+
+    let info = column![
+        text(config.name.clone()).size(17).color(color),
+        row![
+            style::icon(style::icons::HISTORY).size(13).color(color),
+            text(config.version_label()).size(12).color(color),
+        ]
+        .spacing(4)
+        .align_y(Vertical::Center),
+    ]
+    .spacing(4);
+
+    let launch_btn = m3::button(
+        button::Style::tonal(theme, Accent::Primary),
+        style::btn_content(style::icons::LAUNCH, strings::LAUNCH),
+    )
+    .size(button::Size::default().width(Length::Fill))
+    .on_press(Message::LaunchInstance(config.id));
+
+    let content = column![top_row, info, launch_btn].spacing(10);
     let tile = m3::card(style::tile_card(theme, selected), content)
         .interaction(card::Interaction::Press(Action::Direct(Message::Select(
             config.id,
@@ -198,31 +264,37 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
 fn context_menu(theme: &Theme) -> Ui {
     let entries: Vec<Ui> = vec![
         action(
+            style::icons::LAUNCH,
             strings::LAUNCH,
-            &button::Style::tonal(theme, Accent::Primary),
+            &button::Style::filled(theme, Accent::Primary),
             Message::Launch,
         ),
         action(
+            style::icons::EDIT,
             strings::EDIT,
             &button::Style::tonal(theme, Accent::Primary),
             Message::Edit,
         ),
         action(
+            style::icons::FOLDER_OPEN,
             strings::OPEN_FOLDER,
             &button::Style::tonal(theme, Accent::Primary),
             Message::OpenFolder,
         ),
         action(
+            style::icons::DUPLICATE,
             strings::DUPLICATE,
             &button::Style::tonal(theme, Accent::Primary),
             Message::Duplicate,
         ),
         action(
+            style::icons::DELETE,
             strings::DELETE,
             &style::danger_button(theme),
             Message::Delete,
         ),
         action(
+            style::icons::CLOSE,
             strings::CLOSE,
             &button::Style::tonal(theme, Accent::Primary),
             Message::ContextClose,
@@ -236,7 +308,17 @@ fn context_menu(theme: &Theme) -> Ui {
 
 fn sidebar(theme: &Theme, instance: Option<&Instance>, confirming: bool) -> Ui {
     let content: Ui = instance.map_or_else(
-        || style::label(theme, strings::NO_SELECTION).into(),
+        || {
+            column![
+                style::icon(style::icons::INSTANCES)
+                    .size(32)
+                    .color(theme.on_surface_variant()),
+                style::label(theme, strings::NO_SELECTION).size(14),
+            ]
+            .spacing(8)
+            .align_x(iced::alignment::Horizontal::Center)
+            .into()
+        },
         |instance| details(theme, instance, confirming),
     );
     m3::card(card::Style::filled(theme), content)
@@ -249,111 +331,181 @@ fn details(theme: &Theme, instance: &Instance, confirming: bool) -> Ui {
     let config = &instance.config;
     let mut lines = column![
         style::label(theme, config.name.clone()).size(20),
-        style::chip::<Message>(
+        style::icon_chip::<Message>(
             theme,
+            style::kind_icon(config.kind),
             strings::kind_label(config.kind),
-            style::kind_tone(config.kind)
+            style::kind_tone(config.kind),
         ),
     ]
     .spacing(8);
+
     if config.kind == Kind::Ymm4 {
-        lines = lines.push(field(
+        lines = lines.push(field_with_icon(
             theme,
+            style::icons::LAYERS,
             strings::EDITION,
             strings::edition_label(config.edition),
         ));
     }
     lines = lines
-        .push(field(theme, strings::VERSION, &config.version_label()))
-        .push(field(
+        .push(field_with_icon(
             theme,
+            style::icons::HISTORY,
+            strings::VERSION,
+            &config.version_label(),
+        ))
+        .push(field_with_icon(
+            theme,
+            style::icons::GROUP,
             strings::GROUP,
             config.group.as_deref().unwrap_or(strings::UNGROUPED),
         ))
-        .push(field(
+        .push(field_with_icon(
             theme,
+            style::icons::EXTENSION,
             strings::PLUGINS,
             &config.plugins.len().to_string(),
         ));
 
-    let actions: Vec<Ui> = if confirming {
-        vec![
+    let actions: Ui = if confirming {
+        column![
             action(
+                style::icons::DELETE,
                 strings::DELETE_CONFIRM,
                 &style::danger_button(theme),
                 Message::ConfirmDelete,
             ),
             action(
+                style::icons::CANCEL,
                 strings::CANCEL,
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::CancelDelete,
             ),
         ]
+        .spacing(8)
+        .into()
     } else {
-        vec![
+        column![
+            // Primary prominent launch button at top
             action(
+                style::icons::LAUNCH,
                 strings::LAUNCH,
                 &button::Style::filled(theme, Accent::Primary),
                 Message::Launch,
             ),
+            Space::new().height(Length::Fixed(4.0)),
+            // Management actions
             action(
+                style::icons::EDIT,
                 strings::EDIT,
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::Edit,
             ),
             action(
-                strings::DUPLICATE,
-                &button::Style::tonal(theme, Accent::Primary),
-                Message::Duplicate,
-            ),
-            action(
+                style::icons::FOLDER_OPEN,
                 strings::OPEN_FOLDER,
                 &button::Style::tonal(theme, Accent::Primary),
                 Message::OpenFolder,
             ),
             action(
+                style::icons::DUPLICATE,
+                strings::DUPLICATE,
+                &button::Style::tonal(theme, Accent::Primary),
+                Message::Duplicate,
+            ),
+            Space::new().height(Length::Fixed(8.0)),
+            // Dangerous action separated at bottom
+            action(
+                style::icons::DELETE,
                 strings::DELETE,
                 &style::danger_button(theme),
                 Message::Delete,
             ),
         ]
+        .spacing(8)
+        .into()
     };
-    column![lines, column(actions).spacing(8)]
+
+    column![lines, Space::new().height(Length::Fill), actions]
         .spacing(style::PADDING)
+        .height(Length::Fill)
         .into()
 }
 
-fn field(theme: &Theme, label: &str, value: &str) -> Ui {
-    style::label(theme, format!("{label}: {value}"))
-        .size(14)
-        .into()
+fn field_with_icon(theme: &Theme, glyph: &'static str, label: &str, value: &str) -> Ui {
+    row![
+        style::icon(glyph).size(16).color(theme.primary()),
+        style::label(theme, format!("{label}: {value}")).size(14),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center)
+    .into()
 }
 
-fn action(label: &'static str, style: &button::Style, message: Message) -> Ui {
-    m3::button(*style, button::Content::Label(label.into()))
+fn action(glyph: &'static str, label: &'static str, style: &button::Style, message: Message) -> Ui {
+    m3::button(*style, style::btn_content(glyph, label))
         .size(button::Size::default().width(Length::Fill))
         .on_press(message)
         .into()
 }
 
-fn compact(label: &'static str, style: &button::Style, message: Message) -> Ui {
-    m3::button(*style, button::Content::Label(label.into()))
+fn compact(
+    glyph: &'static str,
+    label: &'static str,
+    style: &button::Style,
+    message: Message,
+) -> Ui {
+    m3::button(*style, style::btn_content(glyph, label))
         .on_press(message)
         .into()
 }
 
-fn status_line(tasks: &[TaskInfo]) -> String {
+fn status_bar(theme: &Theme, tasks: &[TaskInfo]) -> Ui {
     let active: Vec<&TaskInfo> = tasks.iter().filter(|task| task.state.is_active()).collect();
     if let Some(latest) = active.last() {
-        return format!(
-            "{}: {} | {}: {}",
-            strings::ACTIVE_TASKS,
-            active.len(),
-            latest.title,
-            detail_label(&latest.state)
-        );
+        row![
+            style::icon(style::icons::SYNC)
+                .size(15)
+                .color(theme.primary()),
+            style::label(
+                theme,
+                format!(
+                    "{}: {} | {}: {}",
+                    strings::ACTIVE_TASKS,
+                    active.len(),
+                    latest.title,
+                    detail_label(&latest.state)
+                )
+            )
+            .size(12),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center)
+        .into()
+    } else if let Some(last) = tasks.last() {
+        row![
+            style::icon(style::icons::TASKS)
+                .size(15)
+                .color(theme.on_surface_variant()),
+            style::label(
+                theme,
+                format!("{}: {}", last.title, detail_label(&last.state))
+            )
+            .size(12),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center)
+        .into()
+    } else {
+        row![
+            style::icon(style::icons::CHECK_CIRCLE)
+                .size(15)
+                .color(theme.tertiary()),
+            style::label(theme, strings::NO_TASKS).size(12),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center)
+        .into()
     }
-    tasks.last().map_or_else(String::new, |task| {
-        format!("{}: {}", task.title, detail_label(&task.state))
-    })
 }

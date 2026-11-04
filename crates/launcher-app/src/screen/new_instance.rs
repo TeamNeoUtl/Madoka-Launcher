@@ -3,7 +3,7 @@ use std::fmt;
 use iced::alignment::Vertical;
 use iced::widget::{column, row, scrollable};
 use iced::{Element, Length, Padding};
-use iced_m3::theme::{Accent, Theme};
+use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::button_group::connected;
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
@@ -226,7 +226,14 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
     let kind_card = m3::card(
         card::Style::filled(theme),
         column![
-            style::label(theme, strings::KIND).size(18),
+            row![
+                style::icon(style::icons::CATEGORY)
+                    .size(20)
+                    .color(theme.primary()),
+                style::label(theme, strings::KIND).size(18),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
             column(kinds).spacing(style::GAP)
         ]
         .spacing(style::GAP),
@@ -243,17 +250,33 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
         .on_input(Message::GroupChanged)
         .padding(INPUT_PADDING);
 
-    let mut fields = column![
+    let form_header = row![
+        style::icon(style::kind_icon(form.kind))
+            .size(26)
+            .color(theme.primary()),
         style::label(theme, strings::kind_label(form.kind)).size(22),
-        name_input,
-        group_input,
+        style::icon_chip::<Message>(
+            theme,
+            style::kind_icon(form.kind),
+            strings::kind_label(form.kind),
+            style::kind_tone(form.kind),
+        ),
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
+
+    let mut fields = column![
+        form_header,
+        labeled_with_icon(theme, style::icons::EDIT, strings::NAME, name_input),
+        labeled_with_icon(theme, style::icons::GROUP, strings::GROUP, group_input),
     ]
     .spacing(style::GAP);
     if form.kind == Kind::Ymm4 {
         fields = fields.push(edition_picker(theme, form.edition));
     }
-    fields = fields.push(labeled(
+    fields = fields.push(labeled_with_icon(
         theme,
+        style::icons::HISTORY,
         strings::VERSION,
         version_picker(
             form,
@@ -264,8 +287,9 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
         ),
     ));
     if form.has_addon() {
-        fields = fields.push(labeled(
+        fields = fields.push(labeled_with_icon(
             theme,
+            style::icons::EXTENSION,
             strings::ADDON_VERSION,
             version_picker(
                 form,
@@ -279,12 +303,12 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
 
     let submit = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        button::Content::Label(strings::CREATE.into()),
+        style::btn_content(style::icons::ADD, strings::CREATE),
     )
     .on_press_maybe(form.can_submit().then_some(Message::Submit));
     let cancel = m3::button(
         button::Style::tonal(theme, Accent::Primary),
-        button::Content::Label(strings::CANCEL.into()),
+        style::btn_content(style::icons::CLOSE, strings::CANCEL),
     )
     .on_press(Message::Cancel);
     let actions = row![submit, cancel].spacing(8);
@@ -293,7 +317,14 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
         m3::card(form_style, column![fields, actions].spacing(style::PADDING)).width(Length::Fill);
 
     column![
-        style::label(theme, strings::TAB_NEW).size(24),
+        row![
+            style::icon(style::icons::ADD)
+                .size(26)
+                .color(theme.primary()),
+            style::label(theme, strings::TAB_NEW).size(24),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center),
         row![kind_card, form_card].spacing(style::GAP),
     ]
     .spacing(style::GAP)
@@ -318,31 +349,51 @@ fn kind_entry<'a>(theme: &Theme, kind: Kind, current: Kind, host: Host) -> Eleme
     };
     let selected = badge.is_none() && kind == current;
     let color = style::tile_content(theme, selected);
-    let mut content = row![iced::widget::text(label).color(color).width(Length::Fill)]
-        .spacing(8)
-        .align_y(Vertical::Center);
+    let icon_color = if selected {
+        theme.on_primary_container()
+    } else {
+        theme.primary()
+    };
+    let mut content = row![
+        style::icon(style::kind_icon(kind))
+            .size(20)
+            .color(icon_color),
+        iced::widget::text(label).color(color).width(Length::Fill)
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
     if let Some((text, tone)) = badge {
         content = content.push(style::chip::<Message>(theme, text, tone));
     }
     m3::card(style::tile_card(theme, selected), content)
         .interaction(interaction)
+        .padding(Padding::from(ENTRY_PADDING))
         .width(Length::Fill)
         .into()
 }
 
-fn labeled<'a>(
+fn labeled_with_icon<'a>(
     theme: &Theme,
+    glyph: &'static str,
     label: &'static str,
     input: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    column![style::label(theme, label).size(14), input.into()]
-        .spacing(4)
-        .into()
+    column![
+        row![
+            style::icon(glyph).size(15).color(theme.primary()),
+            style::label(theme, label).size(14),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center),
+        input.into()
+    ]
+    .spacing(4)
+    .into()
 }
 
 fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
     let entry = |edition: Edition| connected::Button {
-        content: button::Content::Label(strings::edition_label(edition).into()),
+        content: style::btn_content(style::icons::LAYERS, strings::edition_label(edition)),
         on_press: Some(Message::EditionSelected(edition)),
         selected: current == edition,
     };
@@ -350,7 +401,7 @@ fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
         button::Style::tonal(theme, Accent::Primary),
         vec![entry(Edition::Normal), entry(Edition::Lite)],
     );
-    labeled(theme, strings::EDITION, group)
+    labeled_with_icon(theme, style::icons::LAYERS, strings::EDITION, group)
 }
 
 fn version_picker<'a>(
@@ -361,25 +412,58 @@ fn version_picker<'a>(
     select: impl Fn(VersionChoice) -> Message + 'a,
 ) -> Element<'a, Message> {
     match &form.load {
-        Load::Idle | Load::Loading => style::label(theme, strings::LOADING).into(),
+        Load::Idle | Load::Loading => row![
+            style::icon(style::icons::SYNC)
+                .size(16)
+                .color(theme.primary()),
+            style::label(theme, strings::LOADING).size(14),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into(),
         Load::Failed(reason) => column![
-            style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+            row![
+                style::icon(style::icons::ERROR)
+                    .size(16)
+                    .color(theme.error()),
+                style::label(theme, format!("{}: {reason}", strings::LOAD_FAILED)).size(12),
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center),
             m3::button(
                 button::Style::tonal(theme, Accent::Primary),
-                button::Content::Label(strings::RELOAD.into()),
+                style::btn_content(style::icons::REFRESH, strings::RELOAD),
             )
             .on_press(Message::Reload),
         ]
         .spacing(6)
         .into(),
-        Load::Ready if choices.is_empty() => style::label(theme, strings::NO_VERSION).into(),
+        Load::Ready if choices.is_empty() => row![
+            style::icon(style::icons::INFO)
+                .size(16)
+                .color(theme.on_surface_variant()),
+            style::label(theme, strings::NO_VERSION).size(14),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into(),
         Load::Ready => {
             let entries = choices.iter().map(|choice| {
                 let selected = current == Some(choice);
+                let glyph = if selected {
+                    style::icons::CHECK_CIRCLE
+                } else {
+                    style::icons::HISTORY
+                };
+                let content_color = style::tile_content(theme, selected);
                 m3::card(
                     style::tile_card(theme, selected),
-                    style::label(theme, choice.to_string())
-                        .color(style::tile_content(theme, selected)),
+                    row![
+                        style::icon(glyph).size(16).color(content_color),
+                        style::label(theme, choice.to_string()).color(content_color),
+                    ]
+                    .spacing(8)
+                    .align_y(Vertical::Center),
                 )
                 .interaction(card::Interaction::Press(Action::Direct(select(
                     choice.clone(),
