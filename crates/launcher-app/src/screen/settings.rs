@@ -8,6 +8,7 @@ use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card, switch};
 use rust_i18n::t;
 
+use crate::i18n::Locale;
 use crate::strings;
 use crate::style;
 
@@ -23,7 +24,7 @@ pub enum Message {
     SaveDns,
     ThemeToggled,
     FontSelected(Option<String>),
-    LocaleSelected(Option<String>),
+    LocaleSelected(Locale),
     OpenDataDirectory,
     CheckUpdate,
     ApplyUpdate,
@@ -44,7 +45,7 @@ pub struct Form {
     pub dns: String,
     pub font: Option<String>,
     pub fonts: Vec<String>,
-    pub locale: Option<String>,
+    pub locale: Locale,
     pub update: UpdateState,
 }
 
@@ -308,26 +309,17 @@ fn version_row<'a>(state: &'a UpdateState, theme: &'a Theme) -> Element<'a, Mess
 }
 
 fn locale_selector<'a>(form: &'a Form, theme: &'a Theme) -> Element<'a, Message> {
-    use crate::i18n::Locale;
-    let current_code = form.locale.as_deref().unwrap_or("ja");
-    let current_locale = Locale::from_str(current_code).unwrap_or(Locale::Ja);
-
     let chips: Vec<Element<'a, Message>> = Locale::ALL
         .iter()
         .map(|&locale| {
-            let selected = locale == current_locale;
+            let selected = locale == form.locale;
             let color = style::tile_content(theme, selected);
-            let code = if locale == Locale::Ja {
-                None
-            } else {
-                Some(locale.as_str().to_owned())
-            };
             m3::card(
                 style::tile_card(theme, selected),
                 iced::widget::text(locale.label()).size(12).color(color),
             )
             .interaction(card::Interaction::Press(Action::Direct(
-                Message::LocaleSelected(code),
+                Message::LocaleSelected(locale),
             )))
             .padding(Padding::from([4.0, 10.0]))
             .into()

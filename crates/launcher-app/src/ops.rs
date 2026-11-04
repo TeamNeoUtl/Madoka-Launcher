@@ -17,6 +17,8 @@ use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+use crate::i18n::Locale;
+
 const CREATE_STEPS: u16 = 2;
 const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
@@ -120,6 +122,20 @@ impl Browsed {
     }
 }
 
+/// Returns the locale of `config.toml`.
+/// A missing or unsupported value is replaced by the OS locale and written back.
+fn stored_locale(config: &mut Config, root: &Path) -> Locale {
+    if let Some(locale) = config.locale.as_deref().and_then(Locale::from_str) {
+        return locale;
+    }
+    let locale = Locale::detect();
+    config.locale = Some(locale.as_str().to_owned());
+    if let Err(error) = config.save(root) {
+        warn!(%error, "locale write failed");
+    }
+    locale
+}
+
 /// Everything a task needs. Clones share the task board, the locks and the installer.
 #[derive(Clone)]
 pub struct Services {
@@ -128,7 +144,7 @@ pub struct Services {
     root: PathBuf,
     theme: Option<String>,
     font: Option<String>,
-    locale: Option<String>,
+    locale: Locale,
     dns_servers: Vec<IpAddr>,
     dns: Dns,
     browsed: Arc<ReqwestFetcher>,
@@ -142,13 +158,13 @@ pub struct Services {
 
 impl Services {
     pub fn new(root: PathBuf) -> Result<Self, OpError> {
-        let config = Config::load(&root)?;
+        let mut config = Config::load(&root)?;
+        let locale = stored_locale(&mut config, &root);
         let user_agent = format!("Madoka-Launcher/{}", env!("CARGO_PKG_VERSION"));
         let token = config.github_token.filter(|token| !token.trim().is_empty());
         let config_has_token = token.is_some();
         let theme = config.theme;
         let font = config.font;
-        let locale = config.locale;
         let dns_servers = config.dns;
         let dns = Dns::new(&dns_servers);
         let http = ReqwestHttp::with_dns(&user_agent, token.clone(), dns.clone())
@@ -243,17 +259,17 @@ impl Services {
         .await
     }
 
-    /// Selected locale code stored in `config.toml`.
-    pub fn locale_code(&self) -> Option<&str> {
-        self.locale.as_deref()
+    /// Locale selected at startup.
+    pub const fn locale(&self) -> Locale {
+        self.locale
     }
 
     /// Writes the locale code to `config.toml`.
-    pub async fn save_locale(self, locale: Option<String>) -> Result<(), OpError> {
+    pub async fn save_locale(self, locale: Locale) -> Result<(), OpError> {
         let root = self.root.clone();
         blocking(move || {
             let mut config = Config::load(&root)?;
-            config.locale = locale;
+            config.locale = Some(locale.as_str().to_owned());
             config.save(&root)
         })
         .await

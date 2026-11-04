@@ -101,15 +101,13 @@ pub struct App {
 impl App {
     pub fn new(services: Services) -> (Self, Task<Message>) {
         let mode = services.theme_name().map_or(Mode::Dark, style::mode_of);
-        if let Some(code) = services.locale_code() {
-            strings::set_locale(crate::i18n::Locale::from_str(code).unwrap_or_default());
-        }
+        strings::set_locale(services.locale());
         let form = new_instance::Form::new(services.host);
         let settings = settings::Form {
             token: services.token().unwrap_or_default().to_owned(),
             font: services.font_name().map(str::to_owned),
             fonts: Vec::new(),
-            locale: services.locale_code().map(str::to_owned),
+            locale: services.locale(),
             update: settings::UpdateState::Checking,
             dns: services
                 .dns_servers()
@@ -1040,12 +1038,8 @@ impl App {
                 })
             }
             M::LocaleSelected(locale) => {
-                self.settings.locale = locale.clone();
-                if let Some(code) = &locale {
-                    strings::set_locale(crate::i18n::Locale::from_str(code).unwrap_or_default());
-                } else {
-                    strings::set_locale(crate::i18n::Locale::Ja);
-                }
+                self.settings.locale = locale;
+                strings::set_locale(locale);
                 self.notice = Some(t!("locale_saved").into_owned());
                 Task::perform(self.services.clone().save_locale(locale), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
