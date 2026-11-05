@@ -20,6 +20,7 @@ mod ymm4;
 pub use aviutl::{AviutlProvider, parse_apm_packages, parse_aviutl_addons, parse_aviutl_apps};
 pub use aviutl2::{
     Aviutl2Provider, parse_aviutl2_app, parse_aviutl2_catalog, parse_aviutl2_history,
+    parse_aviutl2_manifest,
 };
 pub use cache::{CACHE_TTL, load_any, load_fresh, store as store_catalog};
 pub use dns::{ADGUARD_DNS, Dns};

@@ -76,6 +76,10 @@ enum RawAction {
     Download {},
     #[serde(rename = "extract")]
     Extract {},
+    #[serde(rename = "extractSfx")]
+    ExtractSfx {},
+    #[serde(rename = "runAuoSetup")]
+    RunAuoSetup { path: String },
     #[serde(rename = "copy")]
     Copy { from: String, to: String },
     #[serde(rename = "delete")]
@@ -181,6 +185,10 @@ fn recipe(entry: &RawEntry) -> Option<Recipe> {
     for action in actions {
         match action {
             RawAction::Extract {} => steps.push(Step::Extract),
+            RawAction::ExtractSfx {} => steps.push(Step::ExtractSfx),
+            RawAction::RunAuoSetup { path } => steps.push(Step::RunAuoSetup {
+                path: location(path)?,
+            }),
             RawAction::Copy { from, to } => steps.push(Step::Copy {
                 from: location(from)?,
                 to: location(to)?,
@@ -214,64 +222,93 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
     let packages: Vec<Package> = parse_entries(bytes)?
         .into_iter()
         .filter(|entry| entry.id != CORE_ID)
-        .map(|entry| {
-            let page_url = Url::parse(&entry.repo_url).unwrap_or_else(|_| fallback.clone());
-            let source = recipe(&entry).map_or_else(
-                || PackageSource::Web(page_url.clone()),
-                PackageSource::Recipe,
-            );
-            let deprecated = entry.deprecation.is_some();
-            let screenshots = entry
-                .images
-                .as_ref()
-                .and_then(|img| img.get("detailImages"))
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let changelog = entry
-                .changelog
-                .as_ref()
-                .and_then(|c| c.get("markdownSource").or_else(|| c.get("text")))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-
-            let mut release_dates: Vec<String> = entry
-                .version
-                .iter()
-                .filter_map(|version| version.release_date.clone())
-                .collect();
-            release_dates.sort_unstable_by(|a, b| b.cmp(a));
-            release_dates.dedup();
-
-            Package {
-                categories: vec![entry.r#type],
-                id: entry.id,
-                name: entry.name,
-                summary: entry.summary,
-                author: entry.author,
-                updated: None,
-                page_url,
-                source,
-                niconi_commons_id: entry.niconi_commons_id,
-                tags: entry.tags,
-                deprecated,
-                dependencies: entry.dependencies,
-                licenses: entry.licenses,
-                changelog,
-                screenshots,
-                release_dates,
-            }
-        })
+        .map(|entry| package_of(entry, &fallback))
         .collect();
     if packages.is_empty() {
         return Err(shape_changed("no package entries"));
     }
     Ok(packages)
+}
+
+/// Builds the package of one catalog entry. An entry that `recipe` rejects opens in the browser.
+fn package_of(entry: RawEntry, fallback: &Url) -> Package {
+    let page_url = Url::parse(&entry.repo_url).unwrap_or_else(|_| fallback.clone());
+    let source = recipe(&entry).map_or_else(
+        || PackageSource::Web(page_url.clone()),
+        PackageSource::Recipe,
+    );
+    let deprecated = entry.deprecation.is_some();
+    let deprecation_message = entry
+        .deprecation
+        .as_ref()
+        .and_then(|deprecation| deprecation.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let asset_base = Url::parse(INDEX_URL).ok();
+    let screenshots = entry
+        .images
+        .as_ref()
+        .and_then(|img| img.get("detailImages"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(|path| {
+                    asset_base
+                        .as_ref()
+                        .and_then(|base| base.join(path).ok())
+                        .map_or_else(|| path.to_owned(), String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let changelog = entry
+        .changelog
+        .as_ref()
+        .and_then(|c| c.get("markdownSource").or_else(|| c.get("text")))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    let mut release_dates: Vec<String> = entry
+        .version
+        .iter()
+        .filter_map(|version| version.release_date.clone())
+        .collect();
+    release_dates.sort_unstable_by(|a, b| b.cmp(a));
+    release_dates.dedup();
+
+    Package {
+        categories: vec![entry.r#type],
+        id: entry.id,
+        name: entry.name,
+        summary: entry.summary,
+        author: entry.author,
+        updated: None,
+        page_url,
+        source,
+        niconi_commons_id: entry.niconi_commons_id,
+        tags: entry.tags,
+        deprecated,
+        deprecation_message,
+        dependencies: entry.dependencies,
+        licenses: entry.licenses,
+        changelog,
+        screenshots,
+        release_dates,
+    }
+}
+
+/// Parses one catalog entry, a JSON object of the `index.json` shape, into a package.
+///
+/// # Errors
+///
+/// Returns `ProviderError::CatalogShapeChanged` when `text` is not such an entry
+/// and `ProviderError::InvalidUrl` for an invalid page URL.
+pub fn parse_aviutl2_manifest(text: &str) -> Result<Package, ProviderError> {
+    let fallback =
+        Url::parse(CATALOG_PAGE).map_err(|_| ProviderError::InvalidUrl(CATALOG_PAGE.to_owned()))?;
+    let entry: RawEntry = serde_json::from_str(text).map_err(|e| shape_changed(e.to_string()))?;
+    Ok(package_of(entry, &fallback))
 }
 
 /// The portable ZIP lies beside the setup program: `aviutl2_<version>.zip`.

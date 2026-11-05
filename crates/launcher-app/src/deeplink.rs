@@ -19,15 +19,15 @@ use tracing::{debug, info, warn};
 /// and a socket file in the temporary directory where namespaced names are unsupported (macOS).
 const IPC_NAME: &str = "madoka-launcher.ipc";
 
-fn ipc_socket_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(IPC_NAME)
+fn ipc_socket_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(label)
 }
 
-fn ipc_name() -> std::io::Result<Name<'static>> {
+fn ipc_name(label: &'static str) -> std::io::Result<Name<'static>> {
     if GenericNamespaced::is_supported() {
-        IPC_NAME.to_ns_name::<GenericNamespaced>()
+        label.to_ns_name::<GenericNamespaced>()
     } else {
-        ipc_socket_path().to_fs_name::<GenericFilePath>()
+        ipc_socket_path(label).to_fs_name::<GenericFilePath>()
     }
 }
 
@@ -100,7 +100,11 @@ pub fn parse(url: &str) -> Option<DeepLinkAction> {
 /// Sends `url` to the running launcher process.
 /// Returns `true` when the message was delivered and the running process handles it.
 pub fn try_send_to_running(url: &str) -> bool {
-    let Ok(name) = ipc_name() else {
+    try_send_at(IPC_NAME, url)
+}
+
+fn try_send_at(label: &'static str, url: &str) -> bool {
+    let Ok(name) = ipc_name(label) else {
         warn!("local socket name is unsupported");
         return false;
     };
@@ -129,12 +133,16 @@ pub fn try_send_to_running(url: &str) -> bool {
 /// Starts the IPC server that listens for deep link URLs sent by new processes.
 /// Returns `None` when another process owns the socket or the OS rejects the name.
 pub fn start_ipc_listener() -> Option<std::sync::mpsc::Receiver<String>> {
-    let name = ipc_name()
+    start_listener_at(IPC_NAME)
+}
+
+fn start_listener_at(label: &'static str) -> Option<std::sync::mpsc::Receiver<String>> {
+    let name = ipc_name(label)
         .inspect_err(|err| warn!("invalid IPC name: {err}"))
         .ok()?;
     if !GenericNamespaced::is_supported() && Stream::connect(name.clone()).is_err() {
         // No process listens on the socket file: it is left over from a crashed process.
-        let _ = std::fs::remove_file(ipc_socket_path());
+        let _ = std::fs::remove_file(ipc_socket_path(label));
     }
     let listener = ListenerOptions::new()
         .name(name)
@@ -271,7 +279,28 @@ fn register_windows_protocol(protocol: &str, exe_path: &str) -> std::io::Result<
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+
+    #[test]
+    fn listener_receives_the_url_that_a_second_process_sends() {
+        const LABEL: &str = "madoka-launcher-test-roundtrip.ipc";
+        let rx = start_listener_at(LABEL).expect("listener starts");
+        assert!(try_send_at(LABEL, "madoka://package/a?install=true"));
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).as_deref(),
+            Ok("madoka://package/a?install=true")
+        );
+    }
+
+    #[test]
+    fn send_without_a_listener_is_not_delivered() {
+        assert!(!try_send_at(
+            "madoka-launcher-test-absent.ipc",
+            "madoka://updates"
+        ));
+    }
 
     #[test]
     fn parse_view_package() {

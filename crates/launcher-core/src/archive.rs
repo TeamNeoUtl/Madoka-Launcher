@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Cursor};
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
@@ -191,4 +191,81 @@ pub fn copy_file(source: &Path, target: &Path, created: &mut Created) -> Result<
     created.files.push(target.to_owned());
     io::copy(&mut input, &mut out).map_err(|e| Error::io(target, e))?;
     Ok(())
+}
+
+/// Names of the file entries of the zip at `path`. Separators are `/`.
+///
+/// # Errors
+///
+/// Returns `Error::Io` when `path` cannot be opened and `Error::Zip` when it is not a zip
+/// or an entry cannot be read.
+pub fn zip_entry_names(path: &Path) -> Result<Vec<String>, Error> {
+    let file = File::open(path).map_err(|source| Error::io(path, source))?;
+    let mut zip =
+        ZipArchive::new(BufReader::new(file)).map_err(|source| Error::zip(path, source))?;
+    let mut names = Vec::with_capacity(zip.len());
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|source| Error::zip(path, source))?;
+        if !entry.is_dir() {
+            let name = entry.name().map_err(|source| Error::zip(path, source))?;
+            names.push(name.replace('\\', "/"));
+        }
+    }
+    Ok(names)
+}
+
+const SEVEN_ZIP_SIGNATURE: [u8; 6] = [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
+
+/// Offset of the first 7z signature in `bytes`.
+fn find_seven_zip_signature(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(SEVEN_ZIP_SIGNATURE.len())
+        .position(|window| window == SEVEN_ZIP_SIGNATURE)
+}
+
+/// Extracts the 7z data of the self-extracting executable `sfx` into `dest`.
+/// An entry whose path leaves `dest` is skipped.
+///
+/// # Errors
+///
+/// Returns `Error::Io` when `sfx` cannot be read or `dest` cannot be created,
+/// and `Error::Zip` when `sfx` holds no 7z data or the extraction fails.
+pub fn extract_sfx(sfx: &Path, dest: &Path) -> Result<(), Error> {
+    let bytes = fs::read(sfx).map_err(|source| Error::io(sfx, source))?;
+    let offset = find_seven_zip_signature(&bytes)
+        .ok_or_else(|| Error::zip(sfx, "7z signature not found"))?;
+    fs::create_dir_all(dest).map_err(|source| Error::io(dest, source))?;
+    sevenz_rust2::decompress_with_extract_fn_and_password(
+        Cursor::new(&bytes[offset..]),
+        dest,
+        sevenz_rust2::Password::empty(),
+        |entry, reader, target| {
+            if ensure_relative_path(entry.name()).is_err() {
+                return Ok(true);
+            }
+            sevenz_rust2::default_entry_extract_fn(entry, reader, target)
+        },
+    )
+    .map_err(|source| Error::zip(sfx, source))
+}
+
+#[cfg(test)]
+mod sfx_tests {
+    use super::{SEVEN_ZIP_SIGNATURE, find_seven_zip_signature};
+
+    #[test]
+    fn signature_is_found_after_the_executable_stub() {
+        let mut bytes = vec![0x4D, 0x5A, 0x00, 0x37, 0x7A];
+        let offset = bytes.len();
+        bytes.extend_from_slice(&SEVEN_ZIP_SIGNATURE);
+        bytes.extend_from_slice(&[0, 4]);
+        assert_eq!(find_seven_zip_signature(&bytes), Some(offset));
+    }
+
+    #[test]
+    fn signature_is_absent_from_a_plain_executable() {
+        assert_eq!(find_seven_zip_signature(&[0x4D, 0x5A, 0x90, 0x00]), None);
+    }
 }

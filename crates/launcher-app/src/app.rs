@@ -14,9 +14,10 @@ use rust_i18n::t;
 use url::Url;
 
 use launcher_providers::Versions;
+use launcher_providers::au2pkg::is_au2pkg_filename;
 
 use crate::deeplink::{self, DeepLinkAction};
-use crate::ops::{Browsed, Loaded, Services};
+use crate::ops::{Browsed, ConfigEntry, Loaded, RestoreReport, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
 use crate::screen::{main_screen, new_instance, settings, tasks};
 use crate::{strings, style};
@@ -39,6 +40,7 @@ pub enum Message {
     ThemeToggled,
     Saved(Result<(), String>),
     PortableSwitched(bool, Result<(), String>),
+    ImageLoaded(InstanceId, String, Result<Vec<u8>, String>),
     FontsLoaded(Result<Vec<String>, String>),
     Loaded(Result<Loaded, String>),
     VersionsLoaded(Kind, Result<Versions, String>),
@@ -56,9 +58,11 @@ pub enum Message {
     SelfUpdated(Result<(), String>),
     ManualPluginsScanned(Result<Vec<String>, String>),
     ConfigImported(InstanceId, Option<String>),
+    ConfigRestored(RestoreReport),
     ConfigExported(Result<Option<String>, String>),
     DeepLinkUrl(String),
     Redraw,
+    FileDropped(std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +173,20 @@ impl App {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
             }
+            Message::ImageLoaded(id, url, result) => {
+                if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
+                    state.images.insert(
+                        url,
+                        match result {
+                            Ok(bytes) => edit::ImageState::Ready(
+                                iced::widget::image::Handle::from_bytes(bytes),
+                            ),
+                            Err(reason) => edit::ImageState::Failed(reason),
+                        },
+                    );
+                }
+                Task::none()
+            }
             Message::PortableSwitched(enabled, result) => {
                 self.notice = Some(match result {
                     Ok(()) => {
@@ -212,6 +230,7 @@ impl App {
                     if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
                         return restore_browse_scroll(state);
                     }
+                    return load_screenshots(&self.services, state);
                 }
                 Task::none()
             }
@@ -323,15 +342,26 @@ impl App {
                     self.notice = Some(t!("config_invalid").into_owned());
                     return Task::none();
                 };
-                let mut target_ids = Vec::new();
-                if let Some(plugins) = value.get("plugins").and_then(serde_json::Value::as_array) {
-                    for p in plugins {
-                        if let Some(pid) = p.get("id").and_then(serde_json::Value::as_str) {
-                            target_ids.push(pid.to_owned());
-                        }
-                    }
-                }
-                if target_ids.is_empty() {
+                let entries: Vec<ConfigEntry> = value
+                    .get("plugins")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|plugin| {
+                        Some(ConfigEntry {
+                            id: plugin.get("id")?.as_str()?.to_owned(),
+                            version: plugin
+                                .get("version")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            paused: plugin
+                                .get("paused")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
+                        })
+                    })
+                    .collect();
+                if entries.is_empty() {
                     self.notice = Some(t!("config_no_plugins").into_owned());
                     return Task::none();
                 }
@@ -339,38 +369,42 @@ impl App {
                     return Task::none();
                 };
                 let kind = inst.config.kind;
-                let already_installed: std::collections::HashSet<_> =
-                    inst.config.plugins.iter().map(|p| p.id.as_str()).collect();
-                let missing: Vec<String> = target_ids
-                    .into_iter()
-                    .filter(|pid| !already_installed.contains(pid.as_str()))
-                    .collect();
-
-                if missing.is_empty() {
-                    self.notice = Some(t!("config_all_installed").into_owned());
-                    return Task::none();
-                }
-
-                self.notice = Some(t!("config_import_start", count = missing.len()).into_owned());
-                let services = self.services.clone();
+                self.notice = Some(t!("config_import_start", count = entries.len()).into_owned());
                 Task::perform(
-                    async move {
-                        let Ok(catalog) = services.clone().catalog(kind, false).await else {
-                            return;
-                        };
-                        for pid in missing {
-                            let Some(pkg) = catalog.iter().find(|p| p.id == pid).cloned() else {
-                                continue;
-                            };
-                            if let Ok((_, plan)) = services.clone().plan(kind, pkg.clone()).await {
-                                let title = format!("{}: {}", t!("task_install"), pkg.name);
-                                let handle = services.board.add(title);
-                                services.clone().install_plugin(handle, id, pkg, plan).await;
-                            }
-                        }
-                    },
-                    |()| Message::Finished,
+                    self.services.clone().restore_config(
+                        kind,
+                        id,
+                        t!("task_install").into_owned(),
+                        entries,
+                    ),
+                    Message::ConfigRestored,
                 )
+            }
+            Message::ConfigRestored(report) => {
+                let mut lines = vec![
+                    t!(
+                        "config_restored",
+                        installed = report.installed,
+                        paused = report.paused
+                    )
+                    .into_owned(),
+                ];
+                if !report.version_differs.is_empty() {
+                    lines.push(
+                        t!(
+                            "config_version_differs",
+                            list = report.version_differs.join(", ")
+                        )
+                        .into_owned(),
+                    );
+                }
+                if !report.unavailable.is_empty() {
+                    lines.push(
+                        t!("config_unavailable", list = report.unavailable.join(", ")).into_owned(),
+                    );
+                }
+                self.notice = Some(lines.join("\n"));
+                self.reload()
             }
             Message::DeepLinkUrl(url) => {
                 if let Some(action) = deeplink::parse(&url) {
@@ -380,9 +414,10 @@ impl App {
                     Task::none()
                 }
             }
+            Message::FileDropped(path) => self.import_dropped(path),
             Message::Redraw => {
                 if let Some(url) = deeplink::poll_incoming() {
-                    return Task::done(Message::DeepLinkUrl(url));
+                    return Task::batch([Task::done(Message::DeepLinkUrl(url)), bring_to_front()]);
                 }
                 Task::none()
             }
@@ -468,7 +503,15 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(REDRAW_INTERVAL).map(|_| Message::Redraw)
+        Subscription::batch([
+            iced::time::every(REDRAW_INTERVAL).map(|_| Message::Redraw),
+            iced::event::listen_with(|event, _status, _window| match event {
+                iced::Event::Window(iced::window::Event::FileDropped(path)) => {
+                    Some(Message::FileDropped(path))
+                }
+                _ => None,
+            }),
+        ])
     }
 
     fn rail(&self, board: &[TaskInfo]) -> Element<'_, Message> {
@@ -942,12 +985,27 @@ impl App {
                 state.json_input = r#"{
   "id": "example.myplugin",
   "name": "My Custom Plugin",
-  "overview": "自作のAviUtl2用プラグインです。",
-  "developer": {
-    "name": "Author"
-  },
+  "type": "plugin",
+  "summary": "自作のAviUtl2用プラグインです。",
+  "author": "Author",
+  "latest-version": "1.0.0",
   "niconiCommonsId": "nc123456",
-  "tags": ["フィルター", "自作"]
+  "tags": ["フィルター", "自作"],
+  "installer": {
+    "source": { "direct": "https://example.com/myplugin.zip" },
+    "install": [
+      { "action": "download" },
+      { "action": "extract" },
+      { "action": "copy", "from": "{tmp}/myplugin.auf2", "to": "{pluginsDir}" }
+    ]
+  },
+  "version": [
+    {
+      "version": "1.0.0",
+      "release_date": "2026-01-01",
+      "file": [{ "path": "{pluginsDir}/myplugin.auf2", "XXH3_128": "00112233445566778899aabbccddeeff" }]
+    }
+  ]
 }"#
                 .to_owned();
                 Task::none()
@@ -960,9 +1018,14 @@ impl App {
                 let closed = pkg_id.is_none();
                 state.viewing_package_id = pkg_id;
                 state.active_screenshot_idx = 0;
+                state.preview_open = false;
                 if closed && state.tab == Tab::Browse {
                     return restore_browse_scroll(state);
                 }
+                load_screenshots(&self.services, state)
+            }
+            M::TogglePreview => {
+                state.preview_open = !state.preview_open;
                 Task::none()
             }
             M::NextScreenshot(len) => {
@@ -1119,7 +1182,9 @@ impl App {
         };
         match plan {
             InstallPlan::OpenInBrowser(url) => self.enqueue_browse(id, package, url),
-            plan if plan.is_verified() => self.start_install(id, package, plan),
+            plan if plan.is_verified() && !package.deprecated => {
+                self.start_install(id, package, plan)
+            }
             plan => {
                 if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
                     state.pending = Some(Pending { package, plan });
@@ -1389,4 +1454,75 @@ fn restore_browse_scroll(state: &mut edit::State) -> Task<Message> {
         Some(offset) => edit::restore_scroll(offset),
         None => Task::none(),
     }
+}
+
+/// Restores the window from the minimized state and focuses it.
+fn bring_to_front() -> Task<Message> {
+    iced::window::latest().and_then(|id| {
+        Task::batch([
+            iced::window::minimize(id, false),
+            iced::window::gain_focus(id),
+        ])
+    })
+}
+
+impl App {
+    /// Imports a dropped `.au2pkg.zip` into the instance of the open edit screen.
+    fn import_dropped(&mut self, path: std::path::PathBuf) -> Task<Message> {
+        let is_zip = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"));
+        if !(is_zip || is_au2pkg_filename(&path.to_string_lossy())) {
+            self.notice = Some(t!("au2pkg_unsupported_file").into_owned());
+            return Task::none();
+        }
+        let Some(state) = self.edit.as_ref() else {
+            self.notice = Some(t!("au2pkg_open_instance").into_owned());
+            return Task::none();
+        };
+        if state.kind != Kind::Aviutl2 {
+            self.notice = Some(t!("au2pkg_unsupported_kind").into_owned());
+            return Task::none();
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let handle = self
+            .services
+            .board
+            .add(format!("{}: {name}", t!("task_au2pkg")));
+        Task::perform(
+            self.services.clone().import_au2pkg(handle, state.id, path),
+            |()| Message::Finished,
+        )
+    }
+}
+
+/// Starts the download of the screenshots of the open package that no request covers yet.
+fn load_screenshots(services: &Services, state: &mut edit::State) -> Task<Message> {
+    let urls: Vec<String> = state
+        .viewing_package_id
+        .as_deref()
+        .and_then(|package_id| state.package(package_id))
+        .map(|package| {
+            package
+                .screenshots
+                .iter()
+                .filter(|url| !state.images.contains_key(*url))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let id = state.id;
+    let tasks: Vec<Task<Message>> = urls
+        .into_iter()
+        .map(|url| {
+            state.images.insert(url.clone(), edit::ImageState::Loading);
+            Task::perform(services.clone().fetch_image(url.clone()), move |result| {
+                Message::ImageLoaded(id, url.clone(), result)
+            })
+        })
+        .collect();
+    Task::batch(tasks)
 }

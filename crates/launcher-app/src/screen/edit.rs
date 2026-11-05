@@ -1,9 +1,9 @@
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use iced::alignment::Vertical;
-use iced::widget::{Id, checkbox, column, container, row, scrollable, text};
-use iced::{Element, Length, Padding, Task};
+use iced::widget::{Id, checkbox, column, container, image, mouse_area, row, scrollable, text};
+use iced::{ContentFit, Element, Length, Padding, Task};
 use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
@@ -11,7 +11,7 @@ use launcher_core::{
     InstallPlan, Instance, InstanceId, Kind, Package, PackageSource, SortOrder, sort_packages,
     today,
 };
-use launcher_providers::has_catalog;
+use launcher_providers::{has_catalog, parse_aviutl2_manifest};
 use rust_i18n::t;
 
 use crate::strings;
@@ -26,6 +26,8 @@ const DEFAULT_VIEWPORT: f32 = 600.0;
 const SUMMARY_CHARS: usize = 90;
 const ENTRY_PADDING: [f32; 2] = [10.0, 16.0];
 const INPUT_PADDING: f32 = 12.0;
+const THUMBNAIL_HEIGHT: f32 = 280.0;
+const PREVIEW_HEIGHT: f32 = 640.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -124,6 +126,7 @@ pub enum Message {
     NextScreenshot(usize),
     PrevScreenshot(usize),
     ShowLicense(Option<String>),
+    TogglePreview,
     // Config export & import
     ExportConfig,
     ImportConfig,
@@ -136,6 +139,14 @@ pub enum Catalog {
     Idle,
     Loading,
     Ready(Vec<Package>),
+    Failed(String),
+}
+
+/// A screenshot of the package detail view.
+#[derive(Debug, Clone)]
+pub enum ImageState {
+    Loading,
+    Ready(image::Handle),
     Failed(String),
 }
 
@@ -167,8 +178,14 @@ pub struct State {
     pub selected_commons: HashSet<String>,
     pub json_input: String,
     pub json_status: Option<Result<String, String>>,
+    /// Operations that installing the registered manifest performs, one per line.
+    pub json_log: Vec<String>,
     pub viewing_package_id: Option<String>,
     pub active_screenshot_idx: usize,
+    /// Screenshots by url.
+    pub images: HashMap<String, ImageState>,
+    /// The screenshot is shown at `PREVIEW_HEIGHT` instead of `THUMBNAIL_HEIGHT`.
+    pub preview_open: bool,
     pub license_dialog_content: Option<String>,
     pub update_preview: Option<Vec<UpdatePreviewItem>>,
     pub name: String,
@@ -195,8 +212,11 @@ impl State {
             selected_commons: HashSet::new(),
             json_input: String::new(),
             json_status: None,
+            json_log: Vec::new(),
             viewing_package_id: None,
             active_screenshot_idx: 0,
+            images: HashMap::new(),
+            preview_open: false,
             license_dialog_content: None,
             update_preview: None,
             name: instance.config.name.clone(),
@@ -220,6 +240,10 @@ impl State {
     }
 
     /// Tries to parse the json_input as a Package or RawEntry and append to catalog.
+    /// Registers the manifest in `json_input` into the open catalog and fills `json_log`
+    /// with the operations that installing it performs.
+    /// A manifest with an `installer` has the shape of an `index.json` entry.
+    /// A manifest without one registers a package that opens in the browser.
     pub fn register_json_package(&mut self) -> Result<String, String> {
         let text = self.json_input.trim();
         if text.is_empty() {
@@ -228,51 +252,56 @@ impl State {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(text);
         let value = parsed.map_err(|e| t!("json_invalid", error = e).into_owned())?;
 
-        // Extract package fields
-        let id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| t!("json_id_required").into_owned())?;
-        let name = value
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or(id)
-            .to_owned();
-        let summary = value
-            .get("overview")
-            .or_else(|| value.get("summary"))
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_owned();
-        let author = value
-            .get("author")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                value
-                    .get("developer")
-                    .and_then(|d| d.get("name"))
-                    .and_then(|v| v.as_str())
-            })
-            .unwrap_or("Unknown")
-            .to_owned();
+        let pkg = if value.get("installer").is_some() {
+            let package = parse_aviutl2_manifest(text)
+                .map_err(|e| t!("json_invalid", error = e).into_owned())?;
+            self.json_log = match &package.source {
+                PackageSource::Recipe(recipe) => recipe.outline(),
+                _ => vec![t!("json_log_browser").into_owned()],
+            };
+            package
+        } else {
+            self.json_log = vec![t!("json_log_browser").into_owned()];
+            let id = value
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| t!("json_id_required").into_owned())?;
+            let name = value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(id)
+                .to_owned();
+            let summary = value
+                .get("overview")
+                .or_else(|| value.get("summary"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_owned();
+            let author = value
+                .get("author")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    value
+                        .get("developer")
+                        .and_then(|d| d.get("name"))
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("Unknown")
+                .to_owned();
+            let niconi_commons_id = value
+                .get("niconiCommonsId")
+                .or_else(|| value.get("niconi_commons_id"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+            let page_url = url::Url::parse("https://github.com").unwrap();
+            let mut pkg = Package::simple(id, name, page_url.clone(), PackageSource::Web(page_url));
+            pkg.summary = summary;
+            pkg.author = author;
+            pkg.niconi_commons_id = niconi_commons_id;
+            pkg
+        };
 
-        let niconi_commons_id = value
-            .get("niconiCommonsId")
-            .or_else(|| value.get("niconi_commons_id"))
-            .and_then(|v| v.as_str())
-            .map(str::to_owned);
-
-        let page_url = url::Url::parse("https://github.com").unwrap();
-        let mut pkg = Package::simple(
-            id,
-            name,
-            page_url,
-            PackageSource::Web(url::Url::parse("https://github.com").unwrap()),
-        );
-        pkg.summary = summary;
-        pkg.author = author;
-        pkg.niconi_commons_id = niconi_commons_id;
-
+        let id = pkg.id.clone();
         match &mut self.catalog {
             Catalog::Ready(packages) => {
                 if let Some(pos) = packages.iter().position(|p| p.id == id) {
@@ -977,6 +1006,17 @@ fn category_bar<'a>(
         .into()
 }
 
+/// Why the installation waits for the confirmation of the user.
+fn pending_warning(pending: &Pending) -> String {
+    if !pending.package.deprecated {
+        return t!("unverified_warning").into_owned();
+    }
+    match &pending.package.deprecation_message {
+        Some(message) => t!("deprecated_install_warning_message", message = message).into_owned(),
+        None => t!("deprecated_install_warning").into_owned(),
+    }
+}
+
 fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
     m3::card(
         card::Style::filled(theme),
@@ -986,7 +1026,7 @@ fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
                 .color(theme.error()),
             style::label(
                 theme,
-                format!("{}: {}", pending.package.name, t!("unverified_warning"))
+                format!("{}: {}", pending.package.name, pending_warning(pending))
             )
             .size(13)
             .width(Length::Fill),
@@ -1365,6 +1405,22 @@ fn json_register_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Mess
         }
     }
 
+    if !state.json_log.is_empty() {
+        body = body.push(
+            style::label(theme, t!("json_log_title").into_owned())
+                .size(13)
+                .color(theme.primary()),
+        );
+        for line in &state.json_log {
+            body = body.push(
+                text(line.clone())
+                    .size(12)
+                    .font(iced::Font::MONOSPACE)
+                    .color(theme.on_surface_variant()),
+            );
+        }
+    }
+
     body.into()
 }
 
@@ -1513,6 +1569,34 @@ fn package_detail_view<'a>(
 
     let mut content = column![header, meta_bar].spacing(12);
 
+    if package.deprecated {
+        let message = package
+            .deprecation_message
+            .clone()
+            .unwrap_or_else(|| t!("deprecated_warning").into_owned());
+        content = content.push(
+            m3::card(
+                card::Style {
+                    container_color: theme.error_container(),
+                    ..card::Style::filled(theme)
+                },
+                row![
+                    style::icon(style::icons::WARNING)
+                        .size(20)
+                        .color(theme.error()),
+                    text(message)
+                        .size(13)
+                        .color(theme.on_surface())
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .padding(Padding::from([10.0, 14.0]))
+                .align_y(Vertical::Center),
+            )
+            .width(Length::Fill),
+        );
+    }
+
     // 6-19: Screenshot carousel
     if !package.screenshots.is_empty() {
         let len = package.screenshots.len();
@@ -1531,6 +1615,32 @@ fn package_detail_view<'a>(
         )
         .on_press(Message::NextScreenshot(len));
 
+        let picture: Element<'a, Message> = match state.images.get(current_url) {
+            Some(ImageState::Ready(handle)) => {
+                let height = if state.preview_open {
+                    PREVIEW_HEIGHT
+                } else {
+                    THUMBNAIL_HEIGHT
+                };
+                mouse_area(
+                    image(handle.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fixed(height))
+                        .content_fit(ContentFit::Contain),
+                )
+                .on_press(Message::TogglePreview)
+                .into()
+            }
+            Some(ImageState::Failed(reason)) => text(format!("{current_url}\n{reason}"))
+                .size(13)
+                .color(theme.error())
+                .into(),
+            _ => text(t!("image_loading").into_owned())
+                .size(13)
+                .color(theme.on_surface_variant())
+                .into(),
+        };
+
         let carousel_card = m3::card(
             card::Style::filled(theme),
             column![
@@ -1547,15 +1657,9 @@ fn package_detail_view<'a>(
                 .align_y(Vertical::Center),
                 m3::card(
                     style::tile_card(theme, false),
-                    row![
-                        style::icon(style::icons::IMAGE)
-                            .size(32)
-                            .color(theme.primary()),
-                        text(current_url).size(13).color(theme.on_surface_variant()),
-                    ]
-                    .spacing(12)
-                    .padding(Padding::from([16.0, 20.0]))
-                    .align_y(Vertical::Center),
+                    container(picture)
+                        .padding(Padding::from([8.0, 12.0]))
+                        .width(Length::Fill),
                 )
                 .width(Length::Fill),
             ]

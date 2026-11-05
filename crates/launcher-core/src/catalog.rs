@@ -16,6 +16,8 @@ const SHA384_SRI_PREFIX: &str = "sha384-";
 const SHA384_BYTES: usize = 48;
 const XXH3_128_HEX_DIGITS: usize = 32;
 const READ_CHUNK: usize = 64 * 1024;
+/// Seconds that `Step::RunAuoSetup` waits for the setup program.
+pub const AUO_SETUP_TIMEOUT_SECS: u64 = 600;
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +162,12 @@ pub struct Location {
 pub enum Step {
     /// Extracts the downloaded zip into `Root::Tmp`.
     Extract,
+    /// Extracts the downloaded 7z self-extracting executable into `Root::Tmp`.
+    /// The 7z data starts at the first 7z signature of the executable.
+    ExtractSfx,
+    /// Runs the setup program `auo_setup2.exe` at `path` and waits until it exits.
+    /// The exit code is ignored. The step fails after `AUO_SETUP_TIMEOUT_SECS` seconds.
+    RunAuoSetup { path: Location },
     /// Copies a file into the directory `to`, or the content of a directory into `to`.
     Copy { from: Location, to: Location },
     /// Copies an extracted file or directory to `<App>/<name>`.
@@ -200,6 +208,19 @@ impl Origin {
     }
 }
 
+fn describe(location: &Location) -> String {
+    let root = match location.root {
+        Root::Tmp => "tmp",
+        Root::App => "app",
+        Root::Data => "data",
+    };
+    if location.rel.is_empty() {
+        root.to_owned()
+    } else {
+        format!("{root}/{}", location.rel)
+    }
+}
+
 /// Installation procedure that a catalog entry describes. The download URL is resolved from `origin`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recipe {
@@ -210,6 +231,43 @@ pub struct Recipe {
     pub steps: Vec<Step>,
     /// Hashes of the files that exist after the steps ran.
     pub checks: Vec<FileCheck>,
+}
+
+impl Recipe {
+    /// One line per planned operation: the download, each step, and each hash check.
+    #[must_use]
+    pub fn outline(&self) -> Vec<String> {
+        let mut lines = vec![format!("download {}", self.origin.label())];
+        for step in &self.steps {
+            lines.push(match step {
+                Step::Extract => "extract zip -> tmp".to_owned(),
+                Step::ExtractSfx => "extract 7z self-extractor -> tmp".to_owned(),
+                Step::RunAuoSetup { path } => format!("run auo_setup2 {}", describe(path)),
+                Step::Copy { from, to } => format!("copy {} -> {}", describe(from), describe(to)),
+                Step::Place {
+                    name,
+                    archive_dir,
+                    directory,
+                } => format!(
+                    "place {} {name}{}",
+                    if *directory { "directory" } else { "file" },
+                    archive_dir
+                        .as_deref()
+                        .map(|dir| format!(" (archive directory {dir})"))
+                        .unwrap_or_default()
+                ),
+            });
+        }
+        for check in &self.checks {
+            lines.push(format!(
+                "check {:?} {} = {}",
+                check.hash.algo,
+                describe(&check.location),
+                check.hash.hex
+            ));
+        }
+        lines
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +309,9 @@ pub struct Package {
     pub tags: Vec<String>,
     #[serde(default)]
     pub deprecated: bool,
+    /// Text that the catalog gives for a deprecated package, e.g. the replacement to use.
+    #[serde(default)]
+    pub deprecation_message: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
     #[serde(default)]
@@ -284,6 +345,7 @@ impl Package {
             niconi_commons_id: None,
             tags: Vec::new(),
             deprecated: false,
+            deprecation_message: None,
             dependencies: Vec::new(),
             licenses: Vec::new(),
             changelog: None,

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use launcher_core::{
-    AppSelection, Edition, Host, InstallPlan, Origin, Package, PackageSource, Root, Step,
+    AppSelection, Edition, Host, InstallPlan, Location, Origin, Package, PackageSource, Root, Step,
 };
 use launcher_providers::{
     Aviutl2Provider, AviutlProvider, Http, HttpError, Provider, ProviderError, load_any,
@@ -577,4 +577,76 @@ fn aviutl2_catalog_lists_release_dates_newest_first() {
     );
     assert_eq!(package.latest_release(), Some("2026-03-01"));
     assert_eq!(package.first_release(), Some("2025-12-01"));
+}
+
+#[test]
+fn aviutl2_catalog_builds_a_recipe_for_a_self_extracting_installer() {
+    let index = json!([
+        entry(
+            "core",
+            json!({"direct": "https://x.example/setup.exe"}),
+            json!([])
+        ),
+        entry(
+            "sfx",
+            github_source(),
+            json!([
+                {"action": "download"},
+                {"action": "extractSfx"},
+                {"action": "copy", "from": "{tmp}/a.aux2", "to": "{pluginsDir}"},
+                {"action": "runAuoSetup", "path": "{appDir}/exe_files/auo_setup2.exe"}
+            ])
+        ),
+    ]);
+    let packages = parse_aviutl2_catalog(&bytes(&index)).unwrap();
+    let PackageSource::Recipe(recipe) = &find(&packages, "sfx").source else {
+        panic!("a recipe is expected");
+    };
+    assert_eq!(
+        recipe.steps,
+        [
+            Step::ExtractSfx,
+            Step::Copy {
+                from: Location {
+                    root: Root::Tmp,
+                    rel: "a.aux2".to_owned()
+                },
+                to: Location {
+                    root: Root::Data,
+                    rel: "Plugin".to_owned()
+                },
+            },
+            Step::RunAuoSetup {
+                path: Location {
+                    root: Root::App,
+                    rel: "exe_files/auo_setup2.exe".to_owned()
+                },
+            },
+        ]
+    );
+}
+
+#[test]
+fn aviutl2_catalog_resolves_screenshots_and_keeps_the_deprecation_message() {
+    let mut shot = entry("shot", github_source(), copy_actions());
+    shot["images"] = json!({"detailImages": ["https://x.example/a.png", "shots/b.png"]});
+    shot["deprecation"] = json!({"message": "Use the successor."});
+    let index = json!([
+        entry(
+            "core",
+            json!({"direct": "https://x.example/setup.exe"}),
+            json!([])
+        ),
+        shot,
+    ]);
+    let packages = parse_aviutl2_catalog(&bytes(&index)).unwrap();
+    let package = find(&packages, "shot");
+    assert_eq!(package.screenshots[0], "https://x.example/a.png");
+    assert!(package.screenshots[1].starts_with("https://"));
+    assert!(package.screenshots[1].ends_with("/shots/b.png"));
+    assert!(package.deprecated);
+    assert_eq!(
+        package.deprecation_message.as_deref(),
+        Some("Use the successor.")
+    );
 }

@@ -72,60 +72,86 @@ pub fn is_booth_login_url(url: &Url) -> bool {
         || p.starts_with("/users/password/new")
 }
 
-/// Normalizes archive relative path.
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_start_matches('/')
-        .to_owned()
+/// A file of an `.au2pkg.zip` that the launcher installs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Au2pkgFile {
+    /// Entry path in the archive: `<root>/<relative path>`, with the canonical root name.
+    pub archive_path: String,
+    /// Canonical name of the first path component, one of `AU2PKG_ALLOWED_ROOTS`.
+    pub root: &'static str,
+    /// Directory below `<App>/data` that receives the file.
+    pub install_to: Location,
 }
 
-/// Converts au2pkg root folder to target installation path under App.
-fn target_rel_path(root: &str, relative: &str) -> String {
-    match root.to_ascii_lowercase().as_str() {
-        "plugin" => format!("plugins/{relative}"),
-        "script" => format!("scripts/{relative}"),
-        other => format!("data/{other}/{relative}"),
+fn normalize_path(path: &str) -> Vec<&str> {
+    path.split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect()
+}
+
+fn root_priority(root: &str) -> u8 {
+    match root {
+        "Plugin" => 0,
+        "Script" => 1,
+        _ => 2,
     }
 }
 
-/// Builds installation steps for entries inside an `.au2pkg` archive.
+/// Selects the entries whose first component names an allowed root and that hold a file below it.
+/// An entry with a `..` component is dropped. Duplicates collapse into one.
+/// The result lists `Plugin`, then `Script`, then the other roots, each sorted by path.
 #[must_use]
-pub fn build_au2pkg_steps(entries: &[&str]) -> Vec<Step> {
-    let mut steps = vec![Step::Extract];
-
+pub fn collect_au2pkg_files(entries: &[String]) -> Vec<Au2pkgFile> {
+    let mut files: Vec<Au2pkgFile> = Vec::new();
     for entry in entries {
-        let norm = normalize_path(entry);
-        if norm.is_empty() || norm.ends_with('/') {
+        let parts = normalize_path(entry);
+        if parts.len() < 2 || parts.contains(&"..") {
             continue;
         }
-        let parts: Vec<&str> = norm.split('/').collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let root_dir = parts[0];
-        let is_allowed = AU2PKG_ALLOWED_ROOTS
+        let Some(&root) = AU2PKG_ALLOWED_ROOTS
             .iter()
-            .any(|r| r.eq_ignore_ascii_case(root_dir));
-        if !is_allowed {
+            .find(|root| root.eq_ignore_ascii_case(parts[0]))
+        else {
+            continue;
+        };
+        let archive_path = parts.join("/").replacen(parts[0], root, 1);
+        if files.iter().any(|file| file.archive_path == archive_path) {
             continue;
         }
-
-        let rel = parts[1..].join("/");
-        let dest = target_rel_path(root_dir, &rel);
-
-        steps.push(Step::Copy {
-            from: Location {
-                root: Root::Tmp,
-                rel: norm,
-            },
-            to: Location {
-                root: Root::App,
-                rel: dest,
+        let parent = parts[1..parts.len() - 1].join("/");
+        let rel = if parent.is_empty() {
+            root.to_owned()
+        } else {
+            format!("{root}/{parent}")
+        };
+        files.push(Au2pkgFile {
+            archive_path,
+            root,
+            install_to: Location {
+                root: Root::Data,
+                rel,
             },
         });
     }
+    files.sort_by(|a, b| {
+        root_priority(a.root)
+            .cmp(&root_priority(b.root))
+            .then_with(|| a.archive_path.cmp(&b.archive_path))
+    });
+    files
+}
 
+/// Extracts the archive, then copies each file into its directory below `<App>/data`.
+#[must_use]
+pub fn build_au2pkg_steps(files: &[Au2pkgFile]) -> Vec<Step> {
+    let mut steps = vec![Step::Extract];
+    steps.extend(files.iter().map(|file| Step::Copy {
+        from: Location {
+            root: Root::Tmp,
+            rel: file.archive_path.clone(),
+        },
+        to: file.install_to.clone(),
+    }));
     steps
 }
 
@@ -160,14 +186,56 @@ mod tests {
         );
     }
 
+    fn names(entries: &[&str]) -> Vec<String> {
+        entries.iter().map(|entry| (*entry).to_owned()).collect()
+    }
+
     #[test]
-    fn test_build_steps() {
-        let entries = [
-            "Plugin/myplugin.dll",
+    fn collects_allowed_roots_in_install_order() {
+        let files = collect_au2pkg_files(&names(&[
             "Script/effect.anm",
+            "plugin/sub/a.auf2",
+            "Plugin/b.dll",
+            "Language/ja.txt",
             "Other/readme.txt",
-        ];
-        let steps = build_au2pkg_steps(&entries);
-        assert_eq!(steps.len(), 3); // Extract + 2 copied
+            "readme.txt",
+            "Plugin/b.dll",
+            "Plugin/../evil.dll",
+        ]));
+        let paths: Vec<&str> = files.iter().map(|f| f.archive_path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "Plugin/b.dll",
+                "Plugin/sub/a.auf2",
+                "Script/effect.anm",
+                "Language/ja.txt"
+            ]
+        );
+        assert_eq!(files[1].install_to.rel, "Plugin/sub");
+        assert_eq!(files[1].install_to.root, Root::Data);
+        assert_eq!(files[0].install_to.rel, "Plugin");
+        assert_eq!(files[3].install_to.rel, "Language");
+    }
+
+    #[test]
+    fn steps_extract_then_copy_each_file_into_its_directory() {
+        let files = collect_au2pkg_files(&names(&["Plugin/sub/a.auf2", "Script\\b.anm"]));
+        let steps = build_au2pkg_steps(&files);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0], Step::Extract);
+        assert_eq!(
+            steps[1],
+            Step::Copy {
+                from: Location {
+                    root: Root::Tmp,
+                    rel: "Plugin/sub/a.auf2".to_owned()
+                },
+                to: Location {
+                    root: Root::Data,
+                    rel: "Plugin/sub".to_owned()
+                },
+            }
+        );
     }
 }

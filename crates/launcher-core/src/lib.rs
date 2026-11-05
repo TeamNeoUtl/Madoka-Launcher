@@ -16,9 +16,10 @@ mod store;
 mod swap;
 mod task;
 
+pub use archive::{extract_sfx, zip_entry_names};
 pub use catalog::{
-    AppSelection, AppVersion, Artifact, FileCheck, Hash, HashAlgo, InstallPlan, Location, Origin,
-    Package, PackageSource, Recipe, Root, StagedPlan, Step,
+    AUO_SETUP_TIMEOUT_SECS, AppSelection, AppVersion, Artifact, FileCheck, Hash, HashAlgo,
+    InstallPlan, Location, Origin, Package, PackageSource, Recipe, Root, StagedPlan, Step,
 };
 pub use config::Config;
 pub use error::Error;

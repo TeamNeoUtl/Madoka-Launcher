@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tracing::debug;
+use tracing::{debug, info};
 
-use crate::archive::{Archive, Created, Layout, copy_file, make_dirs};
+use crate::archive::{Archive, Created, Layout, copy_file, extract_sfx, make_dirs};
 use crate::model::ensure_relative_path;
-use crate::{Error, FileCheck, Hash, Kind, Location, Root, Step, find_executable};
+use crate::{
+    AUO_SETUP_TIMEOUT_SECS, Error, FileCheck, Hash, Kind, Location, Root, Step, find_executable,
+};
 
 pub const DATA_DIR: &str = "data";
 
@@ -67,6 +69,14 @@ pub fn run(
                 })?;
                 Archive::open(download, Layout::Tree)?.extract(&tmp)?;
             }
+            Step::ExtractSfx => {
+                let tmp = roots.resolve(&Location {
+                    root: Root::Tmp,
+                    rel: String::new(),
+                })?;
+                extract_sfx(download, &tmp)?;
+            }
+            Step::RunAuoSetup { path } => run_auo_setup(&roots.resolve(path)?)?,
             Step::Copy { from, to } => {
                 copy(&roots.resolve(from)?, &roots.resolve(to)?, created)?;
             }
@@ -258,4 +268,30 @@ fn find_source(
             .collect(),
     )?
     .ok_or_else(|| Error::EntryNotFound(name.clone()))
+}
+
+/// Starts `exe` in its own directory and waits until it exits. The exit code is ignored.
+fn run_auo_setup(exe: &Path) -> Result<(), Error> {
+    let mut command = std::process::Command::new(exe);
+    if let Some(dir) = exe.parent() {
+        command.current_dir(dir);
+    }
+    let mut child = command.spawn().map_err(|source| Error::io(exe, source))?;
+    let started = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(AUO_SETUP_TIMEOUT_SECS);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|source| Error::io(exe, source))? {
+            info!(exe = %exe.display(), %status, "auo setup finished");
+            return Ok(());
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            return Err(Error::LaunchFailed {
+                exe: exe.to_owned(),
+                status: format!("no exit within {AUO_SETUP_TIMEOUT_SECS} seconds"),
+                log: String::new(),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }

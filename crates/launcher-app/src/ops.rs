@@ -7,10 +7,11 @@ use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
     Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
     Package, PackageSource, PluginRecord, ProgressSink, TaskBoard, TaskHandle, open_directory,
-    portable_root, set_portable,
+    portable_root, set_portable, zip_entry_names,
 };
+use launcher_providers::au2pkg::{build_au2pkg_steps, collect_au2pkg_files};
 use launcher_providers::{
-    Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
+    Dns, Http, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
     Versions, has_catalog, load_any, load_fresh, store_catalog,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -37,6 +38,9 @@ const BROWSER_PROFILE_DIR: &str = "browser-profile";
 const PART_SUFFIX: &str = ".part";
 const DEFAULT_FILE_NAME: &str = "download";
 const UNKNOWN_VERSION: &str = "-";
+const LOCAL_VERSION: &str = "local";
+/// Largest screenshot that `Services::fetch_image` returns.
+const IMAGE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const PLUGIN_ARCHIVE_EXTENSION: &str = "ymme";
 const ZIP_EXTENSION: &str = "zip";
 const FORBIDDEN_FILE_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
@@ -87,6 +91,28 @@ pub struct UpdateReport {
     pub browse: Vec<Package>,
     /// One text per package that failed to update.
     pub failures: Vec<String>,
+}
+
+/// One plugin of an exported `madoka-packages.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigEntry {
+    pub id: String,
+    pub version: Option<String>,
+    pub paused: bool,
+}
+
+/// Result of `Services::restore_config`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RestoreReport {
+    /// Plugins that the restore installed.
+    pub installed: usize,
+    /// Plugins whose `paused` flag the restore set.
+    pub paused: usize,
+    /// `<id> (<exported version> -> <installed version>)` for each plugin whose version differs.
+    /// The catalog offers the latest version only, so an older exported version cannot be installed.
+    pub version_differs: Vec<String>,
+    /// Plugins that are not in the catalog or whose installation needs the browser window.
+    pub unavailable: Vec<String>,
 }
 
 /// A download that the browser window completed.
@@ -649,6 +675,148 @@ impl Services {
         let _guard = self.locks.lock(id).await;
         let store = self.store.clone();
         blocking(move || store.set_plugin_paused(id, &plugin_id, paused).map(|_| ())).await
+    }
+
+    /// Downloads the screenshot at `url`. The GitHub token goes to `api.github.com` only.
+    pub async fn fetch_image(self, url: String) -> Result<Vec<u8>, String> {
+        let url = Url::parse(&url).map_err(|error| format!("{url}: {error}"))?;
+        ensure_web(&url).map_err(|error| error.to_string())?;
+        let bytes = self
+            .http()
+            .get(&url)
+            .await
+            .map_err(|error| error.to_string())?;
+        if bytes.len() > IMAGE_LIMIT_BYTES {
+            return Err(format!("{url}: larger than {IMAGE_LIMIT_BYTES} bytes"));
+        }
+        Ok(bytes)
+    }
+
+    /// Installs the `.au2pkg.zip` at `archive` into instance `id`.
+    /// Each entry below an allowed root (`Plugin`, `Script`, ...) goes to the same directory
+    /// below `<App>/data`, and the instance records the files for removal.
+    pub async fn import_au2pkg(self, handle: TaskHandle, id: InstanceId, archive: PathBuf) {
+        info!(%id, archive = %archive.display(), "au2pkg import task start");
+        let result = self.import_au2pkg_inner(&handle, id, archive).await;
+        log_outcome("au2pkg import", &result);
+        handle.finish(&result);
+    }
+
+    async fn import_au2pkg_inner(
+        &self,
+        handle: &TaskHandle,
+        id: InstanceId,
+        archive: PathBuf,
+    ) -> Result<PathBuf, OpError> {
+        handle.running(0, WRITE_STEPS);
+        let listed = archive.clone();
+        let entries = blocking(move || zip_entry_names(&listed)).await?;
+        let files = collect_au2pkg_files(&entries);
+        if files.is_empty() {
+            return Err(OpError::Worker(
+                "the archive has no entry below Plugin, Script, Language, Alias, Figure, Transition, Preset, or Default"
+                    .to_owned(),
+            ));
+        }
+        let name = archive
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let stem = name
+            .strip_suffix(".zip")
+            .unwrap_or(&name)
+            .trim_end_matches(".au2pkg")
+            .to_owned();
+        let page_url = Url::from_file_path(&archive).map_err(|()| {
+            OpError::Worker(format!("{}: not an absolute path", archive.display()))
+        })?;
+        let recipe = launcher_core::Recipe {
+            version: LOCAL_VERSION.to_owned(),
+            origin: launcher_core::Origin::Direct(page_url.clone()),
+            hash: None,
+            steps: build_au2pkg_steps(&files),
+            checks: Vec::new(),
+        };
+        let package = Package::simple(
+            format!("local.{stem}"),
+            stem,
+            page_url,
+            PackageSource::Recipe(recipe.clone()),
+        );
+        let _guard = self.locks.lock(id).await;
+        let installer = Arc::clone(&self.installer);
+        let source = archive.clone();
+        blocking(move || {
+            installer
+                .install_recipe_file(id, &package, &recipe, &source)
+                .map(drop)
+        })
+        .await?;
+        Ok(archive)
+    }
+
+    /// Installs the plugins of `entries` that instance `id` lacks, then sets `paused` on the
+    /// plugins whose entry has it. `install_label` prefixes the task title of each installation.
+    pub async fn restore_config(
+        self,
+        kind: Kind,
+        id: InstanceId,
+        install_label: String,
+        entries: Vec<ConfigEntry>,
+    ) -> RestoreReport {
+        let mut report = RestoreReport::default();
+        let catalog = self.clone().catalog(kind, false).await.unwrap_or_default();
+        for entry in entries {
+            let mut record = self.plugin_record(id, &entry.id).await;
+            if record.is_none() {
+                let Some(package) = catalog
+                    .iter()
+                    .find(|package| package.id == entry.id)
+                    .cloned()
+                else {
+                    report.unavailable.push(entry.id);
+                    continue;
+                };
+                let Ok((_, plan)) = self.clone().plan(kind, package.clone()).await else {
+                    report.unavailable.push(entry.id);
+                    continue;
+                };
+                let handle = self.board.add(format!("{install_label}: {}", package.name));
+                self.clone().install_plugin(handle, id, package, plan).await;
+                record = self.plugin_record(id, &entry.id).await;
+                if record.is_none() {
+                    report.unavailable.push(entry.id);
+                    continue;
+                }
+                report.installed += 1;
+            }
+            let Some(record) = record else { continue };
+            if let Some(version) = entry.version.filter(|version| *version != record.version) {
+                report
+                    .version_differs
+                    .push(format!("{} ({version} -> {})", entry.id, record.version));
+            }
+            if entry.paused
+                && self
+                    .clone()
+                    .set_plugin_paused(id, entry.id.clone(), true)
+                    .await
+                    .is_ok()
+            {
+                report.paused += 1;
+            }
+        }
+        report
+    }
+
+    async fn plugin_record(&self, id: InstanceId, plugin_id: &str) -> Option<PluginRecord> {
+        let store = self.store.clone();
+        let instance = blocking(move || store.load(id)).await.ok()?;
+        instance
+            .config
+            .plugins
+            .into_iter()
+            .find(|record| record.id == plugin_id)
     }
 
     /// Scans the instance directories (Plugin, Script) for manually added files,

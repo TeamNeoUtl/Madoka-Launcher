@@ -112,6 +112,7 @@ pub fn parse_ymm4_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
             niconi_commons_id: None,
             tags: Vec::new(),
             deprecated: false,
+            deprecation_message: None,
             dependencies: Vec::new(),
             licenses: Vec::new(),
             changelog: None,
