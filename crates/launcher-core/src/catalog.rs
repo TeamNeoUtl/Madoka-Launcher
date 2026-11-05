@@ -259,6 +259,9 @@ pub struct Package {
     pub changelog: Option<String>,
     #[serde(default)]
     pub screenshots: Vec<String>,
+    /// Release dates (`YYYY-MM-DD`) of every version the catalog lists, newest first.
+    #[serde(default)]
+    pub release_dates: Vec<String>,
 }
 
 impl Package {
@@ -285,7 +288,20 @@ impl Package {
             licenses: Vec::new(),
             changelog: None,
             screenshots: Vec::new(),
+            release_dates: Vec::new(),
         }
+    }
+
+    /// Release date of the newest version. `None` when the catalog lists no date.
+    #[must_use]
+    pub fn latest_release(&self) -> Option<&str> {
+        self.release_dates.first().map(String::as_str)
+    }
+
+    /// Release date of the oldest version. `None` when the catalog lists no date.
+    #[must_use]
+    pub fn first_release(&self) -> Option<&str> {
+        self.release_dates.last().map(String::as_str)
     }
 
     /// Version string that `PluginRecord::version` holds after the installation.

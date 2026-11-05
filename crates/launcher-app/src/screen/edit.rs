@@ -2,12 +2,15 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 
 use iced::alignment::Vertical;
-use iced::widget::{checkbox, column, container, row, scrollable, text};
-use iced::{Element, Length, Padding};
+use iced::widget::{Id, checkbox, column, container, row, scrollable, text};
+use iced::{Element, Length, Padding, Task};
 use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
-use launcher_core::{InstallPlan, Instance, InstanceId, Kind, Package, PackageSource};
+use launcher_core::{
+    InstallPlan, Instance, InstanceId, Kind, Package, PackageSource, SortOrder, sort_packages,
+    today,
+};
 use launcher_providers::has_catalog;
 use rust_i18n::t;
 
@@ -53,13 +56,21 @@ fn tabs() -> [(Tab, Cow<'static, str>, &'static str); 6] {
     ]
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SortOrder {
-    #[default]
-    Popularity,
-    Trend,
-    Newest,
-    Updated,
+/// Identifier of the scrollable that lists the catalog packages of the browse tab.
+fn browse_scroll_id() -> Id {
+    Id::new("browse-packages")
+}
+
+/// Scrolls the package list of the browse tab to `offset`.
+/// The list is rebuilt at offset 0 whenever the tab or the detail view is left and shown again.
+pub fn restore_scroll<T: 'static>(offset: f32) -> Task<T> {
+    iced::widget::operation::scroll_to(
+        browse_scroll_id(),
+        scrollable::AbsoluteOffset {
+            x: None,
+            y: Some(offset),
+        },
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -147,6 +158,9 @@ pub struct State {
     pub status_filter: StatusFilter,
     pub hide_deprecated: bool,
     pub scroll_y: f32,
+    /// Offset that `restore_scroll` requested. `Scrolled` events of the rebuilt list at
+    /// offset 0 do not overwrite `scroll_y` while this is set.
+    pub pending_scroll: Option<f32>,
     pub viewport_height: f32,
     pub catalog: Catalog,
     pub pending: Option<Pending>,
@@ -174,6 +188,7 @@ impl State {
             status_filter: StatusFilter::All,
             hide_deprecated: false,
             scroll_y: 0.0,
+            pending_scroll: None,
             viewport_height: DEFAULT_VIEWPORT,
             catalog: Catalog::Idle,
             pending: None,
@@ -785,18 +800,7 @@ fn browse_tab<'a>(
         .filter(|package| matches_query(package, &needle))
         .collect();
 
-    match state.sort_order {
-        SortOrder::Popularity => {}
-        SortOrder::Trend => {
-            shown.sort_by_key(|a| a.name.to_lowercase());
-        }
-        SortOrder::Newest => {
-            shown.sort_by(|a, b| b.name.cmp(&a.name));
-        }
-        SortOrder::Updated => {
-            shown.sort_by(|a, b| b.latest_version().cmp(&a.latest_version()));
-        }
-    }
+    sort_packages(&mut shown, state.sort_order, packages, today());
 
     if shown.is_empty() {
         return page
@@ -1030,6 +1034,7 @@ fn package_list<'a>(
     );
     rows.push(spacer(extent(total - end)));
     scrollable(column(rows).spacing(0))
+        .id(browse_scroll_id())
         .on_scroll(|viewport| {
             Message::Scrolled(viewport.absolute_offset().y, viewport.bounds().height)
         })

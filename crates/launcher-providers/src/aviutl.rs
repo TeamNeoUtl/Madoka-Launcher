@@ -309,6 +309,7 @@ pub fn parse_apm_packages(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
                 licenses: Vec::new(),
                 changelog: None,
                 screenshots: Vec::new(),
+                release_dates: Vec::new(),
             }
         })
         .collect())

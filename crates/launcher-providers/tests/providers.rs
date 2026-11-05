@@ -185,6 +185,7 @@ fn catalog_keeps_fields_and_order_and_splits_categories() {
     assert_eq!(packages[0].author, "a");
     assert_eq!(packages[0].summary, "d");
     assert_eq!(packages[0].updated.as_deref(), Some("2026-01-01"));
+    assert_eq!(packages[0].release_dates, ["2026-01-01"]);
 }
 
 #[test]

@@ -26,6 +26,8 @@ pub enum Error {
     EmptyName,
     #[error("plugin id is empty")]
     EmptyPluginId,
+    #[error("{0} data directory is unavailable")]
+    DataDirUnavailable(&'static str),
     #[error("unsafe relative path: {0}")]
     UnsafePath(String),
     #[error("host not allowed: {0}")]

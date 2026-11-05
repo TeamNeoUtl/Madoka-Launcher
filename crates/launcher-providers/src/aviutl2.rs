@@ -240,6 +240,14 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
                 .and_then(Value::as_str)
                 .map(str::to_owned);
 
+            let mut release_dates: Vec<String> = entry
+                .version
+                .iter()
+                .filter_map(|version| version.release_date.clone())
+                .collect();
+            release_dates.sort_unstable_by(|a, b| b.cmp(a));
+            release_dates.dedup();
+
             Package {
                 categories: vec![entry.r#type],
                 id: entry.id,
@@ -256,6 +264,7 @@ pub fn parse_aviutl2_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError
                 licenses: entry.licenses,
                 changelog,
                 screenshots,
+                release_dates,
             }
         })
         .collect();

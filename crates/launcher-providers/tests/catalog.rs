@@ -551,3 +551,30 @@ fn catalog_cache_round_trips_and_ignores_broken_files() {
     std::fs::write(path, b"{").unwrap();
     assert!(load_any(root.path(), launcher_core::Kind::Aviutl).is_none());
 }
+
+#[test]
+fn aviutl2_catalog_lists_release_dates_newest_first() {
+    let mut with_history = entry("history", github_source(), copy_actions());
+    with_history["version"] = json!([
+        { "version": "v1", "release_date": "2025-12-01", "file": [] },
+        { "version": "v3", "release_date": "2026-03-01", "file": [] },
+        { "version": "v2", "release_date": "2026-01-01", "file": [] },
+        { "version": "v0" }
+    ]);
+    let index = json!([
+        entry(
+            "core",
+            json!({"direct": "https://x.example/setup.exe"}),
+            json!([])
+        ),
+        with_history,
+    ]);
+    let packages = parse_aviutl2_catalog(&bytes(&index)).unwrap();
+    let package = find(&packages, "history");
+    assert_eq!(
+        package.release_dates,
+        ["2026-03-01", "2026-01-01", "2025-12-01"]
+    );
+    assert_eq!(package.latest_release(), Some("2026-03-01"));
+    assert_eq!(package.first_release(), Some("2025-12-01"));
+}

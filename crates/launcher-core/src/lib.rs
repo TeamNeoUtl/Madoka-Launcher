@@ -10,6 +10,7 @@ mod lock;
 mod model;
 mod paths;
 mod runner;
+mod sort;
 mod stage;
 mod store;
 mod swap;
@@ -29,9 +30,10 @@ pub use host::Host;
 pub use installer::Installer;
 pub use lock::InstanceLocks;
 pub use model::{Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord};
-pub use paths::default_root;
+pub use paths::{PORTABLE_DIR, default_root, portable_root, set_portable, standard_root};
 pub use runner::{
     Launched, PROBE_WINDOW, find_executable, is_instance_running, open_directory, open_url,
 };
+pub use sort::{SortOrder, TREND_DAYS, sort_packages, today};
 pub use store::{InstanceStore, ListFailure, Listing};
 pub use task::{TaskBoard, TaskHandle, TaskId, TaskInfo, TaskSink, TaskState};

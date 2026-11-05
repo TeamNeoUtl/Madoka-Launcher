@@ -7,6 +7,7 @@ use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
     Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
     Package, PackageSource, PluginRecord, ProgressSink, TaskBoard, TaskHandle, open_directory,
+    portable_root, set_portable,
 };
 use launcher_providers::{
     Dns, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
@@ -30,8 +31,9 @@ const BROWSER_EXE: &str = if cfg!(windows) {
 } else {
     "Madoka-Browser"
 };
-const BROWSER_DOWNLOAD_PREFIX: &str = "download ";
+const BROWSER_SAVED_PREFIX: &str = "saved ";
 const BROWSED_DIR: &str = "downloads";
+const BROWSER_PROFILE_DIR: &str = "browser-profile";
 const PART_SUFFIX: &str = ".part";
 const DEFAULT_FILE_NAME: &str = "download";
 const UNKNOWN_VERSION: &str = "-";
@@ -87,11 +89,14 @@ pub struct UpdateReport {
     pub failures: Vec<String>,
 }
 
-/// A download that started in the browser window.
+/// A download that the browser window completed.
 #[derive(Debug, Clone)]
 pub struct Browsed {
     pub url: Url,
     pub name: Option<String>,
+    /// File that the browser window saved with the session of the page.
+    /// `None` when the file still has to be fetched from `url`.
+    pub saved: Option<PathBuf>,
 }
 
 impl Browsed {
@@ -198,6 +203,16 @@ impl Services {
 
     pub fn root(&self) -> &std::path::Path {
         &self.root
+    }
+
+    /// `true` while the data directory is `<executable directory>/data`.
+    pub fn is_portable(&self) -> bool {
+        portable_root().is_some_and(|dir| dir == self.root)
+    }
+
+    /// Copies the data to the directory of the other mode. The next start uses that directory.
+    pub async fn switch_portable(enabled: bool) -> Result<(), OpError> {
+        blocking(move || set_portable(enabled)).await
     }
 
     /// GitHub token that `config.toml` held at start.
@@ -419,15 +434,24 @@ impl Services {
     }
 
     /// Shows `url` in the browser window and waits until the window closes.
-    /// Returns the download that started in the page. The window closes at that moment.
+    /// The window keeps its cookies in `<root>/browser-profile/`, so a login lasts across launches.
+    /// A download that starts in the page is saved by the window into `<root>/downloads/`
+    /// with the session of the page. The window closes when the file is complete,
+    /// and the result names that file.
     pub async fn browse(self, url: Url) -> Result<Option<Browsed>, OpError> {
         ensure_web(&url)?;
         let exe = std::env::current_exe()
             .map_err(|error| OpError::Worker(error.to_string()))?
             .with_file_name(BROWSER_EXE);
         let worker = |error: std::io::Error| OpError::Worker(format!("{}: {error}", exe.display()));
+        let profile = std::path::absolute(self.root.join(BROWSER_PROFILE_DIR)).map_err(worker)?;
+        let saves = std::path::absolute(self.root.join(BROWSED_DIR)).map_err(worker)?;
         let mut child = Command::new(&exe)
             .arg(url.as_str())
+            .arg("--profile")
+            .arg(&profile)
+            .arg("--save-dir")
+            .arg(&saves)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -444,22 +468,26 @@ impl Services {
         let mut lines = BufReader::new(stdout).lines();
         let mut found = None;
         while let Some(line) = lines.next_line().await.map_err(worker)? {
-            let Some((name, target)) = line
-                .strip_prefix(BROWSER_DOWNLOAD_PREFIX)
+            let Some((path, source)) = line
+                .strip_prefix(BROWSER_SAVED_PREFIX)
                 .and_then(|rest| rest.split_once('\t'))
             else {
                 continue;
             };
-            if let Ok(url) = Url::parse(target) {
+            let path = PathBuf::from(path);
+            if let Ok(source) = Url::parse(source) {
                 found = Some(Browsed {
-                    url,
-                    name: Some(name.to_owned()).filter(|name| !name.is_empty()),
+                    url: source,
+                    name: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned()),
+                    saved: Some(path),
                 });
                 break;
             }
         }
         if found.is_some() {
-            child.kill().await.map_err(worker)?;
+            child.wait().await.map_err(worker)?;
         } else {
             let status = child.wait().await.map_err(worker)?;
             if !status.success() {
@@ -491,15 +519,12 @@ impl Services {
         handle.finish(&result);
     }
 
-    async fn download_browsed_inner(
+    /// Fetches `browsed.url` into `<root>/downloads/` without the session of the browser window.
+    async fn fetch_browsed(
         &self,
         handle: &TaskHandle,
-        id: InstanceId,
-        package: &Package,
         browsed: &Browsed,
     ) -> Result<PathBuf, OpError> {
-        ensure_web(&browsed.url)?;
-        handle.running(0, WRITE_STEPS);
         let dir = self.root.join(BROWSED_DIR);
         let name = browsed.file_name();
         let dest = blocking(move || {
@@ -521,6 +546,22 @@ impl Services {
             path: dest.clone(),
             source,
         })?;
+        Ok(dest)
+    }
+
+    async fn download_browsed_inner(
+        &self,
+        handle: &TaskHandle,
+        id: InstanceId,
+        package: &Package,
+        browsed: &Browsed,
+    ) -> Result<PathBuf, OpError> {
+        ensure_web(&browsed.url)?;
+        handle.running(0, WRITE_STEPS);
+        let dest = match &browsed.saved {
+            Some(path) => path.clone(),
+            None => self.fetch_browsed(handle, browsed).await?,
+        };
         let recipe = match &package.source {
             PackageSource::Recipe(recipe) if is_zip(&dest) => Some(recipe.clone()),
             _ => None,

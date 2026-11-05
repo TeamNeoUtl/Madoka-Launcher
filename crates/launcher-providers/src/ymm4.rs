@@ -105,6 +105,7 @@ pub fn parse_ymm4_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
                 .filter(|category| !category.is_empty())
                 .map(str::to_owned)
                 .collect(),
+            release_dates: vec![entry.date.clone()],
             updated: Some(entry.date),
             page_url,
             source,

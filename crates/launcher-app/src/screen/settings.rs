@@ -25,6 +25,7 @@ pub enum Message {
     ThemeToggled,
     FontSelected(Option<String>),
     LocaleSelected(Locale),
+    PortableToggled(bool),
     OpenDataDirectory,
     CheckUpdate,
     ApplyUpdate,
@@ -46,6 +47,7 @@ pub struct Form {
     pub font: Option<String>,
     pub fonts: Vec<String>,
     pub locale: Locale,
+    pub portable: bool,
     pub update: UpdateState,
 }
 
@@ -106,6 +108,20 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
         card::Style::filled(theme),
         column![
             version_row(&form.update, theme),
+            row![
+                row![
+                    style::icon(style::icons::FOLDER_OPEN)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, t!("portable_mode")).size(14),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center)
+                .width(Length::Fill),
+                switch(theme, form.portable).on_toggle(Message::PortableToggled(!form.portable)),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
             row![
                 row![
                     style::icon(style::icons::FOLDER_OPEN)

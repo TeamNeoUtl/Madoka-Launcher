@@ -38,6 +38,7 @@ pub enum Message {
     TabSelected(Screen),
     ThemeToggled,
     Saved(Result<(), String>),
+    PortableSwitched(bool, Result<(), String>),
     FontsLoaded(Result<Vec<String>, String>),
     Loaded(Result<Loaded, String>),
     VersionsLoaded(Kind, Result<Versions, String>),
@@ -108,6 +109,7 @@ impl App {
             font: services.font_name().map(str::to_owned),
             fonts: Vec::new(),
             locale: services.locale(),
+            portable: services.is_portable(),
             update: settings::UpdateState::Checking,
             dns: services
                 .dns_servers()
@@ -167,6 +169,16 @@ impl App {
                     Message::Saved(result.map_err(|error| error.to_string()))
                 })
             }
+            Message::PortableSwitched(enabled, result) => {
+                self.notice = Some(match result {
+                    Ok(()) => {
+                        self.settings.portable = enabled;
+                        t!("portable_restart").into_owned()
+                    }
+                    Err(reason) => reason,
+                });
+                Task::none()
+            }
             Message::FontsLoaded(result) => {
                 match result {
                     Ok(fonts) => self.settings.fonts = fonts,
@@ -197,6 +209,9 @@ impl App {
                         Ok(packages) => Catalog::Ready(packages),
                         Err(reason) => Catalog::Failed(reason),
                     };
+                    if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
+                        return restore_browse_scroll(state);
+                    }
                 }
                 Task::none()
             }
@@ -707,11 +722,14 @@ impl App {
             }
             M::TabSelected(tab) => {
                 state.tab = tab;
-                if tab == Tab::Browse && state.needs_catalog() {
+                if tab != Tab::Browse {
+                    return Task::none();
+                }
+                if state.needs_catalog() {
                     state.catalog = Catalog::Loading;
                     return self.load_catalog(false);
                 }
-                Task::none()
+                restore_browse_scroll(state)
             }
             M::SearchChanged(search) => {
                 state.search = search;
@@ -722,8 +740,14 @@ impl App {
                 Task::none()
             }
             M::Scrolled(offset, height) => {
-                state.scroll_y = offset;
                 state.viewport_height = height;
+                match state.pending_scroll {
+                    Some(target) if offset <= 0.0 && target > 0.0 => {}
+                    _ => {
+                        state.pending_scroll = None;
+                        state.scroll_y = offset;
+                    }
+                }
                 Task::none()
             }
             M::ReloadCatalog => {
@@ -933,8 +957,12 @@ impl App {
                 Task::none()
             }
             M::ViewPackageDetails(pkg_id) => {
+                let closed = pkg_id.is_none();
                 state.viewing_package_id = pkg_id;
                 state.active_screenshot_idx = 0;
+                if closed && state.tab == Tab::Browse {
+                    return restore_browse_scroll(state);
+                }
                 Task::none()
             }
             M::NextScreenshot(len) => {
@@ -1043,6 +1071,11 @@ impl App {
                 self.notice = Some(t!("locale_saved").into_owned());
                 Task::perform(self.services.clone().save_locale(locale), |result| {
                     Message::Saved(result.map_err(|error| error.to_string()))
+                })
+            }
+            M::PortableToggled(enabled) => {
+                Task::perform(Services::switch_portable(enabled), move |result| {
+                    Message::PortableSwitched(enabled, result.map_err(|error| error.to_string()))
                 })
             }
             M::CheckUpdate => {
@@ -1347,4 +1380,13 @@ async fn pick_text() -> Option<String> {
         .pick_file()
         .await?;
     String::from_utf8(handle.read().await).ok()
+}
+
+/// Returns the task that scrolls the browse list back to the offset of `state`.
+fn restore_browse_scroll(state: &mut edit::State) -> Task<Message> {
+    state.pending_scroll = Some(state.scroll_y).filter(|offset| *offset > 0.0);
+    match state.pending_scroll {
+        Some(offset) => edit::restore_scroll(offset),
+        None => Task::none(),
+    }
 }
