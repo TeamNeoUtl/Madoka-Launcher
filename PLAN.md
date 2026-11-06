@@ -288,3 +288,75 @@ flowchart TD
 | :--- | :--- | :--- |
 | 動作確認 | 実機で 5-18 の `scroll_to`、10-32 の BOOTH ログイン維持とダウンロード保存、10-33 の `runAuoSetup` を確認 | - |
 | 上流スキーマ | 上流は `meta/content/install/versions` 形式の配布スキーマへ移行済み。`index.json` が同形式を維持するか確認 | `launcher-providers/src/aviutl2.rs` |
+
+PLAN.md の「完了」表記 38 項目のうち、コード上の欠陥 9 件、記載との差異 14 件を確認した。ビルドと実行はしていない。判定はソース読解のみによる。
+
+## A. 修正済み項目（ソース読解のみ。ビルドと実行は未実施）
+
+| # | 機能 | 修正 | 箇所 |
+|---|---|---|---|
+| 1 | 4-12 | `pending_install` を保持し、`CatalogLoaded` 後に `Install` を送信 | `app.rs`, `edit.rs` |
+| 2 | 9-30 | `Root::Data` を判定。走査対象に `app/data/{Plugin,Plugins,Script,Scripts}` を追加 | `hash.rs` |
+| 2a | 9-30 | 記録パスを instance の `app_dir` 相対へ変換 | `ops.rs` |
+| 3 | 7-26 | 差分 0 件のとき `update_all` を直接実行 | `app.rs` |
+| 4 | カタログ | 編集画面を開く時と任意タブ選択時に読込 | `app.rs` |
+| 5 | 2-7 | 登録済みマニフェストを `State.registered` に保持し、読込結果へ統合 | `edit.rs`, `app.rs` |
+| 6 | 1-3 | `Created` で `pending_recommended` を常に解除 | `app.rs` |
+| 7 | 10-32 | 未対応ファイルを `OpError::Unsupported` で失敗扱い | `ops.rs` |
+| 8 | 6-22 | `AuthorSelected` で検索設定と `viewing_package_id` 解除を同時実行 | `edit.rs`, `app.rs` |
+| 9 | 6-23 | `licenses` を文字列・オブジェクトの両形式で受理。`License { name, body }` 新設。条文8種を `launcher-providers/assets/licenses/` に同梱。ダイアログを一覧の上段へ移動 | `catalog.rs`, `aviutl2.rs`, `edit.rs` |
+
+## B. PLAN 記載との差異
+
+| 項目 | 差異 |
+|---|---|
+| 1-2 | ガード対象外の操作: `ConfigImported`、`FileDropped`、`Duplicate`。`is_running()` が `Scrolled` を含む全メッセージで実行され、毎回プロセス走査が発生する。 |
+| 1-3 | `setup.json` を読まず、ID 2 件を `app.rs` に直書きしている。 |
+| 2-5 | 詳細画面とカード内のコモンズ ID はチップ表示のみ。コピー操作と登録ガイド導線がない。 |
+| 4-11 | URL なしの二重起動は転送されず、別プロセスが起動する。ID をパーセントデコードしない。 |
+| 4-13 | ルートは `package/<id>` と `updates` のみ。インスタンス指定がない。`updates` はランチャー更新の確認画面で、プラグイン更新一覧ではない。 |
+| 5-17 | 代替案内は `deprecation_message` の文字列のみ。`OpenInBrowser` の経路は確認ダイアログなし。 |
+| 5-18 | State は編集画面を離れると破棄される。復元範囲は編集画面内のタブと詳細画面のみ。 |
+| 6-20 | リンク、強調、取り消し線、HTML を描画しない。 |
+| 6-21 | 依存パッケージの導入状態表示、未導入警告がない。カタログにない ID は押しても反応しない。 |
+| 6-24 / 7-26 | changelog は未分割の 1 文字列。版範囲の抽出がない。詳細画面は Markdown を描画しない。 |
+| 8-28 | `restore_config` は `is_verified()` を確認せずに導入する。 |
+| 8-29 | PLAN 本文はマニフェスト読取。実装はルート名判定のみ。`.zip` 全般を受理する。 |
+| 10-31 | Cookie 引継ぎは未実装（reqwest の cookies feature なし）。confirm フォームの入力で代替している。 |
+| 10-33 | `auo_setup2` が書くファイルは `files` と rollback の対象外。 |
+| 11-36 | 未翻訳の文字列: `by {author}`、`ID:`、`Unknown`、アラート名（NOTE など）。 |
+| 11-37 | `./data`（cwd）で有効な場合、`is_portable()` が `false` になる。複製は TaskBoard に載らず、進捗表示がない。 |
+
+## C. PLAN 本文と実装の位置の不一致（PLAN 側の修正対象）
+
+| PLAN の記載 | 実装 |
+|---|---|
+| `core/process.rs` | `runner.rs`（`is_instance_running`） |
+| `core/niconi.rs`、`Tab::NiconiCommons` | ファイルなし。`catalog.rs` の `niconi_commons_id` と `Tab::Commons` |
+| `providers/catalog.rs` | `aviutl2.rs`（`parse_aviutl2_manifest`） |
+| `app/i18n/` ディレクトリ | `i18n.rs` |
+| `core::portable` | `paths.rs` |
+| 依存 `sysinfo 0.33`、`rfd 0.15`、`interprocess 2.2` | `0.40`、`0.17`、`2` |
+| 依存 `image 0.25`、`twox-hash` | 未使用（画像は iced の `image` feature） |
+
+孤立ファイル: `screen/menu_bar.rs`。`mod.rs` に未登録で、`iced_aw` に依存せず、存在しない `style::theme_groups` を参照している。削除対象。
+
+## D. 残作業
+
+- **実機確認 3 件**: 5-18 の `scroll_to`、10-32 の BOOTH ログイン維持と保存、10-33 の `runAuoSetup`。
+- **ビルド確認**: A の 10 件は `cargo clippy --workspace --all-targets` と `cargo test --workspace` を未実行。
+- **上流スキーマ**: `aviutl2-catalog` は `manifest / list / detail / versions / install` 形式（`schemaVersion`）を使用する。`index.json` の実形式は未取得。`licenses` は文字列・オブジェクトの両形式を受理済み。
+- **9-30 制約**: 移動済みファイルを検出した場合、記録パスは配布時のパスで、実ファイルは削除対象にならない。
+
+## E. テスト計画（PLAN §5）の未実装
+
+- コモンズ ID の抽出・整形
+- `is_instance_running` と安全ガード
+- deeplink から導入までの結合
+- `restore_config`
+- AviUtl2 構成での `scan_and_register_manual_plugins`
+- 5 言語の yml のキー集合一致
+
+次の作業は、A の 9 件の修正から着手する。作業指示が必要であれば、A の番号で指定すること。
+
+Sources: [aviutl2-cli catalog_schema.rs](https://docs.rs/crate/aviutl2-cli/0.9.0-preview.0/source/src/catalog_schema.rs), [aviutl2-cli e2e.rs](https://docs.rs/crate/aviutl2-cli/0.8.3/source/tests/e2e.rs)

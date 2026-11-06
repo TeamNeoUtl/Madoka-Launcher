@@ -1,6 +1,6 @@
 use launcher_core::{
-    AppSelection, AppVersion, Artifact, FileCheck, Hash, Host, InstallPlan, Kind, Location, Origin,
-    Package, PackageSource, Recipe, Root, Step,
+    AppSelection, AppVersion, Artifact, FileCheck, Hash, Host, InstallPlan, Kind, License,
+    Location, Origin, Package, PackageSource, Recipe, Root, Step,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -55,11 +55,95 @@ struct RawEntry {
     #[serde(default)]
     dependencies: Vec<String>,
     #[serde(default)]
-    licenses: Vec<String>,
+    licenses: Vec<RawLicense>,
     #[serde(default)]
     changelog: Option<Value>,
     #[serde(default)]
     images: Option<Value>,
+}
+
+/// License templates of the upstream catalog; `<years>` and `<holder>` are placeholders.
+const LICENSE_TEMPLATES: [(&str, &str); 8] = [
+    ("MIT", include_str!("../assets/licenses/MIT.txt")),
+    (
+        "Apache-2.0",
+        include_str!("../assets/licenses/Apache-2.0.txt"),
+    ),
+    (
+        "BSD-2-Clause",
+        include_str!("../assets/licenses/BSD-2-Clause.txt"),
+    ),
+    (
+        "BSD-3-Clause",
+        include_str!("../assets/licenses/BSD-3-Clause.txt"),
+    ),
+    ("CC0-1.0", include_str!("../assets/licenses/CC0-1.0.txt")),
+    ("GPL-2.0", include_str!("../assets/licenses/GPL-2.0.txt")),
+    ("GPL-3.0", include_str!("../assets/licenses/GPL-3.0.txt")),
+    (
+        "Unlicense",
+        include_str!("../assets/licenses/Unlicense.txt"),
+    ),
+];
+
+/// A license as a bare name (flat schema) or as an object (`type`, `copyrights`, `licenseBody`).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawLicense {
+    Name(String),
+    Detail(RawLicenseDetail),
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLicenseDetail {
+    r#type: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    copyrights: Vec<RawCopyright>,
+    #[serde(default, rename = "licenseBody")]
+    license_body: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCopyright {
+    years: String,
+    holder: String,
+}
+
+fn license_of(raw: RawLicense) -> License {
+    let detail = match raw {
+        RawLicense::Name(name) => {
+            return License {
+                body: name.clone(),
+                name,
+            };
+        }
+        RawLicense::Detail(detail) => detail,
+    };
+    let name = detail.name.unwrap_or_else(|| detail.r#type.clone());
+    let custom = detail.license_body.filter(|body| !body.trim().is_empty());
+    let body = custom
+        .or_else(|| license_template(&detail.r#type, &detail.copyrights))
+        .unwrap_or_else(|| name.clone());
+    License { name, body }
+}
+
+/// Template of `kind` with the first copyright entry filled in. `None` for an unknown `kind`.
+fn license_template(kind: &str, copyrights: &[RawCopyright]) -> Option<String> {
+    let (_, template) = LICENSE_TEMPLATES.iter().find(|(name, _)| *name == kind)?;
+    let (years, holder) = copyrights
+        .first()
+        .map_or(("", ""), |c| (c.years.trim(), c.holder.trim()));
+    let text = Regex::new("(?i)<years>")
+        .ok()?
+        .replace_all(template, regex::NoExpand(years))
+        .into_owned();
+    let text = Regex::new("(?i)<holder>")
+        .ok()?
+        .replace_all(&text, regex::NoExpand(holder))
+        .into_owned();
+    Some(text.trim().to_owned())
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,7 +375,7 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
         deprecated,
         deprecation_message,
         dependencies: entry.dependencies,
-        licenses: entry.licenses,
+        licenses: entry.licenses.into_iter().map(license_of).collect(),
         changelog,
         screenshots,
         release_dates,

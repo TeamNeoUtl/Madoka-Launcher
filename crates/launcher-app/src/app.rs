@@ -224,13 +224,25 @@ impl App {
             Message::CatalogLoaded(id, result) => {
                 if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
                     state.catalog = match result {
-                        Ok(packages) => Catalog::Ready(packages),
+                        Ok(packages) => Catalog::Ready(state.with_registered(packages)),
                         Err(reason) => Catalog::Failed(reason),
                     };
-                    if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
-                        return restore_browse_scroll(state);
-                    }
-                    return load_screenshots(&self.services, state);
+                    let install = state
+                        .pending_install
+                        .take()
+                        .filter(|_| matches!(state.catalog, Catalog::Ready(_)));
+                    let follow = if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
+                        restore_browse_scroll(state)
+                    } else {
+                        load_screenshots(&self.services, state)
+                    };
+                    return match install {
+                        Some(pkg_id) => Task::batch([
+                            follow,
+                            Task::done(Message::Edit(edit::Message::Install(pkg_id))),
+                        ]),
+                        None => follow,
+                    };
                 }
                 Task::none()
             }
@@ -255,8 +267,8 @@ impl App {
                     self.selected = id;
                 }
                 let reload = self.reload();
-                if let Some(id) = id.filter(|_| self.pending_recommended) {
-                    self.pending_recommended = false;
+                let recommended = std::mem::take(&mut self.pending_recommended);
+                if let Some(id) = id.filter(|_| recommended) {
                     return Task::batch([reload, Task::done(Message::InstallRecommended(id))]);
                 }
                 reload
@@ -574,10 +586,19 @@ impl App {
                 let Some(instance) = self.selected_instance() else {
                     return Task::none();
                 };
-                self.edit = Some(edit::State::new(instance));
+                let mut state = edit::State::new(instance);
+                let load = state.needs_catalog();
+                if load {
+                    state.catalog = Catalog::Loading;
+                }
+                self.edit = Some(state);
                 self.screen = Screen::Edit;
                 self.notice = None;
-                Task::none()
+                if load {
+                    self.load_catalog(false)
+                } else {
+                    Task::none()
+                }
             }
             M::Duplicate => {
                 let Some(instance) = self.selected_instance() else {
@@ -765,13 +786,20 @@ impl App {
             }
             M::TabSelected(tab) => {
                 state.tab = tab;
-                if tab != Tab::Browse {
-                    return Task::none();
-                }
                 if state.needs_catalog() {
                     state.catalog = Catalog::Loading;
                     return self.load_catalog(false);
                 }
+                if tab != Tab::Browse {
+                    return Task::none();
+                }
+                restore_browse_scroll(state)
+            }
+            M::AuthorSelected(author) => {
+                state.search = author;
+                state.viewing_package_id = None;
+                state.active_screenshot_idx = 0;
+                state.preview_open = false;
                 restore_browse_scroll(state)
             }
             M::SearchChanged(search) => {
@@ -856,8 +884,8 @@ impl App {
                     }
                 }
                 if preview_items.is_empty() {
-                    self.notice = Some(t!("no_updates").into_owned());
-                    Task::none()
+                    state.update_preview = None;
+                    update_all_task(&self.services, id, &inst.config.name)
                 } else {
                     state.update_preview = Some(preview_items);
                     Task::none()
@@ -870,12 +898,7 @@ impl App {
                     .iter()
                     .find(|instance| instance.config.id == id)
                     .map_or_else(String::new, |instance| instance.config.name.clone());
-                let title = format!("{}: {name}", t!("task_update_all"));
-                let handle = self.services.board.add(title);
-                Task::perform(
-                    self.services.clone().update_all(handle, id),
-                    move |packages| Message::UpdatedAll(id, packages),
-                )
+                update_all_task(&self.services, id, &name)
             }
             M::CancelUpdateAll => {
                 state.update_preview = None;
@@ -1391,12 +1414,11 @@ impl App {
                 let mut state = edit::State::new(instance);
                 state.tab = Tab::Browse;
                 state.viewing_package_id = Some(pkg_id.clone());
+                state.pending_install = Some(pkg_id);
                 state.catalog = Catalog::Loading;
                 self.edit = Some(state);
                 self.screen = Screen::Edit;
-                let load = self.load_catalog(false);
-                let trigger_install = Task::done(Message::Edit(edit::Message::Install(pkg_id)));
-                Task::batch([load, trigger_install])
+                self.load_catalog(false)
             }
         }
     }
@@ -1525,4 +1547,13 @@ fn load_screenshots(services: &Services, state: &mut edit::State) -> Task<Messag
         })
         .collect();
     Task::batch(tasks)
+}
+
+fn update_all_task(services: &Services, id: InstanceId, name: &str) -> Task<Message> {
+    let handle = services
+        .board
+        .add(format!("{}: {name}", t!("task_update_all")));
+    Task::perform(services.clone().update_all(handle, id), move |packages| {
+        Message::UpdatedAll(id, packages)
+    })
 }

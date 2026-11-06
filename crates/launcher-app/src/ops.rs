@@ -53,6 +53,8 @@ pub enum OpError {
     Provider(Box<ProviderError>),
     #[error("worker failed: {0}")]
     Worker(String),
+    #[error("no install procedure for {0}")]
+    Unsupported(String),
 }
 
 impl From<Error> for OpError {
@@ -529,7 +531,8 @@ impl Services {
     }
 
     /// Saves the browsed download to `<root>/downloads/`.
-    /// A `.ymme` file is then installed as `package` into instance `id`.
+    /// A `.zip` file of a package with a recipe or a `.ymme` file is then installed into instance `id`.
+    /// Any other file fails with `OpError::Unsupported`; the saved file stays.
     pub async fn download_browsed(
         self,
         handle: TaskHandle,
@@ -592,24 +595,25 @@ impl Services {
             PackageSource::Recipe(recipe) if is_zip(&dest) => Some(recipe.clone()),
             _ => None,
         };
-        if recipe.is_some() || is_plugin_archive(&dest) {
-            let _guard = self.locks.lock(id).await;
-            let installer = Arc::clone(&self.installer);
-            let package = package.clone();
-            let version = package
-                .latest_version()
-                .unwrap_or(UNKNOWN_VERSION)
-                .to_owned();
-            let archive = dest.clone();
-            blocking(move || {
-                let record = match recipe {
-                    Some(recipe) => installer.install_recipe_file(id, &package, &recipe, &archive),
-                    None => installer.install_package_file(id, &package, &version, &archive),
-                };
-                record.map(drop)
-            })
-            .await?;
+        if recipe.is_none() && !is_plugin_archive(&dest) {
+            return Err(OpError::Unsupported(dest.display().to_string()));
         }
+        let _guard = self.locks.lock(id).await;
+        let installer = Arc::clone(&self.installer);
+        let package = package.clone();
+        let version = package
+            .latest_version()
+            .unwrap_or(UNKNOWN_VERSION)
+            .to_owned();
+        let archive = dest.clone();
+        blocking(move || {
+            let record = match recipe {
+                Some(recipe) => installer.install_recipe_file(id, &package, &recipe, &archive),
+                None => installer.install_package_file(id, &package, &version, &archive),
+            };
+            record.map(drop)
+        })
+        .await?;
         Ok(dest)
     }
 
@@ -836,6 +840,14 @@ impl Services {
         .await?;
 
         let app_dir = instance.app_dir();
+        let exe_dir = launcher_core::find_executable(
+            &app_dir,
+            instance.config.kind,
+            launcher_core::Host::Windows,
+        )
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| app_dir.clone());
         let registered: std::collections::HashSet<String> = instance
             .config
             .plugins
@@ -843,7 +855,7 @@ impl Services {
             .map(|plugin| plugin.id.clone())
             .collect();
         let found = tokio::task::spawn_blocking(move || {
-            let scanned = launcher_core::scan_xxh3_128(&app_dir);
+            let scanned = launcher_core::scan_xxh3_128(&exe_dir);
             let mut detected_names = Vec::new();
             for pkg in &packages {
                 if registered.contains(&pkg.id) {
@@ -852,7 +864,7 @@ impl Services {
                 let PackageSource::Recipe(recipe) = &pkg.source else {
                     continue;
                 };
-                if !launcher_core::is_present(&app_dir, &recipe.checks, &scanned) {
+                if !launcher_core::is_present(&exe_dir, &recipe.checks, &scanned) {
                     continue;
                 }
                 let record = PluginRecord {
@@ -862,7 +874,15 @@ impl Services {
                     files: recipe
                         .checks
                         .iter()
-                        .map(|check| check.location.rel.clone())
+                        .filter_map(|check| launcher_core::check_path(&exe_dir, check))
+                        .filter_map(|path| {
+                            path.strip_prefix(&app_dir).ok().map(|rel| {
+                                rel.components()
+                                    .map(|part| part.as_os_str().to_string_lossy())
+                                    .collect::<Vec<_>>()
+                                    .join("/")
+                            })
+                        })
                         .collect(),
                     paused: false,
                 };

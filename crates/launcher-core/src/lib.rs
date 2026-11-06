@@ -19,14 +19,14 @@ mod task;
 pub use archive::{extract_sfx, zip_entry_names};
 pub use catalog::{
     AUO_SETUP_TIMEOUT_SECS, AppSelection, AppVersion, Artifact, FileCheck, Hash, HashAlgo,
-    InstallPlan, Location, Origin, Package, PackageSource, Recipe, Root, StagedPlan, Step,
+    InstallPlan, License, Location, Origin, Package, PackageSource, Recipe, Root, StagedPlan, Step,
 };
 pub use config::Config;
 pub use error::Error;
 pub use fetch::{
     ALLOWED_HOSTS, Fetcher, HTTP_HOSTS, NoProgress, Progress, ProgressSink, is_allowed_url,
 };
-pub use hash::{SCAN_DIRS, is_present, scan_xxh3_128};
+pub use hash::{SCAN_DIRS, check_path, is_present, scan_xxh3_128};
 pub use host::Host;
 pub use installer::Installer;
 pub use lock::InstanceLocks;

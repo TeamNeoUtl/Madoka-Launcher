@@ -293,6 +293,34 @@ impl PackageSource {
     }
 }
 
+/// License of a package: the name shown on the chip and the full text shown in the dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "LicenseRepr")]
+pub struct License {
+    pub name: String,
+    pub body: String,
+}
+
+/// Cached packages written as a bare name stay readable.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LicenseRepr {
+    Name(String),
+    Full { name: String, body: String },
+}
+
+impl From<LicenseRepr> for License {
+    fn from(repr: LicenseRepr) -> Self {
+        match repr {
+            LicenseRepr::Name(name) => Self {
+                body: name.clone(),
+                name,
+            },
+            LicenseRepr::Full { name, body } => Self { name, body },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Package {
     pub id: String,
@@ -315,7 +343,7 @@ pub struct Package {
     #[serde(default)]
     pub dependencies: Vec<String>,
     #[serde(default)]
-    pub licenses: Vec<String>,
+    pub licenses: Vec<License>,
     #[serde(default)]
     pub changelog: Option<String>,
     #[serde(default)]

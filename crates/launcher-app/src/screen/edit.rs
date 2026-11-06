@@ -88,6 +88,7 @@ pub enum Message {
     Back,
     TabSelected(Tab),
     SearchChanged(String),
+    AuthorSelected(String),
     CategorySelected(Option<String>),
     TagToggled(String),
     TagsCleared,
@@ -174,6 +175,10 @@ pub struct State {
     pub pending_scroll: Option<f32>,
     pub viewport_height: f32,
     pub catalog: Catalog,
+    /// Manifests registered from JSON. They stay in the catalog after a reload.
+    pub registered: Vec<Package>,
+    /// Package that installs as soon as the catalog is loaded (`?install=true`).
+    pub pending_install: Option<String>,
     pub pending: Option<Pending>,
     pub selected_commons: HashSet<String>,
     pub json_input: String,
@@ -208,6 +213,8 @@ impl State {
             pending_scroll: None,
             viewport_height: DEFAULT_VIEWPORT,
             catalog: Catalog::Idle,
+            registered: Vec::new(),
+            pending_install: None,
             pending: None,
             selected_commons: HashSet::new(),
             json_input: String::new(),
@@ -229,6 +236,17 @@ impl State {
             Catalog::Ready(packages) => packages.iter().find(|package| package.id == id),
             _ => None,
         }
+    }
+
+    /// `packages` with the registered manifests, which replace entries of the same id.
+    pub fn with_registered(&self, mut packages: Vec<Package>) -> Vec<Package> {
+        for pkg in &self.registered {
+            match packages.iter().position(|p| p.id == pkg.id) {
+                Some(pos) => packages[pos] = pkg.clone(),
+                None => packages.insert(0, pkg.clone()),
+            }
+        }
+        packages
     }
 
     pub fn can_save(&self) -> bool {
@@ -302,16 +320,17 @@ impl State {
         };
 
         let id = pkg.id.clone();
-        match &mut self.catalog {
+        match self.registered.iter().position(|p| p.id == id) {
+            Some(pos) => self.registered[pos] = pkg,
+            None => self.registered.insert(0, pkg),
+        }
+        match &self.catalog {
             Catalog::Ready(packages) => {
-                if let Some(pos) = packages.iter().position(|p| p.id == id) {
-                    packages[pos] = pkg;
-                } else {
-                    packages.insert(0, pkg);
-                }
+                self.catalog = Catalog::Ready(self.with_registered(packages.clone()));
             }
-            _ => {
-                self.catalog = Catalog::Ready(vec![pkg]);
+            Catalog::Loading => {}
+            Catalog::Idle | Catalog::Failed(_) => {
+                self.catalog = Catalog::Ready(self.registered.clone());
             }
         }
         Ok(t!("json_registered", id = id).into_owned())
@@ -1547,7 +1566,7 @@ fn package_detail_view<'a>(
         button::Style::tonal(theme, Accent::Secondary),
         style::btn_content(style::icons::PERSON, &package.author),
     )
-    .on_press(Message::SearchChanged(package.author.clone()));
+    .on_press(Message::AuthorSelected(package.author.clone()));
 
     let meta_bar = row![
         style::icon(style::icons::PERSON)
@@ -1734,9 +1753,9 @@ fn package_detail_view<'a>(
             .map(|lic| {
                 m3::button(
                     button::Style::tonal(theme, Accent::Secondary),
-                    style::btn_content(style::icons::POLICY, lic.as_str()),
+                    style::btn_content(style::icons::POLICY, lic.name.as_str()),
                 )
-                .on_press(Message::ShowLicense(Some(lic.clone())))
+                .on_press(Message::ShowLicense(Some(lic.body.clone())))
                 .into()
             })
             .collect();
@@ -1785,8 +1804,8 @@ fn package_detail_view<'a>(
     }
 
     // License modal popup if active
-    if let Some(lic_text) = &state.license_dialog_content {
-        let modal = m3::card(
+    let modal = state.license_dialog_content.as_ref().map(|lic_text| {
+        m3::card(
             card::Style::filled(theme),
             column![
                 row![
@@ -1807,12 +1826,14 @@ fn package_detail_view<'a>(
             .spacing(10)
             .padding(Padding::from([14.0, 18.0])),
         )
-        .width(Length::Fill);
-        content = content.push(modal);
-    }
+        .width(Length::Fill)
+    });
 
-    scrollable(content)
+    let list = scrollable(content)
         .height(Length::Fill)
-        .style(style::scroll(theme))
-        .into()
+        .style(style::scroll(theme));
+    match modal {
+        Some(modal) => column![modal, list].spacing(8).into(),
+        None => list.into(),
+    }
 }

@@ -6,19 +6,24 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use crate::catalog::{FileCheck, Hash, HashAlgo, Root};
+use crate::stage::DATA_DIR;
 
-/// Directories under the app directory that hold manually placed plugins and scripts.
+/// Directories under the app directory and under its `data` directory
+/// that hold manually placed plugins and scripts.
 pub const SCAN_DIRS: [&str; 4] = ["Plugin", "Plugins", "Script", "Scripts"];
 
 const MAX_THREADS: usize = 8;
 
-/// XXH3-128 values of every file under `SCAN_DIRS` of `app_dir`, subdirectories included.
+/// XXH3-128 values of every file under `SCAN_DIRS` of `app_dir` and of `app_dir/data`,
+/// subdirectories included.
 /// Each value has 32 lowercase hexadecimal digits. Unreadable files are skipped.
 #[must_use]
 pub fn scan_xxh3_128(app_dir: &Path) -> HashSet<String> {
     let mut files = Vec::new();
-    for sub in SCAN_DIRS {
-        collect_files(&app_dir.join(sub), &mut files);
+    for base in [app_dir.to_path_buf(), app_dir.join(DATA_DIR)] {
+        for sub in SCAN_DIRS {
+            collect_files(&base.join(sub), &mut files);
+        }
     }
     if files.is_empty() {
         return HashSet::new();
@@ -51,21 +56,34 @@ pub fn scan_xxh3_128(app_dir: &Path) -> HashSet<String> {
 /// Holds when `checks` is not empty and every check holds.
 /// A check holds when the file at its path has the recorded hash,
 /// or, for XXH3-128, when a scanned file at another path has that hash.
-/// Checks outside `Root::App` do not hold.
+/// `app_dir` is the directory of the executable. `Root::Tmp` checks do not hold.
 #[must_use]
 pub fn is_present(app_dir: &Path, checks: &[FileCheck], scanned: &HashSet<String>) -> bool {
     !checks.is_empty() && checks.iter().all(|check| holds(app_dir, check, scanned))
 }
 
+/// Path of the file that `check` names, below `app_dir`, the directory of the executable.
+/// `None` for `Root::Tmp`.
+#[must_use]
+pub fn check_path(app_dir: &Path, check: &FileCheck) -> Option<PathBuf> {
+    let base = match check.location.root {
+        Root::App => app_dir.to_path_buf(),
+        Root::Data => app_dir.join(DATA_DIR),
+        Root::Tmp => return None,
+    };
+    Some(
+        check
+            .location
+            .rel
+            .split('/')
+            .fold(base, |path, part| path.join(part)),
+    )
+}
+
 fn holds(app_dir: &Path, check: &FileCheck, scanned: &HashSet<String>) -> bool {
-    if check.location.root != Root::App {
+    let Some(path) = check_path(app_dir, check) else {
         return false;
-    }
-    let path = check
-        .location
-        .rel
-        .split('/')
-        .fold(app_dir.to_path_buf(), |path, part| path.join(part));
+    };
     let expected = check.hash.hex.to_ascii_lowercase();
     if Hash::of_file(check.hash.algo, &path).is_ok_and(|hash| hash.hex == expected) {
         return true;
