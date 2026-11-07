@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio", "image"] }
-iced_m3 = { git = "https://github.com/TeamNeoUtl/iced-md3", default-features = false, features = ["expressive-defaults"] }
+iced_m3 = { git = "https://github.com/TeamNeoUtl/iced-md3", branch = "main", default-features = false, features = ["expressive-defaults"] }
 interprocess = "2"
 launcher-core = { path = "../launcher-core" }
 launcher-providers = { path = "../launcher-providers" }

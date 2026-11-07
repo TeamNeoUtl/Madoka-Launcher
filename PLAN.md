@@ -359,4 +359,33 @@ PLAN.md の「完了」表記 38 項目のうち、コード上の欠陥 9 件�
 
 次の作業は、A の 9 件の修正から着手する。作業指示が必要であれば、A の番号で指定すること。
 
-Sources: [aviutl2-cli catalog_schema.rs](https://docs.rs/crate/aviutl2-cli/0.9.0-preview.0/source/src/catalog_schema.rs), [aviutl2-cli e2e.rs](https://docs.rs/crate/aviutl2-cli/0.8.3/source/tests/e2e.rs)
+まず、アップロードされたファイルからPLAN.mdを探します。
+
+PLAN.mdが見つかりました。内容を読み取ります。
+
+PLAN.md §6（残作業）を対象に、依存関係順で並べます。
+
+| 順 | 項目 | 箇所 | 前提 |
+|---|---|---|---|
+| 1 | D 上流スキーマ: `index.json` の実形式を取得し、`licenses` の型を確定 | `launcher-providers/src/aviutl2.rs` | なし |
+| 2 | A9 `RawEntry.licenses` の型修正と条文表示 | `aviutl2.rs`, `edit.rs` | 1 |
+| 3 | A4 カタログ読込を `TabSelected(Browse)` から分離 | `app.rs` `update_edit` | 2 |
+| 4 | A5 JSON 登録時に `Catalog::Ready(vec![pkg])` へ置換しない | `edit.rs` `register_json_package` | 3 |
+| 5 | A1 `?install=true` をカタログ読込後に再送 | `app.rs` `handle_deeplink_action` | 3 |
+| 6 | A3 差分 0 件でも本体・拡張編集の更新を実行 | `app.rs` `RequestUpdateAll` | 3 |
+| 7 | A2 `holds()` の `Root::Data` 対応と走査対象に `app/data/Plugin` を追加 | `hash.rs`, `aviutl2.rs` | 3 |
+| 8 | A2a `PluginRecord.files` を `app_dir` 相対に変換 | `ops.rs` `scan_and_register_manual_plugins` | 7 |
+| 9 | A6 `Created(None)` で `pending_recommended` を解除 | `app.rs` `Created` | なし |
+| 10 | A8 作者ジャンプ時に `viewing_package_id` を解除 | `edit.rs` `package_detail_view` | なし |
+| 11 | A7 保存後の拡張子別処理を追加（`.zip` の Web ソース含む） | `ops.rs` `download_browsed_inner` | なし |
+| 12 | B 差異 14 件の修正（1-2、1-3、2-5、4-11、4-13、5-17、5-18、6-20、6-21、6-24/7-26、8-28、8-29、10-31、10-33、11-36、11-37） | B 表の各箇所 | 3〜11 |
+| 13 | E テスト 6 件の追加 | `crates/*/tests/` | 12 |
+| 14 | C PLAN.md の記載を実装位置へ更新、`screen/menu_bar.rs` を削除 | `PLAN.md`, `screen/menu_bar.rs` | 12 |
+| 15 | D 実機確認 3 件（5-18 `scroll_to`、10-32 BOOTH、10-33 `runAuoSetup`） | - | 3〜12 |
+
+順序の根拠:
+- 3 は 4、5、6、7 の前提です。A4 の記述では、Commons タブ、`RequestUpdateAll`、`ScanManualPlugins`、`SelectAllCommons` が `state.package()` に依存します。
+- 1 と 2 は 3 の前提です。A9 の記述では、`licenses` の型不一致で `parse_entries` が `CatalogShapeChanged` を返し、カタログ読込が失敗します。
+- 9、10、11 は他項目への依存がないため、並行して着手できます。
+
+指示は項番で受け付けます。
