@@ -22,17 +22,13 @@ pub fn standard_root() -> Option<PathBuf> {
     ProjectDirs::from("", "", "Madoka-Launcher").map(|dirs| dirs.data_dir().to_path_buf())
 }
 
-/// Portable mode is on while `<executable directory>/data` or `./data` is a directory.
+/// Portable mode is on while `<executable directory>/data` is a directory.
+/// The working directory does not select a mode, so turning the mode off always takes effect.
 #[must_use]
 pub fn default_root() -> Option<PathBuf> {
-    if let Some(portable) = portable_root().filter(|dir| dir.is_dir()) {
-        return Some(portable);
-    }
-    let local = PathBuf::from(PORTABLE_DIR);
-    if local.is_dir() {
-        return Some(local);
-    }
-    standard_root()
+    portable_root()
+        .filter(|dir| dir.is_dir())
+        .or_else(standard_root)
 }
 
 /// Copies the content of the current data directory into the target directory of the new mode,

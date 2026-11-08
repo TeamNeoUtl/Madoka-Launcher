@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ use launcher_providers::Versions;
 use launcher_providers::au2pkg::is_au2pkg_filename;
 
 use crate::deeplink::{self, DeepLinkAction};
-use crate::ops::{Browsed, ConfigEntry, Loaded, RestoreReport, Services};
+use crate::ops::{AppUpdates, Browsed, ConfigEntry, Loaded, RestoreReport, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
 use crate::screen::{main_screen, new_instance, settings, tasks};
 use crate::{strings, style};
@@ -47,6 +47,8 @@ pub enum Message {
     CatalogLoaded(InstanceId, Result<Vec<Package>, String>),
     Planned(InstanceId, Result<Box<(Package, InstallPlan)>, String>),
     Updated(Result<(), String>),
+    /// App and addon versions that the update of the instance installs.
+    AppUpdatesLoaded(InstanceId, Result<AppUpdates, String>),
     /// Packages that the update of the instance leaves to the browser window.
     UpdatedAll(InstanceId, Vec<Package>),
     Created(Option<InstanceId>),
@@ -97,10 +99,14 @@ pub struct App {
     notice: Option<String>,
     form: new_instance::Form,
     edit: Option<edit::State>,
+    /// Edit screens that the user left, by instance. Reopening restores tab, search and detail view.
+    saved_edits: HashMap<InstanceId, edit::State>,
     settings: settings::Form,
     browse_queue: VecDeque<(InstanceId, Package, Url)>,
     browsing: bool,
     pending_recommended: bool,
+    /// Start-up URL. It runs after the instance list has loaded.
+    pending_deeplink: Option<String>,
 }
 
 impl App {
@@ -133,21 +139,19 @@ impl App {
             notice: None,
             form,
             edit: None,
+            saved_edits: HashMap::new(),
             settings,
             browse_queue: VecDeque::new(),
             browsing: false,
             pending_recommended: false,
+            pending_deeplink: deeplink::url_from_args(),
         };
-        let initial_deeplink = deeplink::url_from_args()
-            .map(|url| Task::done(Message::DeepLinkUrl(url)))
-            .unwrap_or_else(Task::none);
         let load = Task::batch([
             app.reload(),
             Task::perform(crate::ops::installed_fonts(), |result| {
                 Message::FontsLoaded(result.map_err(|error| error.to_string()))
             }),
             app.check_update(false),
-            initial_deeplink,
         ]);
         (app, load)
     }
@@ -212,7 +216,9 @@ impl App {
             }
             Message::Loaded(result) => {
                 self.loaded(result);
-                Task::none()
+                self.pending_deeplink
+                    .take()
+                    .map_or_else(Task::none, |url| Task::done(Message::DeepLinkUrl(url)))
             }
             Message::VersionsLoaded(kind, result) => {
                 if kind == self.form.kind {
@@ -222,29 +228,22 @@ impl App {
                 Task::none()
             }
             Message::CatalogLoaded(id, result) => {
-                if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
-                    state.catalog = match result {
-                        Ok(packages) => Catalog::Ready(state.with_registered(packages)),
-                        Err(reason) => Catalog::Failed(reason),
-                    };
-                    let install = state
-                        .pending_install
-                        .take()
-                        .filter(|_| matches!(state.catalog, Catalog::Ready(_)));
-                    let follow = if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
-                        restore_browse_scroll(state)
-                    } else {
-                        load_screenshots(&self.services, state)
-                    };
-                    return match install {
-                        Some(pkg_id) => Task::batch([
-                            follow,
-                            Task::done(Message::Edit(edit::Message::Install(pkg_id))),
-                        ]),
-                        None => follow,
-                    };
-                }
-                Task::none()
+                let Some(state) = self.edit.as_mut().filter(|state| state.id == id) else {
+                    return Task::none();
+                };
+                state.catalog = match result {
+                    Ok(packages) => Catalog::Ready(state.with_registered(packages)),
+                    Err(reason) => Catalog::Failed(reason),
+                };
+                let follow = if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
+                    restore_browse_scroll(state)
+                } else {
+                    load_screenshots(&self.services, state)
+                };
+                Task::batch([follow, pending_follow_up(state)])
+            }
+            Message::AppUpdatesLoaded(id, result) => {
+                self.preview_updates(id, result.unwrap_or_default())
             }
             Message::Planned(id, result) => self.planned(id, result),
             Message::Updated(result) => match result {
@@ -278,6 +277,10 @@ impl App {
             Message::Browsed(id, package, result) => {
                 self.browsing = false;
                 let download = match result {
+                    Ok(Some(_)) if self.instance_running(id) => {
+                        self.notice = Some(t!("instance_running_error").into_owned());
+                        Task::none()
+                    }
                     Ok(Some(browsed)) => self.start_download(id, *package, browsed),
                     Ok(None) => Task::none(),
                     Err(reason) => {
@@ -345,6 +348,10 @@ impl App {
                 Task::none()
             }
             Message::ConfigImported(id, content) => {
+                if self.instance_running(id) {
+                    self.notice = Some(t!("instance_running_error").into_owned());
+                    return Task::none();
+                }
                 let Some(content) = content.filter(|s| !s.trim().is_empty()) else {
                     self.notice = Some(t!("config_empty").into_owned());
                     return Task::none();
@@ -419,8 +426,8 @@ impl App {
                 self.reload()
             }
             Message::DeepLinkUrl(url) => {
-                if let Some(action) = deeplink::parse(&url) {
-                    self.handle_deeplink_action(action)
+                if let Some((instance, action)) = deeplink::parse_targeted(&url) {
+                    self.handle_deeplink_action(instance, action)
                 } else {
                     self.notice = Some(t!("deeplink_unknown", url = url).into_owned());
                     Task::none()
@@ -560,7 +567,7 @@ impl App {
     fn select_screen(&mut self, screen: Screen) -> Task<Message> {
         self.screen = screen;
         if screen != Screen::Edit {
-            self.edit = None;
+            self.stash_edit();
         }
         if screen == Screen::NewInstance && self.form.needs_load() {
             self.form.begin_load();
@@ -586,25 +593,19 @@ impl App {
                 let Some(instance) = self.selected_instance() else {
                     return Task::none();
                 };
-                let mut state = edit::State::new(instance);
-                let load = state.needs_catalog();
-                if load {
-                    state.catalog = Catalog::Loading;
-                }
-                self.edit = Some(state);
-                self.screen = Screen::Edit;
+                let id = instance.config.id;
                 self.notice = None;
-                if load {
-                    self.load_catalog(false)
-                } else {
-                    Task::none()
-                }
+                self.open_edit(id, |_| {})
             }
             M::Duplicate => {
                 let Some(instance) = self.selected_instance() else {
                     return Task::none();
                 };
                 let id = instance.config.id;
+                if instance.is_running() {
+                    self.notice = Some(t!("instance_running_error").into_owned());
+                    return Task::none();
+                }
                 let name = format!("{}{}", instance.config.name, t!("copy_suffix"));
                 let handle = self.services.board.add(format!(
                     "{}: {}",
@@ -753,34 +754,42 @@ impl App {
         }
     }
 
+    /// Scans the processes, so call it only for operations that the guard covers.
+    fn instance_running(&self, id: InstanceId) -> bool {
+        self.instances
+            .iter()
+            .find(|inst| inst.config.id == id)
+            .is_some_and(launcher_core::Instance::is_running)
+    }
+
     fn update_edit(&mut self, message: edit::Message) -> Task<Message> {
         use edit::Message as M;
         let Some(state) = self.edit.as_mut() else {
             return Task::none();
         };
         let id = state.id;
-        let is_running = self
-            .instances
-            .iter()
-            .find(|inst| inst.config.id == id)
-            .is_some_and(launcher_core::Instance::is_running);
-        if is_running
-            && matches!(
-                message,
-                M::Install(_)
-                    | M::ConfirmPending
-                    | M::Remove(_)
-                    | M::RequestUpdateAll
-                    | M::ConfirmUpdateAll
-                    | M::SaveSettings
-            )
+        let guarded = matches!(
+            message,
+            M::Install(_)
+                | M::ConfirmPending
+                | M::Remove(_)
+                | M::RequestUpdateAll
+                | M::ConfirmUpdateAll
+                | M::SaveSettings
+        );
+        if guarded
+            && self
+                .instances
+                .iter()
+                .find(|inst| inst.config.id == id)
+                .is_some_and(launcher_core::Instance::is_running)
         {
             self.notice = Some(t!("instance_running_error").into_owned());
             return Task::none();
         }
         match message {
             M::Back => {
-                self.edit = None;
+                self.stash_edit();
                 self.screen = Screen::Main;
                 Task::none()
             }
@@ -838,14 +847,18 @@ impl App {
                 let Some(package) = state.package(&package_id).cloned() else {
                     return Task::none();
                 };
-                let url = package.page_url.clone();
-                self.enqueue_browse(id, package, url)
+                let plan = InstallPlan::OpenInBrowser(package.page_url.clone());
+                state.pending = Some(Pending { package, plan });
+                Task::none()
             }
             M::ConfirmPending => {
                 let Some(Pending { package, plan }) = state.pending.take() else {
                     return Task::none();
                 };
-                self.start_install(id, package, plan)
+                match plan {
+                    InstallPlan::OpenInBrowser(url) => self.enqueue_browse(id, package, url),
+                    plan => self.start_install(id, package, plan),
+                }
             }
             M::CancelPending => {
                 state.pending = None;
@@ -860,36 +873,13 @@ impl App {
                 )
             }
             M::RequestUpdateAll => {
-                let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
+                if matches!(state.catalog, Catalog::Loading) {
+                    state.pending_updates = true;
                     return Task::none();
-                };
-                let mut preview_items = Vec::new();
-                for record in &inst.config.plugins {
-                    if record.paused {
-                        continue;
-                    }
-                    let Some(pkg) = state.package(&record.id) else {
-                        continue;
-                    };
-                    let Some(latest) = pkg.latest_version() else {
-                        continue;
-                    };
-                    if latest != record.version {
-                        preview_items.push((
-                            pkg.name.clone(),
-                            record.version.clone(),
-                            latest.to_owned(),
-                            pkg.changelog.clone(),
-                        ));
-                    }
                 }
-                if preview_items.is_empty() {
-                    state.update_preview = None;
-                    update_all_task(&self.services, id, &inst.config.name)
-                } else {
-                    state.update_preview = Some(preview_items);
-                    Task::none()
-                }
+                Task::perform(self.services.clone().app_updates(id), move |result| {
+                    Message::AppUpdatesLoaded(id, result.map_err(|error| error.to_string()))
+                })
             }
             M::ConfirmUpdateAll => {
                 state.update_preview = None;
@@ -987,9 +977,20 @@ impl App {
                 iced::clipboard::write(commons_id)
             }
             M::OpenCommonsUrl(commons_id) => {
-                if let Ok(url) =
-                    url::Url::parse(&format!("https://commons.nicovideo.jp/works/{commons_id}"))
-                {
+                if let Some(url) = launcher_core::commons_url(&commons_id) {
+                    let _ = launcher_core::open_url(&url, launcher_core::Host::current());
+                }
+                Task::none()
+            }
+            M::OpenLink(link) => {
+                // Only web links open; other schemes in catalog text are ignored.
+                if let Ok(url) = url::Url::parse(&link).and_then(|url| {
+                    if matches!(url.scheme(), "http" | "https") {
+                        Ok(url)
+                    } else {
+                        Err(url::ParseError::RelativeUrlWithoutBase)
+                    }
+                }) {
                     let _ = launcher_core::open_url(&url, launcher_core::Host::current());
                 }
                 Task::none()
@@ -1160,9 +1161,16 @@ impl App {
                 })
             }
             M::PortableToggled(enabled) => {
-                Task::perform(Services::switch_portable(enabled), move |result| {
-                    Message::PortableSwitched(enabled, result.map_err(|error| error.to_string()))
-                })
+                let handle = self.services.board.add(t!("task_portable").into_owned());
+                Task::perform(
+                    self.services.clone().switch_portable(handle, enabled),
+                    move |result| {
+                        Message::PortableSwitched(
+                            enabled,
+                            result.map_err(|error| error.to_string()),
+                        )
+                    },
+                )
             }
             M::CheckUpdate => {
                 self.settings.update = settings::UpdateState::Checking;
@@ -1204,7 +1212,16 @@ impl App {
             }
         };
         match plan {
-            InstallPlan::OpenInBrowser(url) => self.enqueue_browse(id, package, url),
+            plan @ InstallPlan::OpenInBrowser(_) => {
+                if let Some(state) = self.edit.as_mut().filter(|state| state.id == id) {
+                    state.pending = Some(Pending { package, plan });
+                    Task::none()
+                } else if let InstallPlan::OpenInBrowser(url) = plan {
+                    self.enqueue_browse(id, package, url)
+                } else {
+                    Task::none()
+                }
+            }
             plan if plan.is_verified() && !package.deprecated => {
                 self.start_install(id, package, plan)
             }
@@ -1217,26 +1234,24 @@ impl App {
         }
     }
 
+    /// Installs the recommended plugins. The report lists the ones that need the browser window.
     fn install_recommended_plugins(&self, id: InstanceId) -> Task<Message> {
-        let services = self.services.clone();
+        let entries = strings::RECOMMENDED_PLUGIN_IDS
+            .iter()
+            .map(|plugin_id| ConfigEntry {
+                id: (*plugin_id).to_owned(),
+                version: None,
+                paused: false,
+            })
+            .collect();
         Task::perform(
-            async move {
-                let Ok(packages) = services.clone().catalog(Kind::Aviutl2, false).await else {
-                    return;
-                };
-                let targets = ["rigaya.x264guiEx", "Mr-Ojii.L-SMASH-Works"];
-                for target_id in targets {
-                    let Some(pkg) = packages.iter().find(|p| p.id == target_id).cloned() else {
-                        continue;
-                    };
-                    if let Ok((_, plan)) = services.clone().plan(Kind::Aviutl2, pkg.clone()).await {
-                        let title = format!("{}: {}", t!("task_install"), pkg.name);
-                        let handle = services.board.add(title);
-                        services.clone().install_plugin(handle, id, pkg, plan).await;
-                    }
-                }
-            },
-            |()| Message::Finished,
+            self.services.clone().restore_config(
+                Kind::Aviutl2,
+                id,
+                t!("task_install").into_owned(),
+                entries,
+            ),
+            Message::ConfigRestored,
         )
     }
 
@@ -1328,6 +1343,8 @@ impl App {
                 if self.selected.is_some_and(|id| !self.contains(id)) {
                     self.selected = None;
                 }
+                let ids: Vec<InstanceId> = self.instances.iter().map(|i| i.config.id).collect();
+                self.saved_edits.retain(|id, _| ids.contains(id));
                 if self.pending_delete.is_some_and(|id| !self.contains(id)) {
                     self.pending_delete = None;
                 }
@@ -1372,54 +1389,130 @@ impl App {
             .find(|instance| instance.config.id == id)
     }
 
-    fn handle_deeplink_action(&mut self, action: DeepLinkAction) -> Task<Message> {
-        match action {
-            DeepLinkAction::ShowUpdates => {
-                let select = self.select_screen(Screen::Settings);
-                let check = self.check_update(true);
-                Task::batch([select, check])
+    /// Moves the edit screen state to `saved_edits`.
+    fn stash_edit(&mut self) {
+        if let Some(state) = self.edit.take() {
+            self.saved_edits.insert(state.id, state);
+        }
+    }
+
+    /// Opens the edit screen of `id`, with the state the user left, and loads the catalog if needed.
+    fn open_edit(
+        &mut self,
+        id: InstanceId,
+        configure: impl FnOnce(&mut edit::State),
+    ) -> Task<Message> {
+        let Some(instance) = self.instances.iter().find(|i| i.config.id == id) else {
+            return Task::none();
+        };
+        self.selected = Some(id);
+        let mut state = match self.saved_edits.remove(&id) {
+            Some(mut saved) => {
+                saved.reset_transient(instance);
+                saved
             }
-            DeepLinkAction::ViewPackage(pkg_id) => {
-                let id = self
-                    .selected
-                    .or_else(|| self.instances.first().map(|i| i.config.id));
-                let Some(id) = id else {
-                    self.notice = Some(t!("no_instance_exists").into_owned());
-                    return Task::none();
-                };
-                self.selected = Some(id);
-                let Some(instance) = self.selected_instance() else {
-                    return Task::none();
-                };
-                let mut state = edit::State::new(instance);
+            None => edit::State::new(instance),
+        };
+        configure(&mut state);
+        let load = state.needs_catalog();
+        if load {
+            state.catalog = Catalog::Loading;
+        }
+        let follow = if load {
+            Task::none()
+        } else {
+            let scroll = if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
+                restore_browse_scroll(&mut state)
+            } else {
+                Task::none()
+            };
+            Task::batch([scroll, pending_follow_up(&mut state)])
+        };
+        self.edit = Some(state);
+        self.screen = Screen::Edit;
+        if load {
+            self.load_catalog(false)
+        } else {
+            follow
+        }
+    }
+
+    /// Shows the update preview of the open edit screen of `id`: the app, the addon, then the plugins.
+    /// Runs the update at once when nothing is outdated.
+    fn preview_updates(&mut self, id: InstanceId, app: AppUpdates) -> Task<Message> {
+        let Some(state) = self.edit.as_mut().filter(|state| state.id == id) else {
+            return Task::none();
+        };
+        let Some(inst) = self.instances.iter().find(|i| i.config.id == id) else {
+            return Task::none();
+        };
+        let mut items: Vec<edit::UpdatePreviewItem> = [
+            (t!("version").into_owned(), app.app),
+            (t!("addon_version").into_owned(), app.addon),
+        ]
+        .into_iter()
+        .filter_map(|(name, versions)| {
+            let (current, latest) = versions?;
+            Some((name, current, latest, None))
+        })
+        .collect();
+        for record in inst.config.plugins.iter().filter(|record| !record.paused) {
+            let Some(pkg) = state.package(&record.id) else {
+                continue;
+            };
+            let Some(latest) = pkg.latest_version().filter(|v| *v != record.version) else {
+                continue;
+            };
+            items.push((
+                pkg.name.clone(),
+                record.version.clone(),
+                latest.to_owned(),
+                pkg.changelog
+                    .as_deref()
+                    .map(|log| crate::screen::changelog::range_text(log, &record.version)),
+            ));
+        }
+        if items.is_empty() {
+            state.update_preview = None;
+            update_all_task(&self.services, id, &inst.config.name)
+        } else {
+            state.update_preview = Some(items);
+            Task::none()
+        }
+    }
+
+    fn handle_deeplink_action(
+        &mut self,
+        instance: Option<InstanceId>,
+        action: DeepLinkAction,
+    ) -> Task<Message> {
+        if action == DeepLinkAction::Focus {
+            return bring_to_front();
+        }
+        let id = instance
+            .filter(|id| self.contains(*id))
+            .or(self.selected)
+            .or_else(|| self.instances.first().map(|i| i.config.id));
+        let Some(id) = id else {
+            self.notice = Some(t!("no_instance_exists").into_owned());
+            return Task::none();
+        };
+        match action {
+            DeepLinkAction::Focus => Task::none(),
+            DeepLinkAction::ShowUpdates => self.open_edit(id, |state| {
+                state.tab = Tab::Plugins;
+                state.viewing_package_id = None;
+                state.pending_updates = true;
+            }),
+            DeepLinkAction::ViewPackage(pkg_id) => self.open_edit(id, |state| {
                 state.tab = Tab::Browse;
                 state.viewing_package_id = Some(pkg_id);
-                state.catalog = Catalog::Loading;
-                self.edit = Some(state);
-                self.screen = Screen::Edit;
-                self.load_catalog(false)
-            }
-            DeepLinkAction::InstallPackage(pkg_id) => {
-                let id = self
-                    .selected
-                    .or_else(|| self.instances.first().map(|i| i.config.id));
-                let Some(id) = id else {
-                    self.notice = Some(t!("no_instance_exists").into_owned());
-                    return Task::none();
-                };
-                self.selected = Some(id);
-                let Some(instance) = self.selected_instance() else {
-                    return Task::none();
-                };
-                let mut state = edit::State::new(instance);
+            }),
+            DeepLinkAction::InstallPackage(pkg_id) => self.open_edit(id, |state| {
                 state.tab = Tab::Browse;
                 state.viewing_package_id = Some(pkg_id.clone());
                 state.pending_install = Some(pkg_id);
-                state.catalog = Catalog::Loading;
-                self.edit = Some(state);
-                self.screen = Screen::Edit;
-                self.load_catalog(false)
-            }
+            }),
         }
     }
 }
@@ -1469,6 +1562,24 @@ async fn pick_text() -> Option<String> {
     String::from_utf8(handle.read().await).ok()
 }
 
+/// Runs the update and the install that a deep link left on `state`.
+/// The update runs unless the catalog is loading; it needs the catalog only for plugin rows.
+/// The install runs only with a ready catalog, because the package is looked up there.
+fn pending_follow_up(state: &mut edit::State) -> Task<Message> {
+    let install = state.pending_install.take();
+    let updates = std::mem::take(&mut state.pending_updates);
+    let mut tasks = Vec::new();
+    if updates && !matches!(state.catalog, Catalog::Loading) {
+        tasks.push(Task::done(Message::Edit(edit::Message::RequestUpdateAll)));
+    }
+    if let Some(package_id) = install.filter(|_| matches!(state.catalog, Catalog::Ready(_))) {
+        tasks.push(Task::done(Message::Edit(edit::Message::Install(
+            package_id,
+        ))));
+    }
+    Task::batch(tasks)
+}
+
 /// Returns the task that scrolls the browse list back to the offset of `state`.
 fn restore_browse_scroll(state: &mut edit::State) -> Task<Message> {
     state.pending_scroll = Some(state.scroll_y).filter(|offset| *offset > 0.0);
@@ -1506,6 +1617,11 @@ impl App {
             self.notice = Some(t!("au2pkg_unsupported_kind").into_owned());
             return Task::none();
         }
+        if self.instance_running(state.id) {
+            self.notice = Some(t!("instance_running_error").into_owned());
+            return Task::none();
+        }
+        let state = self.edit.as_ref().expect("checked above");
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -1556,4 +1672,149 @@ fn update_all_task(services: &Services, id: InstanceId, name: &str) -> Task<Mess
     Task::perform(services.clone().update_all(handle, id), move |packages| {
         Message::UpdatedAll(id, packages)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use launcher_core::{Edition, Host, InstanceStore, NewInstance, PackageSource};
+
+    fn app_with_instance(kind: Kind) -> (tempfile::TempDir, App, InstanceId) {
+        let root = tempfile::tempdir().unwrap();
+        let instance = InstanceStore::new(root.path())
+            .create(
+                NewInstance {
+                    name: "t".to_owned(),
+                    kind,
+                    edition: Edition::Normal,
+                    app_version: "1".to_owned(),
+                    group: None,
+                },
+                Host::Windows,
+            )
+            .unwrap();
+        let id = instance.config.id;
+        let (mut app, _) = App::new(Services::new(root.path().to_path_buf()).unwrap());
+        app.pending_deeplink = None;
+        app.instances = vec![instance];
+        (root, app, id)
+    }
+
+    fn open_edit_screen(app: &mut App) {
+        app.edit = Some(edit::State::new(&app.instances[0]));
+        app.screen = Screen::Edit;
+    }
+
+    #[test]
+    fn updates_link_waits_for_the_catalog_then_runs() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        let _ = app.update(Message::DeepLinkUrl("madoka://updates".to_owned()));
+        let state = app.edit.as_ref().unwrap();
+        assert!(matches!(state.catalog, Catalog::Loading));
+        assert!(state.pending_updates);
+        let _ = app.update(Message::CatalogLoaded(id, Ok(Vec::new())));
+        let state = app.edit.as_ref().unwrap();
+        assert!(matches!(state.catalog, Catalog::Ready(_)));
+        assert!(!state.pending_updates);
+    }
+
+    #[test]
+    fn updates_link_runs_after_catalog_failure() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        let _ = app.update(Message::DeepLinkUrl("madoka://updates".to_owned()));
+        let _ = app.update(Message::CatalogLoaded(id, Err("offline".to_owned())));
+        let state = app.edit.as_ref().unwrap();
+        assert!(matches!(state.catalog, Catalog::Failed(_)));
+        assert!(!state.pending_updates);
+    }
+
+    #[test]
+    fn install_link_is_dropped_after_catalog_failure() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        let _ = app.update(Message::DeepLinkUrl(
+            "madoka://package/a.b?install=true".to_owned(),
+        ));
+        assert_eq!(
+            app.edit.as_ref().unwrap().pending_install.as_deref(),
+            Some("a.b")
+        );
+        let _ = app.update(Message::CatalogLoaded(id, Err("offline".to_owned())));
+        assert_eq!(app.edit.as_ref().unwrap().pending_install, None);
+    }
+
+    #[test]
+    fn updates_link_on_kind_without_catalog_runs_at_once() {
+        let (_root, mut app, _id) = app_with_instance(Kind::Neoutl);
+        let _ = app.update(Message::DeepLinkUrl("madoka://updates".to_owned()));
+        assert_eq!(app.screen, Screen::Edit);
+        assert!(!app.edit.as_ref().unwrap().pending_updates);
+    }
+
+    #[test]
+    fn link_without_instance_reports_notice() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::new(Services::new(root.path().to_path_buf()).unwrap());
+        app.pending_deeplink = None;
+        let _ = app.update(Message::DeepLinkUrl("madoka://updates".to_owned()));
+        assert_eq!(app.notice, Some(t!("no_instance_exists").into_owned()));
+        assert!(app.edit.is_none());
+    }
+
+    #[test]
+    fn idle_instance_accepts_removal() {
+        let (_root, mut app, _id) = app_with_instance(Kind::Aviutl2);
+        open_edit_screen(&mut app);
+        let _ = app.update(Message::Edit(edit::Message::Remove("x".to_owned())));
+        assert_eq!(app.notice, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn start_sleeper(app: &App) -> std::process::Child {
+        let copy = app.instances[0].app_dir().join("sleeper");
+        std::fs::copy("/bin/sleep", &copy).unwrap();
+        std::process::Command::new(&copy).arg("30").spawn().unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn running_instance_blocks_guarded_edit_messages() {
+        let (_root, mut app, _id) = app_with_instance(Kind::Aviutl2);
+        open_edit_screen(&mut app);
+        let mut child = start_sleeper(&app);
+        let mut notices = Vec::new();
+        for message in [
+            edit::Message::Remove("x".to_owned()),
+            edit::Message::RequestUpdateAll,
+            edit::Message::Install("x".to_owned()),
+        ] {
+            app.notice = None;
+            let _ = app.update(Message::Edit(message));
+            notices.push(app.notice.clone());
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let expected = Some(t!("instance_running_error").into_owned());
+        assert!(
+            notices.iter().all(|notice| *notice == expected),
+            "{notices:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn running_instance_blocks_browsed_install() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        let mut child = start_sleeper(&app);
+        let url = Url::parse("https://example.com/a.zip").unwrap();
+        let package = Package::simple("a.b", "a", url.clone(), PackageSource::Web(url.clone()));
+        let browsed = Browsed {
+            url,
+            name: None,
+            saved: None,
+        };
+        let _ = app.update(Message::Browsed(id, Box::new(package), Ok(Some(browsed))));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(app.notice, Some(t!("instance_running_error").into_owned()));
+    }
 }

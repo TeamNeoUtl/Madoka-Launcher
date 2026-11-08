@@ -31,16 +31,16 @@
 | | **6-23** | ライセンス全文ダイアログ（MIT, CC0 等） | **完全実装**（テンプレート内蔵ダイアログ） | 完了 |
 | | **6-24** | パッケージ個別更新履歴（Changelog）閲覧 | **完全実装**（バージョン別チェンジログ表示） | 完了 |
 | **更新管理** | **7-25** | 更新の一時停止（バージョン固定・ピン留め） | **完全実装**（一括更新スキップ対象管理） | 完了 |
-| | **7-26** | 更新前チェンジログ一覧プレビュー | **完全実装**（一括更新前の変更点サマリー確認） | 完了 |
+| | **7-26** | 更新前チェンジログ一覧プレビュー | **完全実装**（一括更新前の変更点サマリー確認） | 完了(先頭に本体・拡張編集の新旧版、続けてプラグイン差分とチェンジログ。版の取得に失敗した場合はプラグイン差分のみ) |
 | | **7-27** | アイテム別 & 全体の 2 重プログレス表示 | **完全実装**（全体％と個別MiB進捗の並行表示） | 完了 |
 | **データ管理** | **8-28** | パッケージ構成のエクスポート & インポート | **完全実装**（構成JSON保存・一括復元） | 完了(取込時に `paused` を復元し、版の差異を通知。カタログは最新版のみ提供) |
-| | **8-29** | 独自パッケージ形式（`.au2pkg`）の管理・登録 | **完全実装**（アーカイブ解凍・マニフェスト解析） | 完了(ドロップ受付、zip 列挙、ルート判定、Data 配下への配置、削除用記録) |
+| | **8-29** | 独自パッケージ形式（`.au2pkg`）の管理・登録 | **完全実装**（アーカイブ解凍・マニフェスト解析） | 完了(ドロップ受付、zip 列挙、第1階層名による配置先判定、Data 配下への配置、削除用記録。マニフェストは読まない。上流と同一仕様) |
 | **自動検出** | **9-30** | XXH3-128 ハッシュ照合による既存導入検出 | **完全実装**（高速ハッシュ計算による手動配置追跡） | 完了 |
 | **配布元拡充**| **10-31** | Google Drive からの直接ダウンロード | **完全実装**（ウイルス警告ページバイパス） | 完了 |
 | | **10-32** | BOOTH 配布パッケージの導入連携 | **完全実装**（外部ブラウザ／Webview連携） | 完了(WebView が永続プロファイルのセッションでファイルを保存し自動導入。実サイトでの動作は未確認) |
 | | **10-33** | 特定開発者（rigaya 氏等）の独自配布対応 | **完全実装**（独自URL・リダイレクト処理） | 完了(`extractSfx` と `runAuoSetup` を解釈。実エントリでの動作は未確認) |
 | **システム** | **11-36** | 多言語対応（i18n: 日/英/韓/簡中/繁中） | **完全実装**（言語リソース＆動的切り替え） | 完了(5 言語の辞書、設定画面の切替、起動時の OS 言語検出と保存) |
-| | **11-37** | ポータブルモード切替 | **完全実装**（`data/` ローカル集約設定） | 完了(設定画面のスイッチで `data/` へ複製して切替。反映は再起動後) |
+| | **11-37** | ポータブルモード切替 | **完全実装**（`data/` ローカル集約設定） | 完了(設定画面のスイッチで `data/` へ複製して切替。反映は再起動後。選択条件は実行ファイル直下の `data/` のみ) |
 
 ---
 
@@ -97,7 +97,7 @@ graph TD
 - **設計**:
   - `new_instance::Form` に `install_recommended: bool` フィールドを追加。
   - `Kind::AviUtl2` 選択時のみ、フォーム上に「推奨プラグインを一括導入する（x264guiEx, L-SMASH-Works）」トグル/チェックボックスを表示（初期値: ON）。
-  - インスタンス生成成功時、チェックが ON の場合は `setup.json` に定義された `corePackageId` (`Kenkun.AviUtlExEdit2`) および `requiredPluginIds` (`rigaya.x264guiEx`, `Mr-Ojii.L-SMASH-Works`) のインストールタスクを直ちにキューイングして自動導入。
+  - インスタンス生成成功時、チェックが ON の場合は `setup.json` の `corePackageId` (`Kenkun.AviUtlExEdit2`) および `requiredPluginIds` (`rigaya.x264guiEx`, `Mr-Ojii.L-SMASH-Works`) のインストールタスクを直ちにキューイングして自動導入。
 
 ---
 
@@ -209,7 +209,7 @@ graph TD
 #### 【8-29】`.au2pkg` 形式のサポート
 - **設計**:
   - `.au2pkg`（または `.zip`）ファイルのドラッグ＆ドロップ対応。
-  - アーカイブ内のマニフェストファイル（`package.json` や配置スクリプト）を読み取り、適切なディレクトリへ自動配置・管理。
+  - アーカイブの第1階層名（Plugin / Script / Language / Alias / Figure / Transition / Preset / Default）で配置先を判定し、`<App>/data/<第1階層名>/…` へ配置して削除用に記録。マニフェストは読まない（上流 `aviutl2-catalog` の `au2pkg.ts` と同一仕様）。
 
 ---
 
@@ -246,7 +246,7 @@ graph TD
 
 #### 【11-37】ポータブルモード切替
 - **設計**:
-  - アプリ実行ファイルと同じ階層に `data/` フォルダが存在するか、または設定で「ポータブルモード」が有効化された場合、`~/.local/share` 等ではなくローカルディレクトリ内に全設定・インスタンス・キャッシュを格納。
+  - アプリ実行ファイルと同じ階層に `data/` フォルダが存在する場合（設定のスイッチはこの `data/` を作成・削除する）、`~/.local/share` 等ではなくローカルディレクトリ内に全設定・インスタンス・キャッシュを格納。
 
 ---
 
@@ -282,110 +282,56 @@ flowchart TD
 
 ---
 
-## 6. 残作業
+## 6. 仕様判断
 
-| 項目 | 内容 | 変更箇所 |
+| 項目 | 判断 | 根拠 |
 | :--- | :--- | :--- |
-| 動作確認 | 実機で 5-18 の `scroll_to`、10-32 の BOOTH ログイン維持とダウンロード保存、10-33 の `runAuoSetup` を確認 | - |
-| 上流スキーマ | 上流は `meta/content/install/versions` 形式の配布スキーマへ移行済み。`index.json` が同形式を維持するか確認 | `launcher-providers/src/aviutl2.rs` |
+| 1-3 | 推奨プラグイン ID は `strings::RECOMMENDED_PLUGIN_IDS` を正とする。`setup.json` は読まない | 上流は `VITE_SETUP_REMOTE` の URL を毎回取得する。ランチャーは新規作成時に追加の通信を行わない。値は `requiredPluginIds` と同一 |
+| 8-29 | 第1階層名による判定を正とする。マニフェストは読まない | 上流 `au2pkg.ts` は同じ 8 種の第1階層名のみを判定し、マニフェストを持たない |
+| 2-7 | 登録済みマニフェストは `State.registered` に保持し、アプリ終了で破棄する | PLAN の目的は「テスト」。永続カタログは配布元の責務 |
+| 7-25 | 保留中のプラグインを手動で再導入しても `paused` を維持する | 保留は一括更新の除外であり、導入操作の禁止ではない。`place_package` と `place_staged` が `paused` を引き継ぐ |
+| 7-26 | 更新プレビューは本体・拡張編集・プラグインの差分を含む。本体・拡張編集の版は `Services::app_updates` が取得し、`update_all` と同じ `newer_app_versions` で判定する | プレビューと実行の対象を一致させる。版の取得失敗は `update_all` が失敗として記録する |
+| 11-37 | `./data`（cwd）はポータブルモードを選択しない | 実行ファイル直下以外は OFF 切替で削除できず、起動場所に依存して保存先が変わる |
 
-PLAN.md の「完了」表記 38 項目のうち、コード上の欠陥 9 件、記載との差異 14 件を確認した。ビルドと実行はしていない。判定はソース読解のみによる。
+## 7. 修正済み項目
 
-## A. 修正済み項目（ソース読解のみ。ビルドと実行は未実施）
+| 項目 | 修正 | 箇所 |
+| :--- | :--- | :--- |
+| 4-11 / 4-13 | 起動引数の URL を `pending_deeplink` に保持し、`Message::Loaded` の後に処理 | `app.rs` |
+| 4-12 / 4-13 | `pending_follow_up` を `open_edit` と `CatalogLoaded` で共用。`RequestUpdateAll` は `Catalog::Loading` 以外で送信(カタログ非対応種別と `Catalog::Failed` を含む)。`Install` は `Catalog::Ready` のときのみ送信し、それ以外は破棄 | `app.rs` |
+| 1-3 | 推奨プラグインの導入を `restore_config` に統一。ブラウザ取得が必要な ID は通知に列挙 | `app.rs` |
+| 1-2 | `Message::Browsed` の保存開始前に `instance_running` を判定 | `app.rs` |
+| 2-4 | `selected_commons` を `BTreeSet` に変更。コピー行を ID の昇順に固定 | `edit.rs`, `app.rs` |
+| 2-5 | `launcher_core::commons_url` を新設。`nc` + 数字以外は URL を生成しない | `catalog.rs`, `app.rs` |
+| 4-11 | 登録済みなら OS への登録を省略（Linux は .desktop の内容一致、Windows は `reg query` の一致）。`reg.exe` に `CREATE_NO_WINDOW` を付与 | `deeplink.rs` |
+| 7-25 | 再導入で `paused` を維持 | `installer.rs` |
+| 7-26 | カタログ読込中の `RequestUpdateAll` は `pending_updates` に保留し、読込完了後に実行 | `app.rs` |
+| 7-26 | `RequestUpdateAll` が `Message::AppUpdatesLoaded` を経由し、本体・拡張編集・プラグインの順にプレビューを構築。差分 0 件なら即時更新 | `app.rs`, `ops.rs` |
+| 11-37 | `default_root` と `is_portable` から `./data` を除外 | `paths.rs`, `ops.rs` |
 
-| # | 機能 | 修正 | 箇所 |
-|---|---|---|---|
-| 1 | 4-12 | `pending_install` を保持し、`CatalogLoaded` 後に `Install` を送信 | `app.rs`, `edit.rs` |
-| 2 | 9-30 | `Root::Data` を判定。走査対象に `app/data/{Plugin,Plugins,Script,Scripts}` を追加 | `hash.rs` |
-| 2a | 9-30 | 記録パスを instance の `app_dir` 相対へ変換 | `ops.rs` |
-| 3 | 7-26 | 差分 0 件のとき `update_all` を直接実行 | `app.rs` |
-| 4 | カタログ | 編集画面を開く時と任意タブ選択時に読込 | `app.rs` |
-| 5 | 2-7 | 登録済みマニフェストを `State.registered` に保持し、読込結果へ統合 | `edit.rs`, `app.rs` |
-| 6 | 1-3 | `Created` で `pending_recommended` を常に解除 | `app.rs` |
-| 7 | 10-32 | 未対応ファイルを `OpError::Unsupported` で失敗扱い | `ops.rs` |
-| 8 | 6-22 | `AuthorSelected` で検索設定と `viewing_package_id` 解除を同時実行 | `edit.rs`, `app.rs` |
-| 9 | 6-23 | `licenses` を文字列・オブジェクトの両形式で受理。`License { name, body }` 新設。条文8種を `launcher-providers/assets/licenses/` に同梱。ダイアログを一覧の上段へ移動 | `catalog.rs`, `aviutl2.rs`, `edit.rs` |
-
-## B. PLAN 記載との差異
-
-| 項目 | 差異 |
-|---|---|
-| 1-2 | ガード対象外の操作: `ConfigImported`、`FileDropped`、`Duplicate`。`is_running()` が `Scrolled` を含む全メッセージで実行され、毎回プロセス走査が発生する。 |
-| 1-3 | `setup.json` を読まず、ID 2 件を `app.rs` に直書きしている。 |
-| 2-5 | 詳細画面とカード内のコモンズ ID はチップ表示のみ。コピー操作と登録ガイド導線がない。 |
-| 4-11 | URL なしの二重起動は転送されず、別プロセスが起動する。ID をパーセントデコードしない。 |
-| 4-13 | ルートは `package/<id>` と `updates` のみ。インスタンス指定がない。`updates` はランチャー更新の確認画面で、プラグイン更新一覧ではない。 |
-| 5-17 | 代替案内は `deprecation_message` の文字列のみ。`OpenInBrowser` の経路は確認ダイアログなし。 |
-| 5-18 | State は編集画面を離れると破棄される。復元範囲は編集画面内のタブと詳細画面のみ。 |
-| 6-20 | リンク、強調、取り消し線、HTML を描画しない。 |
-| 6-21 | 依存パッケージの導入状態表示、未導入警告がない。カタログにない ID は押しても反応しない。 |
-| 6-24 / 7-26 | changelog は未分割の 1 文字列。版範囲の抽出がない。詳細画面は Markdown を描画しない。 |
-| 8-28 | `restore_config` は `is_verified()` を確認せずに導入する。 |
-| 8-29 | PLAN 本文はマニフェスト読取。実装はルート名判定のみ。`.zip` 全般を受理する。 |
-| 10-31 | Cookie 引継ぎは未実装（reqwest の cookies feature なし）。confirm フォームの入力で代替している。 |
-| 10-33 | `auo_setup2` が書くファイルは `files` と rollback の対象外。 |
-| 11-36 | 未翻訳の文字列: `by {author}`、`ID:`、`Unknown`、アラート名（NOTE など）。 |
-| 11-37 | `./data`（cwd）で有効な場合、`is_portable()` が `false` になる。複製は TaskBoard に載らず、進捗表示がない。 |
-
-## C. PLAN 本文と実装の位置の不一致（PLAN 側の修正対象）
+## 8. 既存実装との対応（PLAN 本文の読み替え）
 
 | PLAN の記載 | 実装 |
-|---|---|
-| `core/process.rs` | `runner.rs`（`is_instance_running`） |
-| `core/niconi.rs`、`Tab::NiconiCommons` | ファイルなし。`catalog.rs` の `niconi_commons_id` と `Tab::Commons` |
-| `providers/catalog.rs` | `aviutl2.rs`（`parse_aviutl2_manifest`） |
-| `app/i18n/` ディレクトリ | `i18n.rs` |
-| `core::portable` | `paths.rs` |
+| :--- | :--- |
+| `core/process.rs` | `crates/launcher-core/src/runner.rs`（`is_instance_running`） |
+| `core/niconi.rs`、`Tab::NiconiCommons` | `crates/launcher-core/src/catalog.rs`（`niconi_commons_id`、`commons_url`）、`Tab::Commons`（`screen/edit.rs`） |
+| `providers/catalog.rs` | `crates/launcher-providers/src/aviutl2.rs`（`parse_aviutl2_manifest`） |
+| `app/i18n/` ディレクトリ | `crates/launcher-app/src/i18n.rs` と `locales/*.yml` |
+| `core::portable` | `crates/launcher-core/src/paths.rs`（`portable_root`） |
 | 依存 `sysinfo 0.33`、`rfd 0.15`、`interprocess 2.2` | `0.40`、`0.17`、`2` |
-| 依存 `image 0.25`、`twox-hash` | 未使用（画像は iced の `image` feature） |
+| 依存 `image 0.25`、`twox-hash` | 未使用。画像は iced の `image` feature、ハッシュは `xxhash-rust` |
 
-孤立ファイル: `screen/menu_bar.rs`。`mod.rs` に未登録で、`iced_aw` に依存せず、存在しない `style::theme_groups` を参照している。削除対象。
+## 9. 残作業
 
-## D. 残作業
+| 区分 | 内容 | 対象 |
+| :--- | :--- | :--- |
+| 実機確認 | 5-18 の `scroll_to` によるスクロール位置の復元 | `screen/edit.rs` |
+| 実機確認 | 10-32 の BOOTH ログイン維持とファイル保存 | `launcher-browser`, `ops.rs` |
+| 実機確認 | 10-33 の `runAuoSetup` を実エントリで実行 | `stage.rs` |
+| 外部確認 | 上流 `index.json` が `meta/content/install/versions` 形式を維持するか取得して確認 | `aviutl2.rs` |
+| 機能 | 6-20: Markdown の HTML と、引用・表セル内のインライン装飾 | `screen/markdown.rs` |
+| 機能 | 9-30: 移動済みファイルを検出した場合、記録パスを実パスへ更新 | `hash.rs`, `ops.rs` |
 
-- **実機確認 3 件**: 5-18 の `scroll_to`、10-32 の BOOTH ログイン維持と保存、10-33 の `runAuoSetup`。
-- **ビルド確認**: A の 10 件は `cargo clippy --workspace --all-targets` と `cargo test --workspace` を未実行。
-- **上流スキーマ**: `aviutl2-catalog` は `manifest / list / detail / versions / install` 形式（`schemaVersion`）を使用する。`index.json` の実形式は未取得。`licenses` は文字列・オブジェクトの両形式を受理済み。
-- **9-30 制約**: 移動済みファイルを検出した場合、記録パスは配布時のパスで、実ファイルは削除対象にならない。
+追加済みテスト: コモンズ ID の抽出（`launcher-providers/tests/commons.rs`）、コモンズ URL の整形（`launcher-core/tests/commons.rs`）、`is_instance_running`（`launcher-core/tests/running.rs`）、再導入時の `paused` 維持（`launcher-core/tests/installer.rs`）、deeplink の IPC とルーティング、`restore_config`、AviUtl2 構成の手動プラグイン登録、5 言語の yml キー集合一致、`App::update` を直接呼ぶ deeplink の保留処理(カタログ読込完了・失敗・非対応種別・インスタンス不在)、安全ガード(`Remove`・`RequestUpdateAll`・`Install`・`Browsed`。Linux のみ)。`sysinfo 0.40` の `System::new_with_specifics` は `Result` を返すため、`is_instance_running` の記述は型と一致する。
 
-## E. テスト計画（PLAN §5）の未実装
-
-- コモンズ ID の抽出・整形
-- `is_instance_running` と安全ガード
-- deeplink から導入までの結合
-- `restore_config`
-- AviUtl2 構成での `scan_and_register_manual_plugins`
-- 5 言語の yml のキー集合一致
-
-次の作業は、A の 9 件の修正から着手する。作業指示が必要であれば、A の番号で指定すること。
-
-まず、アップロードされたファイルからPLAN.mdを探します。
-
-PLAN.mdが見つかりました。内容を読み取ります。
-
-PLAN.md §6（残作業）を対象に、依存関係順で並べます。
-
-| 順 | 項目 | 箇所 | 前提 |
-|---|---|---|---|
-| 1 | D 上流スキーマ: `index.json` の実形式を取得し、`licenses` の型を確定 | `launcher-providers/src/aviutl2.rs` | なし |
-| 2 | A9 `RawEntry.licenses` の型修正と条文表示 | `aviutl2.rs`, `edit.rs` | 1 |
-| 3 | A4 カタログ読込を `TabSelected(Browse)` から分離 | `app.rs` `update_edit` | 2 |
-| 4 | A5 JSON 登録時に `Catalog::Ready(vec![pkg])` へ置換しない | `edit.rs` `register_json_package` | 3 |
-| 5 | A1 `?install=true` をカタログ読込後に再送 | `app.rs` `handle_deeplink_action` | 3 |
-| 6 | A3 差分 0 件でも本体・拡張編集の更新を実行 | `app.rs` `RequestUpdateAll` | 3 |
-| 7 | A2 `holds()` の `Root::Data` 対応と走査対象に `app/data/Plugin` を追加 | `hash.rs`, `aviutl2.rs` | 3 |
-| 8 | A2a `PluginRecord.files` を `app_dir` 相対に変換 | `ops.rs` `scan_and_register_manual_plugins` | 7 |
-| 9 | A6 `Created(None)` で `pending_recommended` を解除 | `app.rs` `Created` | なし |
-| 10 | A8 作者ジャンプ時に `viewing_package_id` を解除 | `edit.rs` `package_detail_view` | なし |
-| 11 | A7 保存後の拡張子別処理を追加（`.zip` の Web ソース含む） | `ops.rs` `download_browsed_inner` | なし |
-| 12 | B 差異 14 件の修正（1-2、1-3、2-5、4-11、4-13、5-17、5-18、6-20、6-21、6-24/7-26、8-28、8-29、10-31、10-33、11-36、11-37） | B 表の各箇所 | 3〜11 |
-| 13 | E テスト 6 件の追加 | `crates/*/tests/` | 12 |
-| 14 | C PLAN.md の記載を実装位置へ更新、`screen/menu_bar.rs` を削除 | `PLAN.md`, `screen/menu_bar.rs` | 12 |
-| 15 | D 実機確認 3 件（5-18 `scroll_to`、10-32 BOOTH、10-33 `runAuoSetup`） | - | 3〜12 |
-
-順序の根拠:
-- 3 は 4、5、6、7 の前提です。A4 の記述では、Commons タブ、`RequestUpdateAll`、`ScanManualPlugins`、`SelectAllCommons` が `state.package()` に依存します。
-- 1 と 2 は 3 の前提です。A9 の記述では、`licenses` の型不一致で `parse_entries` が `CatalogShapeChanged` を返し、カタログ読込が失敗します。
-- 9、10、11 は他項目への依存がないため、並行して着手できます。
-
-指示は項番で受け付けます。
+検証状態: 本計画の修正はソース読解のみ。作業環境の Rust は 1.75 で、workspace の edition 2024(Rust 1.85 以上)をビルドできない。`cargo build`、`cargo clippy`、`cargo test` は利用者の環境で実行する。

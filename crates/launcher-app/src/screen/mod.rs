@@ -1,3 +1,4 @@
+pub mod changelog;
 pub mod edit;
 pub mod main_screen;
 pub mod markdown;

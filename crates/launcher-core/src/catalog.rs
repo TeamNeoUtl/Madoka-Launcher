@@ -433,3 +433,17 @@ impl InstallPlan {
         }
     }
 }
+
+const COMMONS_WORKS_URL: &str = "https://commons.nicovideo.jp/works/";
+
+/// Work page of a niconi commons ID: `nc` followed by one or more ASCII digits.
+/// Surrounding whitespace is ignored. Any other text returns `None`.
+#[must_use]
+pub fn commons_url(commons_id: &str) -> Option<Url> {
+    let id = commons_id.trim();
+    let digits = id.strip_prefix("nc")?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Url::parse(&format!("{COMMONS_WORKS_URL}{id}")).ok()
+}

@@ -5,11 +5,11 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use launcher_core::{
     AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
-    Instance, InstanceId, InstanceLocks, InstanceStore, Kind, Launched, NewInstance, PROBE_WINDOW,
-    Package, PackageSource, PluginRecord, ProgressSink, TaskBoard, TaskHandle, open_directory,
-    portable_root, set_portable, zip_entry_names,
+    Instance, InstanceConfig, InstanceId, InstanceLocks, InstanceStore, Kind, Launched,
+    NewInstance, PROBE_WINDOW, Package, PackageSource, PluginRecord, ProgressSink, TaskBoard,
+    TaskHandle, open_directory, portable_root, set_portable, zip_entry_names, zip_read_entry,
 };
-use launcher_providers::au2pkg::{build_au2pkg_steps, collect_au2pkg_files};
+use launcher_providers::au2pkg::{build_au2pkg_steps, collect_au2pkg_files, is_au2pkg_filename};
 use launcher_providers::{
     Dns, Http, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
     Versions, has_catalog, load_any, load_fresh, store_catalog,
@@ -93,6 +93,13 @@ pub struct UpdateReport {
     pub browse: Vec<Package>,
     /// One text per package that failed to update.
     pub failures: Vec<String>,
+}
+
+/// App and addon versions that `Services::update_all` installs. Each pair is `(installed, latest)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppUpdates {
+    pub app: Option<(String, String)>,
+    pub addon: Option<(String, String)>,
 }
 
 /// One plugin of an exported `madoka-packages.json`.
@@ -235,12 +242,22 @@ impl Services {
 
     /// `true` while the data directory is `<executable directory>/data`.
     pub fn is_portable(&self) -> bool {
-        portable_root().is_some_and(|dir| dir == self.root)
+        let same = |dir: &Path| {
+            dir == self.root
+                || matches!(
+                    (dir.canonicalize(), self.root.canonicalize()),
+                    (Ok(a), Ok(b)) if a == b
+                )
+        };
+        portable_root().is_some_and(|dir| same(&dir))
     }
 
     /// Copies the data to the directory of the other mode. The next start uses that directory.
-    pub async fn switch_portable(enabled: bool) -> Result<(), OpError> {
-        blocking(move || set_portable(enabled)).await
+    pub async fn switch_portable(self, handle: TaskHandle, enabled: bool) -> Result<(), OpError> {
+        handle.running(0, WRITE_STEPS);
+        let result = blocking(move || set_portable(enabled)).await;
+        handle.finish(&result);
+        result
     }
 
     /// GitHub token that `config.toml` held at start.
@@ -392,6 +409,29 @@ impl Services {
             Err(error) => warn!(?kind, %error, "app versions failed"),
         }
         Ok(result?)
+    }
+
+    /// Reads the app and addon versions that `update_all` would install.
+    pub async fn app_updates(self, id: InstanceId) -> Result<AppUpdates, OpError> {
+        let store = self.store.clone();
+        let instance = blocking(move || store.load(id)).await?;
+        let config = &instance.config;
+        let provider = MadokaProvider::for_kind(config.kind, self.http())?;
+        let selection = AppSelection {
+            host: self.host,
+            edition: config.edition,
+        };
+        let versions = provider.versions().await?;
+        let (app, addon) = newer_app_versions(&provider, config, selection, &versions);
+        Ok(AppUpdates {
+            app: app.map(|latest| (config.app_version.clone(), latest.version)),
+            addon: addon.map(|latest| {
+                (
+                    config.addon_version.clone().unwrap_or_default(),
+                    latest.version,
+                )
+            }),
+        })
     }
 
     /// Packages of the catalog. A cache file younger than 24 hours is used unless `refresh` is set.
@@ -715,6 +755,34 @@ impl Services {
         handle.running(0, WRITE_STEPS);
         let listed = archive.clone();
         let entries = blocking(move || zip_entry_names(&listed)).await?;
+        let is_au2pkg = is_au2pkg_filename(&archive.to_string_lossy());
+        if !is_au2pkg && !is_zip(&archive) {
+            return Err(OpError::Worker(
+                "the file is neither .au2pkg nor .zip".to_owned(),
+            ));
+        }
+        let manifest_path = archive.clone();
+        let manifest =
+            blocking(move || zip_read_entry(&manifest_path, "manifest.json", 1 << 20)).await?;
+        let manifest_name = match manifest {
+            Some(bytes) => {
+                let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                    OpError::Worker(format!("manifest.json is not valid JSON: {error}"))
+                })?;
+                if !value.is_object() {
+                    return Err(OpError::Worker(
+                        "manifest.json is not a JSON object".to_owned(),
+                    ));
+                }
+                ["name", "id"]
+                    .iter()
+                    .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+            }
+            None => None,
+        };
         let files = collect_au2pkg_files(&entries);
         if files.is_empty() {
             return Err(OpError::Worker(
@@ -731,6 +799,7 @@ impl Services {
             .unwrap_or(&name)
             .trim_end_matches(".au2pkg")
             .to_owned();
+        let stem = manifest_name.unwrap_or(stem);
         let page_url = Url::from_file_path(&archive).map_err(|()| {
             OpError::Worker(format!("{}: not an absolute path", archive.display()))
         })?;
@@ -785,6 +854,10 @@ impl Services {
                     report.unavailable.push(entry.id);
                     continue;
                 };
+                if !plan.is_verified() {
+                    report.unavailable.push(entry.id);
+                    continue;
+                }
                 let handle = self.board.add(format!("{install_label}: {}", package.name));
                 self.clone().install_plugin(handle, id, package, plan).await;
                 record = self.plugin_record(id, &entry.id).await;
@@ -1005,9 +1078,7 @@ impl Services {
             edition: config.edition,
         };
         let versions = provider.versions().await?;
-        let accepts = |version: &AppVersion| provider.plan_install_app(version, selection).is_ok();
-        let app = newer_than(&versions.app, Some(&config.app_version), accepts);
-        let addon = newer_than(&versions.addon, config.addon_version.as_deref(), accepts);
+        let (app, addon) = newer_app_versions(&provider, config, selection, &versions);
 
         let mut report = UpdateReport::default();
         let mut outdated = Vec::new();
@@ -1185,6 +1256,20 @@ fn newer_than(
         .then(|| list[candidate].clone())
 }
 
+/// Latest app and addon versions that have an artifact for `selection` and differ from `config`.
+fn newer_app_versions<P: Provider>(
+    provider: &P,
+    config: &InstanceConfig,
+    selection: AppSelection,
+    versions: &Versions,
+) -> (Option<AppVersion>, Option<AppVersion>) {
+    let accepts = |version: &AppVersion| provider.plan_install_app(version, selection).is_ok();
+    (
+        newer_than(&versions.app, Some(&config.app_version), accepts),
+        newer_than(&versions.addon, config.addon_version.as_deref(), accepts),
+    )
+}
+
 /// Installed plugins whose catalog entry names another version than the record.
 fn outdated_packages(plugins: &[PluginRecord], packages: &[Package]) -> Vec<Package> {
     plugins
@@ -1285,4 +1370,143 @@ where
         .await
         .map_err(|error| OpError::Worker(error.to_string()))?;
     Ok(joined?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use launcher_core::{
+        Edition, FileCheck, Hash, HashAlgo, Location, NewInstance, Origin, Recipe, Root,
+    };
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    fn services(root: &Path) -> Services {
+        Services::new(root.to_path_buf()).unwrap()
+    }
+
+    fn make_instance(services: &Services, kind: Kind) -> launcher_core::Instance {
+        services
+            .store
+            .create(
+                NewInstance {
+                    name: "t".to_owned(),
+                    kind,
+                    edition: Edition::Normal,
+                    app_version: "1".to_owned(),
+                    group: None,
+                },
+                Host::Windows,
+            )
+            .unwrap()
+    }
+
+    fn record(id: &str, version: &str) -> PluginRecord {
+        PluginRecord {
+            id: id.to_owned(),
+            version: version.to_owned(),
+            source: "test".to_owned(),
+            files: Vec::new(),
+            paused: false,
+        }
+    }
+
+    #[test]
+    fn scan_registers_manual_plugin_on_aviutl2_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let services = services(root.path());
+        let instance = make_instance(&services, Kind::Aviutl2);
+        let app_dir = instance.app_dir();
+        std::fs::write(app_dir.join("aviutl2.exe"), b"exe").unwrap();
+        let plugin_dir = app_dir.join("data").join("Plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        let file = plugin_dir.join("foo.auf2");
+        std::fs::write(&file, b"plugin body").unwrap();
+        let hash = Hash::of_file(HashAlgo::Xxh3_128, &file).unwrap();
+
+        let make = |id: &str, hash: Hash| {
+            let url = Url::parse("https://example.com/").unwrap();
+            let mut package = Package::simple(id, id, url.clone(), PackageSource::Web(url.clone()));
+            package.source = PackageSource::Recipe(Recipe {
+                version: "1.2".to_owned(),
+                origin: Origin::Direct(url),
+                hash: None,
+                steps: Vec::new(),
+                checks: vec![FileCheck {
+                    location: Location {
+                        root: Root::Data,
+                        rel: "Plugin/foo.auf2".to_owned(),
+                    },
+                    hash,
+                }],
+            });
+            package
+        };
+        let wrong = Hash {
+            algo: HashAlgo::Xxh3_128,
+            hex: "0".repeat(32),
+        };
+        let packages = vec![make("match.id", hash), make("other.id", wrong)];
+
+        let found = runtime()
+            .block_on(
+                services
+                    .clone()
+                    .scan_and_register_manual_plugins(instance.config.id, packages),
+            )
+            .unwrap();
+        assert_eq!(found, vec!["match.id".to_owned()]);
+
+        let loaded = services.store.load(instance.config.id).unwrap();
+        assert_eq!(loaded.config.plugins.len(), 1);
+        let plugin = &loaded.config.plugins[0];
+        assert_eq!(plugin.id, "match.id");
+        assert_eq!(plugin.version, "1.2");
+        assert_eq!(plugin.files, vec!["data/Plugin/foo.auf2".to_owned()]);
+    }
+
+    #[test]
+    fn restore_config_pauses_and_reports_version_difference() {
+        let root = tempfile::tempdir().unwrap();
+        let services = services(root.path());
+        let instance = make_instance(&services, Kind::Aviutl2);
+        let id = instance.config.id;
+        services
+            .store
+            .add_or_update_plugin(id, record("a.plugin", "1.0"))
+            .unwrap();
+        let entries = vec![
+            ConfigEntry {
+                id: "a.plugin".to_owned(),
+                version: Some("2.0".to_owned()),
+                paused: true,
+            },
+            ConfigEntry {
+                id: "definitely.not.in.catalog".to_owned(),
+                version: None,
+                paused: false,
+            },
+        ];
+        let report = runtime().block_on(services.clone().restore_config(
+            Kind::Aviutl2,
+            id,
+            "install".to_owned(),
+            entries,
+        ));
+        assert_eq!(report.installed, 0);
+        assert_eq!(report.paused, 1);
+        assert_eq!(
+            report.version_differs,
+            vec!["a.plugin (2.0 -> 1.0)".to_owned()]
+        );
+        assert_eq!(
+            report.unavailable,
+            vec!["definitely.not.in.catalog".to_owned()]
+        );
+    }
 }

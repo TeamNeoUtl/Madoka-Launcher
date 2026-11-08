@@ -66,6 +66,7 @@ impl ReqwestFetcher {
         let client = reqwest::Client::builder()
             .user_agent(user_agent)
             .redirect(policy)
+            .cookie_store(true)
             .dns_resolver(dns)
             .connect_timeout(CONNECT_TIMEOUT)
             .read_timeout(READ_TIMEOUT)

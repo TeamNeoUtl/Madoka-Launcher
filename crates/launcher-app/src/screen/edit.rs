@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use iced::alignment::Vertical;
 use iced::widget::{Id, checkbox, column, container, image, mouse_area, row, scrollable, text};
@@ -118,6 +118,8 @@ pub enum Message {
     CopySingleCommons(String),
     OpenCommonsUrl(String),
     OpenCommonsGuide,
+    /// A link in rendered Markdown was clicked.
+    OpenLink(String),
     // JSON register tab messages
     JsonInputChanged(String),
     LoadSampleJson,
@@ -179,8 +181,10 @@ pub struct State {
     pub registered: Vec<Package>,
     /// Package that installs as soon as the catalog is loaded (`?install=true`).
     pub pending_install: Option<String>,
+    /// Shows the update preview once the catalog has loaded (`madoka://updates`).
+    pub pending_updates: bool,
     pub pending: Option<Pending>,
-    pub selected_commons: HashSet<String>,
+    pub selected_commons: BTreeSet<String>,
     pub json_input: String,
     pub json_status: Option<Result<String, String>>,
     /// Operations that installing the registered manifest performs, one per line.
@@ -215,8 +219,9 @@ impl State {
             catalog: Catalog::Idle,
             registered: Vec::new(),
             pending_install: None,
+            pending_updates: false,
             pending: None,
-            selected_commons: HashSet::new(),
+            selected_commons: BTreeSet::new(),
             json_input: String::new(),
             json_status: None,
             json_log: Vec::new(),
@@ -228,6 +233,20 @@ impl State {
             update_preview: None,
             name: instance.config.name.clone(),
             group: instance.config.group.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Drops what must not survive leaving the screen and refreshes what the instance owns.
+    pub fn reset_transient(&mut self, instance: &Instance) {
+        self.pending = None;
+        self.pending_install = None;
+        self.pending_updates = false;
+        self.update_preview = None;
+        self.license_dialog_content = None;
+        self.name = instance.config.name.clone();
+        self.group = instance.config.group.clone().unwrap_or_default();
+        if matches!(self.catalog, Catalog::Loading) {
+            self.catalog = Catalog::Idle;
         }
     }
 
@@ -304,7 +323,7 @@ impl State {
                         .and_then(|d| d.get("name"))
                         .and_then(|v| v.as_str())
                 })
-                .unwrap_or("Unknown")
+                .map_or_else(|| t!("unknown_author").into_owned(), str::to_owned)
                 .to_owned();
             let niconi_commons_id = value
                 .get("niconiCommonsId")
@@ -468,7 +487,7 @@ fn update_preview_modal<'a>(
             .spacing(4);
 
             if let Some(log) = changelog {
-                col = col.push(text(log).size(12).color(theme.on_surface_variant()));
+                col = col.push(crate::screen::markdown::view(theme, log, Message::OpenLink));
             }
 
             m3::card(style::tile_card(theme, false), col)
@@ -1027,12 +1046,23 @@ fn category_bar<'a>(
 
 /// Why the installation waits for the confirmation of the user.
 fn pending_warning(pending: &Pending) -> String {
+    let browser = matches!(pending.plan, InstallPlan::OpenInBrowser(_));
     if !pending.package.deprecated {
-        return t!("unverified_warning").into_owned();
+        return if browser {
+            t!("open_browser_warning").into_owned()
+        } else {
+            t!("unverified_warning").into_owned()
+        };
     }
-    match &pending.package.deprecation_message {
+    let warning = match &pending.package.deprecation_message {
         Some(message) => t!("deprecated_install_warning_message", message = message).into_owned(),
         None => t!("deprecated_install_warning").into_owned(),
+    };
+    let hint = t!("deprecated_alternate_hint");
+    if browser {
+        format!("{warning} {hint} {}", t!("open_browser_warning"))
+    } else {
+        format!("{warning} {hint}")
     }
 }
 
@@ -1141,7 +1171,7 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
             .size(16)
             .color(theme.primary()),
         style::label(theme, package.name.clone()).size(16),
-        style::label(theme, format!("by {}", package.author)).size(12),
+        style::label(theme, t!("by_author", author = package.author).into_owned()).size(12),
     ]
     .spacing(6)
     .align_y(Vertical::Center);
@@ -1156,12 +1186,14 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
     }
 
     if let Some(commons_id) = &package.niconi_commons_id {
-        header_row = header_row.push(style::icon_chip::<Message>(
-            theme,
-            style::icons::SHARE,
-            commons_id,
-            Tone::Tertiary,
-        ));
+        header_row = header_row
+            .push(style::icon_chip::<Message>(
+                theme,
+                style::icons::SHARE,
+                commons_id,
+                Tone::Tertiary,
+            ))
+            .push(commons_buttons(theme, commons_id));
     }
 
     let mut info = column![
@@ -1238,6 +1270,24 @@ fn package_row<'a>(theme: &Theme, package: &Package, status: Status) -> Element<
             .height(Length::Fixed(ROW_HEIGHT)),
     )
     .padding(Padding::default().bottom(ROW_GAP))
+    .into()
+}
+
+/// Copy of the commons ID and the link to the registration guide.
+fn commons_buttons<'a>(theme: &Theme, commons_id: &str) -> Element<'a, Message> {
+    row![
+        m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::COPY, t!("copy")),
+        )
+        .on_press(Message::CopySingleCommons(commons_id.to_owned())),
+        m3::button(
+            button::Style::tonal(theme, Accent::Secondary),
+            style::btn_content(style::icons::LINK, t!("commons_guide")),
+        )
+        .on_press(Message::OpenCommonsGuide),
+    ]
+    .spacing(6)
     .into()
 }
 
@@ -1552,12 +1602,14 @@ fn package_detail_view<'a>(
     }
 
     if let Some(commons_id) = &package.niconi_commons_id {
-        header = header.push(style::icon_chip::<Message>(
-            theme,
-            style::icons::SHARE,
-            commons_id,
-            Tone::Tertiary,
-        ));
+        header = header
+            .push(style::icon_chip::<Message>(
+                theme,
+                style::icons::SHARE,
+                commons_id,
+                Tone::Tertiary,
+            ))
+            .push(commons_buttons(theme, commons_id));
     }
 
     header = header.push(act);
@@ -1579,7 +1631,7 @@ fn package_detail_view<'a>(
         style::icon(style::icons::LINK)
             .size(16)
             .color(theme.primary()),
-        text(format!("ID: {}", package.id))
+        text(t!("id_label", id = package.id).into_owned())
             .size(13)
             .color(theme.outline()),
     ]
@@ -1702,7 +1754,7 @@ fn package_detail_view<'a>(
             ]
             .spacing(8)
             .align_y(Vertical::Center),
-            crate::screen::markdown::view(theme, &package.summary),
+            crate::screen::markdown::view(theme, &package.summary, Message::OpenLink),
         ]
         .spacing(8)
         .padding(Padding::from([12.0, 16.0])),
@@ -1712,36 +1764,69 @@ fn package_detail_view<'a>(
 
     // 6-21: Dependencies
     if !package.dependencies.is_empty() {
+        let mut missing: Vec<&str> = Vec::new();
         let dep_chips: Vec<Element<'a, Message>> = package
             .dependencies
             .iter()
             .map(|dep| {
+                let installed = instance
+                    .config
+                    .plugins
+                    .iter()
+                    .any(|record| record.id == *dep);
+                let known = state.package(dep).is_some();
+                if !installed {
+                    missing.push(dep.as_str());
+                }
+                let state_label = if installed {
+                    t!("dep_installed")
+                } else if known {
+                    t!("dep_missing")
+                } else {
+                    t!("dep_not_in_catalog")
+                };
+                let (glyph, accent) = if installed {
+                    (style::icons::CHECK_CIRCLE, Accent::Tertiary)
+                } else {
+                    (style::icons::WARNING, Accent::Secondary)
+                };
                 m3::button(
-                    button::Style::tonal(theme, Accent::Tertiary),
-                    style::btn_content(style::icons::EXTENSION, dep.as_str()),
+                    button::Style::tonal(theme, accent),
+                    style::btn_content(glyph, format!("{dep} ({state_label})")),
                 )
-                .on_press(Message::ViewPackageDetails(Some(dep.clone())))
+                .on_press_maybe(known.then(|| Message::ViewPackageDetails(Some(dep.clone()))))
                 .into()
             })
             .collect();
 
-        let dep_card = m3::card(
-            card::Style::filled(theme),
-            column![
-                row![
-                    style::icon(style::icons::LAYERS)
-                        .size(18)
-                        .color(theme.primary()),
-                    style::label(theme, t!("dependencies").into_owned()).size(15),
-                ]
-                .spacing(8)
-                .align_y(Vertical::Center),
-                row(dep_chips).spacing(8),
+        let mut dep_column = column![
+            row![
+                style::icon(style::icons::LAYERS)
+                    .size(18)
+                    .color(theme.primary()),
+                style::label(theme, t!("dependencies").into_owned()).size(15),
             ]
             .spacing(8)
-            .padding(Padding::from([10.0, 14.0])),
-        )
-        .width(Length::Fill);
+            .align_y(Vertical::Center),
+            row(dep_chips).spacing(8).wrap(),
+        ]
+        .spacing(8)
+        .padding(Padding::from([10.0, 14.0]));
+        if !missing.is_empty() {
+            dep_column = dep_column.push(
+                row![
+                    style::icon(style::icons::WARNING)
+                        .size(16)
+                        .color(theme.error()),
+                    text(t!("dep_missing_warning", ids = missing.join(", ")).into_owned())
+                        .size(13)
+                        .color(theme.error()),
+                ]
+                .spacing(6)
+                .align_y(Vertical::Center),
+            );
+        }
+        let dep_card = m3::card(card::Style::filled(theme), dep_column).width(Length::Fill);
         content = content.push(dep_card);
     }
 
@@ -1780,8 +1865,38 @@ fn package_detail_view<'a>(
         content = content.push(lic_card);
     }
 
-    // 6-24: Changelog
+    // 6-24 / 7-26: Changelog, split per version
     if let Some(changelog) = &package.changelog {
+        let installed = instance
+            .config
+            .plugins
+            .iter()
+            .find(|record| record.id == package.id)
+            .map(|record| record.version.as_str());
+        let mut body = column![].spacing(8);
+        if let (Some(version), Status::UpdateAvailable) = (installed, status) {
+            body = body
+                .push(
+                    text(t!("changelog_range", version = version).into_owned())
+                        .size(13)
+                        .color(theme.primary()),
+                )
+                .push(crate::screen::markdown::view(
+                    theme,
+                    &crate::screen::changelog::range_text(changelog, version),
+                    Message::OpenLink,
+                ))
+                .push(
+                    text(t!("changelog_all").into_owned())
+                        .size(13)
+                        .color(theme.primary()),
+                );
+        }
+        body = body.push(crate::screen::markdown::view(
+            theme,
+            changelog,
+            Message::OpenLink,
+        ));
         let changelog_card = m3::card(
             card::Style::filled(theme),
             column![
@@ -1793,8 +1908,7 @@ fn package_detail_view<'a>(
                 ]
                 .spacing(8)
                 .align_y(Vertical::Center),
-                scrollable(text(changelog).size(13).color(theme.on_surface_variant()))
-                    .height(Length::Fixed(150.0)),
+                scrollable(body).height(Length::Fixed(240.0)),
             ]
             .spacing(8)
             .padding(Padding::from([10.0, 14.0])),

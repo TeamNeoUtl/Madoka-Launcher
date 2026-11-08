@@ -1,7 +1,9 @@
 //! Lightweight Markdown renderer for Iced with GitHub alert, table, and task list support.
 
-use iced::widget::{column, container, row, text};
-use iced::{Element, Length, Padding};
+use iced::widget::span;
+use iced::widget::text::Span;
+use iced::widget::{column, container, rich_text, row, text};
+use iced::{Element, Font, Length, Padding};
 use iced_m3::theme::{ColorScheme, Theme};
 use iced_m3::widget::{self as m3, card};
 use pulldown_cmark::{BlockQuoteKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -9,9 +11,108 @@ use rust_i18n::t;
 
 use crate::style::{self, Tone};
 
+#[derive(Clone, Default)]
+struct Style {
+    strong: bool,
+    emphasis: bool,
+    strike: bool,
+    code: bool,
+    link: Option<String>,
+}
+
+/// Inline content of a block: text runs with their emphasis and link.
+#[derive(Default)]
+struct Inline {
+    runs: Vec<(String, Style)>,
+}
+
+impl Inline {
+    fn push(&mut self, content: &str, style: &Style) {
+        self.runs.push((content.to_owned(), style.clone()));
+    }
+
+    fn push_plain(&mut self, content: &str) {
+        self.push(content, &Style::default());
+    }
+
+    fn is_blank(&self) -> bool {
+        self.runs
+            .iter()
+            .all(|(content, _)| content.trim().is_empty())
+    }
+
+    fn plain(&self) -> String {
+        self.runs
+            .iter()
+            .map(|(content, _)| content.as_str())
+            .collect()
+    }
+
+    fn clear(&mut self) {
+        self.runs.clear();
+    }
+
+    /// Takes the runs without the blank edges.
+    fn take(&mut self) -> Vec<(String, Style)> {
+        let mut runs = std::mem::take(&mut self.runs);
+        if let Some(first) = runs.first_mut() {
+            first.0 = first.0.trim_start().to_owned();
+        }
+        if let Some(last) = runs.last_mut() {
+            last.0 = last.0.trim_end().to_owned();
+        }
+        runs
+    }
+}
+
+fn rich<'a, M: Clone + 'static>(
+    theme: &Theme,
+    runs: Vec<(String, Style)>,
+    size: u32,
+    on_link: fn(String) -> M,
+) -> Element<'a, M> {
+    let spans: Vec<Span<'a, String, Font>> = runs
+        .into_iter()
+        .map(|(content, style)| {
+            let mut run = span(content).size(size).color(theme.on_surface());
+            if style.strong || style.emphasis {
+                run = run.font(Font {
+                    weight: if style.strong {
+                        iced::font::Weight::Bold
+                    } else {
+                        iced::font::Weight::Normal
+                    },
+                    style: if style.emphasis {
+                        iced::font::Style::Italic
+                    } else {
+                        iced::font::Style::Normal
+                    },
+                    ..Font::DEFAULT
+                });
+            }
+            if style.code {
+                run = run.font(Font::MONOSPACE);
+            }
+            if style.strike {
+                run = run.strikethrough(true);
+            }
+            if let Some(url) = style.link {
+                run = run.link(url).underline(true).color(theme.primary());
+            }
+            run
+        })
+        .collect();
+    rich_text(spans).on_link_click(on_link).into()
+}
+
 /// Renders a markdown string into an Iced Element.
 /// Images show their alt text, because the renderer loads no pictures.
-pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Element<'a, M> {
+/// `on_link` makes the message for a click on a link.
+pub fn view<'a, M: Clone + 'static>(
+    theme: &Theme,
+    markdown: &str,
+    on_link: fn(String) -> M,
+) -> Element<'a, M> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -19,7 +120,8 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
     let parser = Parser::new_ext(markdown, options);
     let mut elements: Vec<Element<'a, M>> = Vec::new();
 
-    let mut current_text = String::new();
+    let mut current_text = Inline::default();
+    let mut style = Style::default();
     let mut in_code_block = false;
     let mut code_content = String::new();
     let mut in_blockquote = false;
@@ -30,11 +132,12 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut table_row: Vec<String> = Vec::new();
     let mut in_table = false;
+    let mut link_target: Option<String> = None;
 
     for event in parser {
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 current_heading_level = Some(level);
             }
             Event::End(TagEnd::Heading(_)) => {
@@ -44,22 +147,28 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                     Some(HeadingLevel::H3) => 16,
                     _ => 14,
                 };
-                let content = std::mem::take(&mut current_text);
+                let content = current_text.plain();
+                current_text.clear();
                 if !content.trim().is_empty() {
-                    elements.push(text(content).size(size).color(theme.primary()).into());
+                    elements.push(
+                        text(content.trim().to_owned())
+                            .size(size)
+                            .color(theme.primary())
+                            .into(),
+                    );
                 }
             }
             Event::End(TagEnd::Paragraph) => {
                 if in_blockquote {
                     quote_content.push('\n');
                 } else if lists.is_empty() && !in_table {
-                    flush_text(&mut current_text, &mut elements, theme);
+                    flush_text(&mut current_text, &mut elements, theme, on_link);
                 } else {
-                    current_text.push('\n');
+                    current_text.push_plain("\n");
                 }
             }
             Event::Start(Tag::CodeBlock(_)) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 in_code_block = true;
                 code_content.clear();
             }
@@ -78,7 +187,7 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                 elements.push(code_widget.into());
             }
             Event::Start(Tag::BlockQuote(kind)) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 in_blockquote = true;
                 quote_kind = kind;
                 quote_content.clear();
@@ -89,19 +198,20 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                 elements.push(render_quote_or_alert(theme, quote_kind.take(), &quote));
             }
             Event::Start(Tag::List(start)) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 lists.push(start);
             }
             Event::End(TagEnd::List(_)) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 lists.pop();
             }
             Event::Start(Tag::Item) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
             }
             Event::End(TagEnd::Item) => {
-                let item = std::mem::take(&mut current_text);
-                if !item.trim().is_empty() {
+                let blank = current_text.is_blank();
+                let item = current_text.take();
+                if !blank {
                     let indent = (lists.len().saturating_sub(1) * 16) as f32;
                     let marker = match lists.last_mut() {
                         Some(Some(number)) => {
@@ -114,19 +224,17 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                     let line = row![
                         container(text(marker).size(14).color(theme.primary()))
                             .padding(Padding::default().left(indent)),
-                        text(item.trim().to_owned())
-                            .size(14)
-                            .color(theme.on_surface()),
+                        rich(theme, item, 14, on_link),
                     ]
                     .spacing(8);
                     elements.push(line.into());
                 }
             }
             Event::TaskListMarker(checked) => {
-                current_text.push_str(if checked { "☑ " } else { "☐ " });
+                current_text.push_plain(if checked { "☑ " } else { "☐ " });
             }
             Event::Start(Tag::Table(_)) => {
-                flush_text(&mut current_text, &mut elements, theme);
+                flush_text(&mut current_text, &mut elements, theme, on_link);
                 in_table = true;
                 table_rows.clear();
                 table_row.clear();
@@ -140,7 +248,8 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
             }
             Event::Start(Tag::TableCell) => current_text.clear(),
             Event::End(TagEnd::TableCell) => {
-                table_row.push(std::mem::take(&mut current_text).trim().to_owned());
+                table_row.push(current_text.plain().trim().to_owned());
+                current_text.clear();
             }
             Event::End(TagEnd::Table) => {
                 in_table = false;
@@ -152,7 +261,26 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                 } else if in_blockquote {
                     quote_content.push_str(&t);
                 } else {
-                    current_text.push_str(&t);
+                    current_text.push(&t, &style);
+                }
+            }
+            Event::Start(Tag::Strong) => style.strong = true,
+            Event::End(TagEnd::Strong) => style.strong = false,
+            Event::Start(Tag::Emphasis) => style.emphasis = true,
+            Event::End(TagEnd::Emphasis) => style.emphasis = false,
+            Event::Start(Tag::Strikethrough) => style.strike = true,
+            Event::End(TagEnd::Strikethrough) => style.strike = false,
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                if in_blockquote {
+                    link_target = Some(dest_url.to_string());
+                } else {
+                    style.link = Some(dest_url.to_string());
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                style.link = None;
+                if let Some(url) = link_target.take() {
+                    quote_content.push_str(&format!(" ({url})"));
                 }
             }
             Event::Code(c) => {
@@ -161,7 +289,13 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                 } else if in_blockquote {
                     quote_content.push_str(&format!("`{c}`"));
                 } else {
-                    current_text.push_str(&format!(" `{c}` "));
+                    current_text.push(
+                        &c,
+                        &Style {
+                            code: true,
+                            ..style.clone()
+                        },
+                    );
                 }
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -170,14 +304,14 @@ pub fn view<'a, M: Clone + 'static>(theme: &'a Theme, markdown: &'a str) -> Elem
                 } else if in_blockquote {
                     quote_content.push('\n');
                 } else {
-                    current_text.push('\n');
+                    current_text.push_plain("\n");
                 }
             }
             _ => {}
         }
     }
 
-    flush_text(&mut current_text, &mut elements, theme);
+    flush_text(&mut current_text, &mut elements, theme, on_link);
 
     if elements.is_empty() {
         text(t!("no_description").into_owned())
@@ -221,20 +355,29 @@ fn render_table<'a, M: Clone + 'static>(theme: &Theme, rows: Vec<Vec<String>>) -
 }
 
 fn flush_text<'a, M: Clone + 'static>(
-    current_text: &mut String,
+    current_text: &mut Inline,
     elements: &mut Vec<Element<'a, M>>,
     theme: &Theme,
+    on_link: fn(String) -> M,
 ) {
-    let t = std::mem::take(current_text);
-    let trimmed = t.trim();
-    if !trimmed.is_empty() {
-        elements.push(
-            text(trimmed.to_owned())
-                .size(14)
-                .color(theme.on_surface())
-                .into(),
-        );
+    let blank = current_text.is_blank();
+    let runs = current_text.take();
+    if !blank {
+        elements.push(rich(theme, runs, 14, on_link));
     }
+}
+
+/// Localized name of the alert that `label` marks.
+fn alert_name(label: &str) -> String {
+    match label {
+        "NOTE" => t!("alert_note"),
+        "TIP" => t!("alert_tip"),
+        "IMPORTANT" => t!("alert_important"),
+        "WARNING" => t!("alert_warning"),
+        "CAUTION" => t!("alert_caution"),
+        other => return other.to_owned(),
+    }
+    .into_owned()
 }
 
 type Alert = (&'static str, &'static str, Tone);
@@ -294,7 +437,7 @@ fn render_quote_or_alert<'a, M: Clone + 'static>(
             column![
                 row![
                     style::icon(glyph).size(16).color(border_color),
-                    text(label).size(13).color(border_color),
+                    text(alert_name(label)).size(13).color(border_color),
                 ]
                 .spacing(6),
                 text(content.trim().to_owned())

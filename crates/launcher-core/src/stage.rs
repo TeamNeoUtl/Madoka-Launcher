@@ -76,7 +76,19 @@ pub fn run(
                 })?;
                 extract_sfx(download, &tmp)?;
             }
-            Step::RunAuoSetup { path } => run_auo_setup(&roots.resolve(path)?)?,
+            Step::RunAuoSetup { path } => {
+                let exe = roots.resolve(path)?;
+                let before = snapshot_files(&roots.app);
+                let result = run_auo_setup(&exe);
+                // Files the setup program wrote belong to the task, even when it failed.
+                let mut added: Vec<PathBuf> = snapshot_files(&roots.app)
+                    .into_iter()
+                    .filter(|file| !before.contains(file))
+                    .collect();
+                added.sort();
+                created.files.extend(added);
+                result?;
+            }
             Step::Copy { from, to } => {
                 copy(&roots.resolve(from)?, &roots.resolve(to)?, created)?;
             }
@@ -294,4 +306,26 @@ fn run_auo_setup(exe: &Path) -> Result<(), Error> {
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+}
+
+/// Lists every file below `dir`. Unreadable directories are skipped.
+fn snapshot_files(dir: &Path) -> std::collections::HashSet<PathBuf> {
+    let mut files = std::collections::HashSet::new();
+    let mut pending = vec![dir.to_owned()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => pending.push(path),
+                Ok(kind) if kind.is_file() => {
+                    files.insert(path);
+                }
+                _ => {}
+            }
+        }
+    }
+    files
 }

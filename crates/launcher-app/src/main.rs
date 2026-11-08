@@ -28,7 +28,9 @@ fn main() -> ExitCode {
     };
 
     // If launched with a deep link URL, try sending it to an already running instance.
-    if let Some(url) = deeplink::url_from_args().filter(|url| deeplink::try_send_to_running(url)) {
+    // Without a URL, the running instance only comes to the front.
+    let url = deeplink::url_from_args().unwrap_or_else(|| deeplink::FOCUS_URL.to_owned());
+    if deeplink::try_send_to_running(&url) {
         info!("forwarded URL to running instance, exiting: {url}");
         return ExitCode::SUCCESS;
     }

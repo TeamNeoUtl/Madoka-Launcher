@@ -11,6 +11,9 @@ use crate::i18n::Locale;
 /// Window title. It does not depend on the locale.
 pub const APP_TITLE: &str = "Madoka Launcher";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Plugins that "recommended plugins" installs. They equal `requiredPluginIds` of the upstream `setup.json`.
+/// The launcher installs without a network round trip to `setup.json`, so the IDs live here only.
+pub const RECOMMENDED_PLUGIN_IDS: [&str; 2] = ["rigaya.x264guiEx", "Mr-Ojii.L-SMASH-Works"];
 pub const COMMONS_GUIDE_URL: &str = "https://qa.nicovideo.jp/faq/show/847?site_domain=default";
 
 /// Makes `t!` return strings of `locale`.

@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use interprocess::local_socket::{
     GenericFilePath, GenericNamespaced, ListenerOptions, Name, NameType, Stream, prelude::*,
 };
+use launcher_core::InstanceId;
 use tracing::{debug, info, warn};
 
 /// Name of the local socket. One launcher process owns it.
@@ -57,14 +58,32 @@ pub enum DeepLinkAction {
     ViewPackage(String),
     /// Install a specific package into the active instance.
     InstallPackage(String),
-    /// Navigate to the update screen.
+    /// Show the plugin updates of the instance.
     ShowUpdates,
+    /// Only bring the running launcher to the front.
+    Focus,
 }
+
+/// URL that a second process sends when it has no URL of its own.
+pub const FOCUS_URL: &str = "madoka://focus";
 
 /// Parse a `madoka://` or `aviutl2-catalog://` URL into an action.
 ///
 /// Returns `None` if the URL does not match any recognized pattern.
-pub fn parse(url: &str) -> Option<DeepLinkAction> {
+#[cfg(test)]
+fn parse(url: &str) -> Option<DeepLinkAction> {
+    parse_targeted(url).map(|(_, action)| action)
+}
+
+fn decode(segment: &str) -> String {
+    percent_encoding::percent_decode_str(segment)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
+/// Like [`parse`], and returns the instance that the route names.
+/// Routes: `package/<id>`, `updates`, `focus`, and `instance/<instance id>/` before the first two.
+pub fn parse_targeted(url: &str) -> Option<(Option<InstanceId>, DeepLinkAction)> {
     let stripped = url
         .strip_prefix("madoka://")
         .or_else(|| url.strip_prefix("aviutl2-catalog://"))?;
@@ -73,25 +92,38 @@ pub fn parse(url: &str) -> Option<DeepLinkAction> {
         Some((p, q)) => (p, q),
         None => (stripped, ""),
     };
-    let path = path.trim_end_matches('/');
+    let mut path = path.trim_matches('/');
+
+    let mut instance = None;
+    if let Some(rest) = path.strip_prefix("instance/") {
+        let (name, rest) = rest.split_once('/').unwrap_or((rest, ""));
+        instance = Some(decode(name).parse::<InstanceId>().ok()?);
+        path = rest.trim_matches('/');
+    }
 
     if path == "updates" {
-        return Some(DeepLinkAction::ShowUpdates);
+        return Some((instance, DeepLinkAction::ShowUpdates));
+    }
+    if path == "focus" || (path.is_empty() && instance.is_some()) {
+        return Some((instance, DeepLinkAction::Focus));
     }
 
     if let Some(id) = path.strip_prefix("package/") {
-        let id = id.trim_matches('/');
+        let id = decode(id.trim_matches('/'));
         if id.is_empty() {
             return None;
         }
         let auto_install = query
             .split('&')
             .any(|param| param == "install=true" || param == "install=1");
-        return if auto_install {
-            Some(DeepLinkAction::InstallPackage(id.to_owned()))
-        } else {
-            Some(DeepLinkAction::ViewPackage(id.to_owned()))
-        };
+        return Some((
+            instance,
+            if auto_install {
+                DeepLinkAction::InstallPackage(id)
+            } else {
+                DeepLinkAction::ViewPackage(id)
+            },
+        ));
     }
 
     None
@@ -209,6 +241,9 @@ pub fn register_url_scheme() {
                  NoDisplay=true\n",
                 exe.display()
             );
+            if std::fs::read_to_string(&desktop_path).is_ok_and(|current| current == content) {
+                return;
+            }
             match std::fs::write(&desktop_path, content) {
                 Ok(()) => info!(
                     "registered URL scheme handler at {}",
@@ -245,34 +280,36 @@ pub fn register_url_scheme() {
 }
 
 #[cfg(target_os = "windows")]
+fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("reg")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
+/// Registers `protocol` with reg.exe, unless its open command already names `exe_path`.
+#[cfg(target_os = "windows")]
 fn register_windows_protocol(protocol: &str, exe_path: &str) -> std::io::Result<()> {
-    use std::process::Command;
-    // Use reg.exe to add registry keys for the URL protocol.
     let key = format!(r"HKCU\Software\Classes\{protocol}");
-    Command::new("reg")
-        .args([
-            "add",
-            &key,
-            "/ve",
-            "/d",
-            &format!("URL:{protocol} Protocol"),
-            "/f",
-        ])
-        .status()?;
-    Command::new("reg")
-        .args(["add", &key, "/v", "URL Protocol", "/d", "", "/f"])
-        .status()?;
     let cmd_key = format!(r"{key}\shell\open\command");
-    Command::new("reg")
-        .args([
-            "add",
-            &cmd_key,
-            "/ve",
-            "/d",
-            &format!(r#""{exe_path}" "%1""#),
-            "/f",
-        ])
-        .status()?;
+    let command = format!(r#""{exe_path}" "%1""#);
+    let registered = reg(&["query", &cmd_key, "/ve"])?;
+    if registered.status.success() && String::from_utf8_lossy(&registered.stdout).contains(&command)
+    {
+        return Ok(());
+    }
+    reg(&[
+        "add",
+        &key,
+        "/ve",
+        "/d",
+        &format!("URL:{protocol} Protocol"),
+        "/f",
+    ])?;
+    reg(&["add", &key, "/v", "URL Protocol", "/d", "", "/f"])?;
+    reg(&["add", &cmd_key, "/ve", "/d", &command, "/f"])?;
     info!("registered Windows URL protocol: {protocol}");
     Ok(())
 }
@@ -334,9 +371,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_decodes_percent_escapes() {
+        assert_eq!(
+            parse("madoka://package/a%2Eb%20c"),
+            Some(DeepLinkAction::ViewPackage("a.b c".to_owned()))
+        );
+    }
+
+    #[test]
+    fn parse_instance_route() {
+        let id = InstanceId::generate();
+        let url = format!("madoka://instance/{id}/package/x?install=1");
+        assert_eq!(
+            parse_targeted(&url),
+            Some((Some(id), DeepLinkAction::InstallPackage("x".to_owned())))
+        );
+        assert_eq!(
+            parse_targeted(&format!("madoka://instance/{id}/updates")),
+            Some((Some(id), DeepLinkAction::ShowUpdates))
+        );
+        assert_eq!(parse_targeted("madoka://instance/nope/updates"), None);
+    }
+
+    #[test]
+    fn parse_focus() {
+        assert_eq!(parse(FOCUS_URL), Some(DeepLinkAction::Focus));
+    }
+
+    #[test]
     fn parse_invalid() {
         assert_eq!(parse("https://example.com"), None);
         assert_eq!(parse("madoka://"), None);
         assert_eq!(parse("madoka://unknown/path"), None);
+    }
+}
+
+#[cfg(test)]
+mod install_route {
+    use super::*;
+
+    #[test]
+    fn install_link_with_instance_routes_to_install_action() {
+        let id = InstanceId::generate();
+        for scheme in ["madoka", "aviutl2-catalog"] {
+            let url = format!("{scheme}://instance/{id}/package/a.b%2Fc?install=true");
+            assert_eq!(
+                parse_targeted(&url),
+                Some((Some(id), DeepLinkAction::InstallPackage("a.b/c".to_owned())))
+            );
+        }
+        // Without the flag the link only opens the detail view.
+        assert_eq!(
+            parse_targeted("madoka://package/x?install=false"),
+            Some((None, DeepLinkAction::ViewPackage("x".to_owned())))
+        );
+        assert_eq!(parse_targeted("madoka://package/"), None);
     }
 }

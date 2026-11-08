@@ -229,6 +229,7 @@ impl<F: Fetcher> Installer<F> {
         let id = instance.config.id;
         let mut archive = Archive::open(archive, Layout::TreeWithoutRoot)?;
         let app_dir = instance.app_dir();
+        let paused = is_paused(&instance.config.plugins, &package.id);
 
         if let Some(position) = position_of(&instance.config.plugins, &package.id) {
             delete_files(&app_dir, &app_dir, &instance.config.plugins[position].files)?;
@@ -246,7 +247,7 @@ impl<F: Fetcher> Installer<F> {
                 .into_iter()
                 .map(|file| format!("{plugin_dir}/{file}"))
                 .collect(),
-            paused: false,
+            paused,
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
@@ -328,6 +329,7 @@ impl<F: Fetcher> Installer<F> {
         let staged = tmp.0.join(staging.name);
         fs::copy(staging.archive, &staged).map_err(|e| Error::io(&staged, e))?;
         let roots = Roots::locate(instance.config.kind, &app_dir, Some(&tmp.0))?;
+        let paused = is_paused(&instance.config.plugins, &package.id);
 
         if let Some(position) = position_of(&instance.config.plugins, &package.id) {
             let floor = removal_floor(&instance);
@@ -348,7 +350,7 @@ impl<F: Fetcher> Installer<F> {
             version: staging.version.to_owned(),
             source: package.source.label(),
             files: relative_files(&app_dir, &created.files)?,
-            paused: false,
+            paused,
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
@@ -516,6 +518,13 @@ fn plugin_dir(kind: Kind, package: &Package) -> Result<String, Error> {
 
 fn position_of(plugins: &[PluginRecord], id: &str) -> Option<usize> {
     plugins.iter().position(|plugin| plugin.id == id)
+}
+
+/// A reinstall keeps the pause that the user set on the package.
+fn is_paused(plugins: &[PluginRecord], id: &str) -> bool {
+    plugins
+        .iter()
+        .any(|plugin| plugin.id == id && plugin.paused)
 }
 
 /// Removes `files` (relative to `app_dir`), ignoring files that are already absent,

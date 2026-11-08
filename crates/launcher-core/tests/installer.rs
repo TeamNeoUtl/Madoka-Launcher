@@ -683,6 +683,27 @@ fn install_package_file_replaces_the_record_of_the_same_package() {
 }
 
 #[test]
+fn reinstall_keeps_the_pause_of_the_package() {
+    let f = fixture(Kind::Ymm4);
+    let package = web_package("https://example.com/plugin/1");
+    let path = write_zip(&f, "p.ymme", &[("a.dll", b"a")]);
+    let id = f.instance.config.id;
+    f.installer
+        .install_package_file(id, &package, "-", &path)
+        .unwrap();
+    InstanceStore::new(f.root.path())
+        .set_plugin_paused(id, &package.id, true)
+        .unwrap();
+    let record = f
+        .installer
+        .install_package_file(id, &package, "-", &path)
+        .unwrap();
+
+    assert!(record.paused);
+    assert!(reload(&f).config.plugins[0].paused);
+}
+
+#[test]
 fn install_package_file_separates_web_packages() {
     let f = fixture(Kind::Ymm4);
     let id = f.instance.config.id;

@@ -115,3 +115,39 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod locale_files {
+    use std::collections::BTreeSet;
+
+    fn keys(text: &str) -> BTreeSet<String> {
+        text.lines()
+            .filter(|line| !line.starts_with([' ', '\t', '#']))
+            .filter_map(|line| line.split_once(':'))
+            .map(|(key, _)| key.trim().trim_matches('"').to_owned())
+            .filter(|key| !key.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn all_languages_have_identical_key_sets() {
+        let files = [
+            ("en", include_str!("../locales/en.yml")),
+            ("ja", include_str!("../locales/ja.yml")),
+            ("ko", include_str!("../locales/ko.yml")),
+            ("zh-CN", include_str!("../locales/zh-CN.yml")),
+            ("zh-TW", include_str!("../locales/zh-TW.yml")),
+        ];
+        let base = keys(files[0].1);
+        assert!(!base.is_empty());
+        for (name, text) in &files[1..] {
+            let other = keys(text);
+            let missing: Vec<_> = base.difference(&other).collect();
+            let extra: Vec<_> = other.difference(&base).collect();
+            assert!(
+                missing.is_empty() && extra.is_empty(),
+                "{name}: missing {missing:?}, extra {extra:?}"
+            );
+        }
+    }
+}

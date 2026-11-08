@@ -216,6 +216,40 @@ pub fn zip_entry_names(path: &Path) -> Result<Vec<String>, Error> {
     Ok(names)
 }
 
+/// Reads the file entry `name` of the zip at `path` (case-insensitive, `/` separators).
+/// Returns `None` when there is no such entry or it exceeds `limit` bytes.
+///
+/// # Errors
+///
+/// Returns `Error::Io` when `path` cannot be opened and `Error::Zip` when it is not a zip.
+pub fn zip_read_entry(path: &Path, name: &str, limit: u64) -> Result<Option<Vec<u8>>, Error> {
+    use std::io::Read;
+    let file = File::open(path).map_err(|source| Error::io(path, source))?;
+    let mut zip =
+        ZipArchive::new(BufReader::new(file)).map_err(|source| Error::zip(path, source))?;
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|source| Error::zip(path, source))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Ok(entry_name) = entry.name() else {
+            continue;
+        };
+        if !entry_name.replace('\\', "/").eq_ignore_ascii_case(name) || entry.size() > limit {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        entry
+            .take(limit)
+            .read_to_end(&mut bytes)
+            .map_err(|source| Error::io(path, source))?;
+        return Ok(Some(bytes));
+    }
+    Ok(None)
+}
+
 const SEVEN_ZIP_SIGNATURE: [u8; 6] = [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
 
 /// Offset of the first 7z signature in `bytes`.

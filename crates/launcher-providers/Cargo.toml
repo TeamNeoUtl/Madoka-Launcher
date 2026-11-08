@@ -17,7 +17,7 @@ launcher-core = { path = "../launcher-core" }
 percent-encoding = "2"
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio"] }
 regex = "1"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking", "cookies"] }
 self_update = { version = "1", default-features = false, features = ["reqwest", "rustls", "github", "archive-zip", "compression-zip-deflate", "compression-tar-gz", "checksums"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
