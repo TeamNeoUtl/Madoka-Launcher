@@ -92,13 +92,11 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let path = Path::new(&name);
     let stem = path
         .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_else(|| name.clone());
+        .map_or_else(|| name.clone(), |stem| stem.to_string_lossy().into_owned());
     let extension = path
         .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
-        .unwrap_or_default();
-    (1..)
+        .map_or_default(|extension| format!(".{}", extension.to_string_lossy()));
+    (1..=u32::MAX)
         .map(|n| dir.join(format!("{stem} ({n}){extension}")))
         .find(|candidate| !candidate.exists())
         .unwrap_or(first)
@@ -137,19 +135,18 @@ fn run() -> Result<(), String> {
         .with_download_started_handler(move |url, path| {
             let name = path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|name| name.to_string_lossy().into_owned());
             emit(&format!("{DOWNLOAD_PREFIX}{name}\t{url}"));
-            match &save_dir {
-                Some(dir) => {
-                    *path = unique_path(dir, &name);
-                    true
-                }
-                None => {
+            save_dir.as_ref().map_or_else(
+                || {
                     let _ = proxy.send_event(Signal::Download);
                     false
-                }
-            }
+                },
+                |dir| {
+                    *path = unique_path(dir, &name);
+                    true
+                },
+            )
         })
         .with_download_completed_handler(move |url, path, success| {
             if !saves {

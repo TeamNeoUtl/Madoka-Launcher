@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::assert_is_empty,
+    reason = "helpers may panic; `assert_ne!` on empty needs a type"
+)]
+
 use std::collections::HashSet;
 
 use launcher_core::{AppSelection, Edition, Host};
@@ -8,7 +14,7 @@ fn http() -> ReqwestHttp {
     ReqwestHttp::new("Madoka-Launcher-test/0.1", token).unwrap()
 }
 
-fn selection(host: Host, edition: Edition) -> AppSelection {
+const fn selection(host: Host, edition: Edition) -> AppSelection {
     AppSelection { host, edition }
 }
 

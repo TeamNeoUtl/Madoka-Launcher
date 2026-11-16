@@ -24,7 +24,7 @@ pub fn is_au2pkg_filename(file_path: &str) -> bool {
 #[must_use]
 pub fn calc_xxh3_128_hex(bytes: &[u8]) -> String {
     let h = xxh3_128(bytes);
-    format!("{:032x}", h)
+    format!("{h:032x}")
 }
 
 /// Resolves Google Drive file ID to a direct download URL.
@@ -98,6 +98,7 @@ fn root_priority(root: &str) -> u8 {
 }
 
 /// Selects the entries whose first component names an allowed root and that hold a file below it.
+///
 /// An entry with a `..` component is dropped. Duplicates collapse into one.
 /// The result lists `Plugin`, then `Script`, then the other roots, each sorted by path.
 #[must_use]

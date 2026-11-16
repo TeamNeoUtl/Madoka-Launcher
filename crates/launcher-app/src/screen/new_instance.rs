@@ -174,7 +174,7 @@ impl Form {
         &self.addon_versions
     }
 
-    pub fn has_addon(&self) -> bool {
+    pub const fn has_addon(&self) -> bool {
         !self.addon_versions.is_empty()
     }
 

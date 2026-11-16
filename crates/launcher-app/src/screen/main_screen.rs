@@ -219,15 +219,15 @@ fn tile(theme: &Theme, instance: &Instance, selected: bool) -> Ui {
             style::kind_tone(config.kind),
         ),
         Space::new().width(Length::Fill),
-        if !config.plugins.is_empty() {
+        if config.plugins.is_empty() {
+            row![]
+        } else {
             row![
                 style::icon(style::icons::EXTENSION).size(14).color(color),
                 text(config.plugins.len().to_string()).size(12).color(color),
             ]
             .spacing(3)
             .align_y(Vertical::Center)
-        } else {
-            row![]
         }
     ]
     .align_y(Vertical::Center);
@@ -470,49 +470,61 @@ fn compact(
 
 fn status_bar(theme: &Theme, tasks: &[TaskInfo]) -> Ui {
     let active: Vec<&TaskInfo> = tasks.iter().filter(|task| task.state.is_active()).collect();
-    if let Some(latest) = active.last() {
-        row![
-            style::icon(style::icons::SYNC)
-                .size(15)
-                .color(theme.primary()),
-            style::label(
-                theme,
-                format!(
-                    "{}: {} | {}: {}",
-                    t!("active_tasks"),
-                    active.len(),
-                    latest.title,
-                    detail_label(&latest.state)
+    active.last().map_or_else(
+        || idle_status(theme, tasks),
+        |latest| active_status(theme, active.len(), latest),
+    )
+}
+
+fn active_status(theme: &Theme, count: usize, latest: &TaskInfo) -> Ui {
+    row![
+        style::icon(style::icons::SYNC)
+            .size(15)
+            .color(theme.primary()),
+        style::label(
+            theme,
+            format!(
+                "{}: {} | {}: {}",
+                t!("active_tasks"),
+                count,
+                latest.title,
+                detail_label(&latest.state)
+            )
+        )
+        .size(12),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn idle_status(theme: &Theme, tasks: &[TaskInfo]) -> Ui {
+    tasks.last().map_or_else(
+        || {
+            row![
+                style::icon(style::icons::CHECK_CIRCLE)
+                    .size(15)
+                    .color(theme.tertiary()),
+                style::label(theme, t!("no_tasks")).size(12),
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center)
+            .into()
+        },
+        |last| {
+            row![
+                style::icon(style::icons::TASKS)
+                    .size(15)
+                    .color(theme.on_surface_variant()),
+                style::label(
+                    theme,
+                    format!("{}: {}", last.title, detail_label(&last.state))
                 )
-            )
-            .size(12),
-        ]
-        .spacing(6)
-        .align_y(Vertical::Center)
-        .into()
-    } else if let Some(last) = tasks.last() {
-        row![
-            style::icon(style::icons::TASKS)
-                .size(15)
-                .color(theme.on_surface_variant()),
-            style::label(
-                theme,
-                format!("{}: {}", last.title, detail_label(&last.state))
-            )
-            .size(12),
-        ]
-        .spacing(6)
-        .align_y(Vertical::Center)
-        .into()
-    } else {
-        row![
-            style::icon(style::icons::CHECK_CIRCLE)
-                .size(15)
-                .color(theme.tertiary()),
-            style::label(theme, t!("no_tasks")).size(12),
-        ]
-        .spacing(6)
-        .align_y(Vertical::Center)
-        .into()
-    }
+                .size(12),
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center)
+            .into()
+        },
+    )
 }

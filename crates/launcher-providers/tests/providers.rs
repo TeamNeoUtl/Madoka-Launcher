@@ -1,3 +1,11 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::needless_pass_by_value,
+    reason = "helpers may panic; empty checks and owned JSON arguments keep call sites short"
+)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -58,9 +66,9 @@ impl FixtureHttp {
 }
 
 impl Http for FixtureHttp {
-    async fn get(&self, url: &Url) -> Result<Vec<u8>, HttpError> {
+    fn get(&self, url: &Url) -> impl Future<Output = Result<Vec<u8>, HttpError>> + Send {
         self.requests.lock().unwrap().push(url.to_string());
-        match self.replies.get(url.as_str()) {
+        std::future::ready(match self.replies.get(url.as_str()) {
             Some(Reply::Body(bytes)) => Ok(bytes.clone()),
             Some(Reply::Status(status)) => Err(HttpError::Status {
                 status: *status,
@@ -70,7 +78,7 @@ impl Http for FixtureHttp {
                 status: 404,
                 url: url.to_string(),
             }),
-        }
+        })
     }
 }
 
@@ -219,26 +227,23 @@ fn catalog_classifies_source_by_url_shape() {
 
     assert_eq!(packages.len(), cases.len());
     for (package, (url, repo)) in packages.iter().zip(cases) {
-        match repo {
-            Some((owner, repo)) => {
-                assert_eq!(
-                    package.source,
-                    PackageSource::GithubRepo {
-                        owner: owner.to_owned(),
-                        repo: repo.to_owned()
-                    },
-                    "{url}"
-                );
-                assert_eq!(package.id, format!("github:{owner}/{repo}"), "{url}");
-            }
-            None => {
-                assert_eq!(
-                    package.source,
-                    PackageSource::Web(Url::parse(url).unwrap()),
-                    "{url}"
-                );
-                assert_eq!(package.id, url, "{url}");
-            }
+        if let Some((owner, repo)) = repo {
+            assert_eq!(
+                package.source,
+                PackageSource::GithubRepo {
+                    owner: owner.to_owned(),
+                    repo: repo.to_owned()
+                },
+                "{url}"
+            );
+            assert_eq!(package.id, format!("github:{owner}/{repo}"), "{url}");
+        } else {
+            assert_eq!(
+                package.source,
+                PackageSource::Web(Url::parse(url).unwrap()),
+                "{url}"
+            );
+            assert_eq!(package.id, url, "{url}");
         }
         assert_eq!(package.page_url.as_str(), url);
     }

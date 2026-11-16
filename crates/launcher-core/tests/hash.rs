@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "test helpers outside #[test] functions may panic"
+)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;

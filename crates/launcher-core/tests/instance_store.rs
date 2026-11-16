@@ -1,3 +1,8 @@
+#![expect(
+    clippy::assert_is_empty,
+    reason = "`assert_eq!` on an empty value needs a type at each call"
+)]
+
 use launcher_core::{
     Edition, Error, Host, Instance, InstanceStore, Kind, NewInstance, PluginRecord,
 };

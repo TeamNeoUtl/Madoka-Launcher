@@ -88,10 +88,10 @@ impl InstanceConfig {
     /// `app_version`, followed by the addon version when there is one.
     #[must_use]
     pub fn version_label(&self) -> String {
-        match &self.addon_version {
-            Some(addon) => format!("{} / {ADDON_LABEL} {addon}", self.app_version),
-            None => self.app_version.clone(),
-        }
+        self.addon_version.as_ref().map_or_else(
+            || self.app_version.clone(),
+            |addon| format!("{} / {ADDON_LABEL} {addon}", self.app_version),
+        )
     }
 
     /// Splits the combined `app_version` of earlier launcher versions into both fields.

@@ -31,8 +31,9 @@ pub fn default_root() -> Option<PathBuf> {
         .or_else(standard_root)
 }
 
-/// Copies the content of the current data directory into the target directory of the new mode,
-/// so that the next start finds the same settings, instances, and caches.
+/// Copies the content of the current data directory into the target directory of the new mode.
+///
+/// The next start finds the same settings, instances, and caches.
 /// Turning portable mode off removes `<executable directory>/data` after the copy succeeded,
 /// because that directory selects portable mode. Turning it on keeps the standard directory.
 /// The running process keeps using its current directory until it restarts.

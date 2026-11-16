@@ -1,5 +1,7 @@
 //! Lightweight Markdown renderer for Iced with GitHub alert, table, and task list support.
 
+use std::fmt::Write as _;
+
 use iced::widget::span;
 use iced::widget::text::Span;
 use iced::widget::{column, container, rich_text, row, text};
@@ -12,6 +14,10 @@ use rust_i18n::t;
 use crate::style::{self, Tone};
 
 #[derive(Clone, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent inline format"
+)]
 struct Style {
     strong: bool,
     emphasis: bool,
@@ -212,7 +218,9 @@ pub fn view<'a, M: Clone + 'static>(
                 let blank = current_text.is_blank();
                 let item = current_text.take();
                 if !blank {
-                    let indent = (lists.len().saturating_sub(1) * 16) as f32;
+                    let indent = f32::from(
+                        u16::try_from(lists.len().saturating_sub(1) * 16).unwrap_or(u16::MAX),
+                    );
                     let marker = match lists.last_mut() {
                         Some(Some(number)) => {
                             let marker = format!("{number}.");
@@ -239,13 +247,10 @@ pub fn view<'a, M: Clone + 'static>(
                 table_rows.clear();
                 table_row.clear();
             }
-            Event::End(TagEnd::TableHead) => {
+            Event::End(TagEnd::TableHead | TagEnd::TableRow) => {
                 table_rows.push(std::mem::take(&mut table_row));
             }
             Event::Start(Tag::TableRow) => table_row.clear(),
-            Event::End(TagEnd::TableRow) => {
-                table_rows.push(std::mem::take(&mut table_row));
-            }
             Event::Start(Tag::TableCell) => current_text.clear(),
             Event::End(TagEnd::TableCell) => {
                 table_row.push(current_text.plain().trim().to_owned());
@@ -280,14 +285,14 @@ pub fn view<'a, M: Clone + 'static>(
             Event::End(TagEnd::Link) => {
                 style.link = None;
                 if let Some(url) = link_target.take() {
-                    quote_content.push_str(&format!(" ({url})"));
+                    let _ = write!(quote_content, " ({url})");
                 }
             }
             Event::Code(c) => {
                 if in_code_block {
                     code_content.push_str(&c);
                 } else if in_blockquote {
-                    quote_content.push_str(&format!("`{c}`"));
+                    let _ = write!(quote_content, "`{c}`");
                 } else {
                     current_text.push(
                         &c,
@@ -354,9 +359,9 @@ fn render_table<'a, M: Clone + 'static>(theme: &Theme, rows: Vec<Vec<String>>) -
     column(lines).spacing(2).into()
 }
 
-fn flush_text<'a, M: Clone + 'static>(
+fn flush_text<M: Clone + 'static>(
     current_text: &mut Inline,
-    elements: &mut Vec<Element<'a, M>>,
+    elements: &mut Vec<Element<'_, M>>,
     theme: &Theme,
     on_link: fn(String) -> M,
 ) {

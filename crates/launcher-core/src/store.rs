@@ -165,6 +165,11 @@ impl InstanceStore {
     }
 
     /// Adds or updates a plugin record for the instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `load`, and `Error::Io` or `Error::Serialize`
+    /// when `instance.toml` cannot be written.
     pub fn add_or_update_plugin(
         &self,
         id: InstanceId,

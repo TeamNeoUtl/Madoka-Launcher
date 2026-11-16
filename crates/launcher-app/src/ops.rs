@@ -148,8 +148,7 @@ impl Browsed {
         let raw = self.name.clone().or_else(from_url).unwrap_or_default();
         let name: String = Path::new(&raw)
             .file_name()
-            .map(|name| name.to_string_lossy().replace(FORBIDDEN_FILE_CHARS, "_"))
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().replace(FORBIDDEN_FILE_CHARS, "_"));
         if name.is_empty() || name == ".." {
             DEFAULT_FILE_NAME.to_owned()
         } else {
@@ -647,10 +646,10 @@ impl Services {
             .to_owned();
         let archive = dest.clone();
         blocking(move || {
-            let record = match recipe {
-                Some(recipe) => installer.install_recipe_file(id, &package, &recipe, &archive),
-                None => installer.install_package_file(id, &package, &version, &archive),
-            };
+            let record = recipe.map_or_else(
+                || installer.install_package_file(id, &package, &version, &archive),
+                |recipe| installer.install_recipe_file(id, &package, &recipe, &archive),
+            );
             record.map(drop)
         })
         .await?;
@@ -792,8 +791,7 @@ impl Services {
         }
         let name = archive
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let stem = name
             .strip_suffix(".zip")
             .unwrap_or(&name)
@@ -1492,7 +1490,7 @@ mod tests {
                 paused: false,
             },
         ];
-        let report = runtime().block_on(services.clone().restore_config(
+        let report = runtime().block_on(services.restore_config(
             Kind::Aviutl2,
             id,
             "install".to_owned(),

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] functions may panic"
+)]
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};

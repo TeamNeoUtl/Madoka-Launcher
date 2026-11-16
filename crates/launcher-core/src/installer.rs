@@ -462,7 +462,7 @@ const fn layout_of(kind: Kind) -> Layout {
 }
 
 /// `AviUtl` and the other Windows-only kinds ship `.exe` files on every host.
-fn executable_host(kind: Kind) -> Host {
+const fn executable_host(kind: Kind) -> Host {
     if kind.supported_on(Host::current()) {
         Host::current()
     } else {

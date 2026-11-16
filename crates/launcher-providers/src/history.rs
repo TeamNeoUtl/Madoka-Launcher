@@ -6,13 +6,13 @@ use crate::{Http, ProviderError};
 
 const HISTORY_URL: &str = "https://spring-fragrance.mints.ne.jp/aviutl/oldver2.php";
 
-pub(crate) async fn fetch_page<H: Http>(http: &H) -> Result<Vec<u8>, ProviderError> {
+pub async fn fetch_page<H: Http>(http: &H) -> Result<Vec<u8>, ProviderError> {
     Ok(http.get(&parse_url(HISTORY_URL)?).await?)
 }
 
 /// `(version, archive URL)` of every match of `pattern` in `page`, in page order.
 /// Capture group 1 is the link target, capture group 2 is the version.
-pub(crate) fn parse_rows(page: &[u8], pattern: &str) -> Result<Vec<(String, Url)>, ProviderError> {
+pub fn parse_rows(page: &[u8], pattern: &str) -> Result<Vec<(String, Url)>, ProviderError> {
     let base = parse_url(HISTORY_URL)?;
     let text = String::from_utf8_lossy(page);
     let row = Regex::new(pattern).map_err(|e| ProviderError::CatalogShapeChanged(e.to_string()))?;

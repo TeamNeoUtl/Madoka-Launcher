@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::assert_is_empty,
+    reason = "helpers outside #[test] functions may panic; `assert_eq!` on empty needs a type"
+)]
+
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::Path;
@@ -18,22 +24,22 @@ struct FakeFetcher {
 }
 
 impl Fetcher for FakeFetcher {
-    async fn fetch(
+    fn fetch(
         &self,
         _url: &Url,
         dest: &Path,
         _progress: &dyn ProgressSink,
-    ) -> Result<(), Error> {
+    ) -> impl Future<Output = Result<(), Error>> + Send {
         let body = self.body.lock().unwrap().clone();
-        fs::write(dest, body).map_err(|source| Error::Fetch {
+        std::future::ready(fs::write(dest, body).map_err(|source| Error::Fetch {
             url: dest.display().to_string(),
             message: source.to_string(),
-        })
+        }))
     }
 }
 
 struct Fixture {
-    _root: TempDir,
+    root: TempDir,
     installer: Installer<FakeFetcher>,
     instance: Instance,
 }
@@ -55,7 +61,7 @@ fn fixture(kind: Kind, exe: &str) -> Fixture {
     fs::write(instance.app_dir().join(exe), b"exe").unwrap();
     Fixture {
         installer: Installer::new(root.path(), FakeFetcher::default()),
-        _root: root,
+        root,
         instance,
     }
 }
@@ -70,7 +76,7 @@ impl Fixture {
     }
 
     fn reload(&self) -> Instance {
-        InstanceStore::new(self._root.path())
+        InstanceStore::new(self.root.path())
             .load(self.instance.config.id)
             .unwrap()
     }
@@ -322,7 +328,7 @@ fn recipe(checks: Vec<FileCheck>) -> Recipe {
 }
 
 fn browsed_archive(fx: &Fixture) -> std::path::PathBuf {
-    let path = fx._root.path().join("browsed.zip");
+    let path = fx.root.path().join("browsed.zip");
     fs::write(&path, zip_bytes(&[("a.aux2", b"alpha")])).unwrap();
     path
 }

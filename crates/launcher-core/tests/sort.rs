@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] functions may panic"
+)]
+
 use launcher_core::{Package, PackageSource, SortOrder, TREND_DAYS, sort_packages};
 use time::{Date, Month};
 use url::Url;

@@ -5,11 +5,11 @@ use url::Url;
 struct NoHttp;
 
 impl Http for NoHttp {
-    async fn get(&self, url: &Url) -> Result<Vec<u8>, HttpError> {
-        Err(HttpError::Transport {
+    fn get(&self, url: &Url) -> impl Future<Output = Result<Vec<u8>, HttpError>> + Send {
+        std::future::ready(Err(HttpError::Transport {
             url: url.to_string(),
             message: "unused".to_owned(),
-        })
+        }))
     }
 }
 

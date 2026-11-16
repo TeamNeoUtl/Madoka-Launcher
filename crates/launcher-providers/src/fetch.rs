@@ -16,7 +16,7 @@ const MAX_REDIRECTS: usize = 10;
 const PROGRESS_STEP: u64 = 8 * 1024 * 1024;
 
 /// Follows a redirect when `is_allowed_url` accepts its target.
-pub(crate) fn allowed_redirects() -> Policy {
+pub fn allowed_redirects() -> Policy {
     Policy::custom(|attempt| {
         if is_allowed_url(attempt.url()) {
             debug!(to = %attempt.url(), "redirect");

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] functions may panic"
+)]
+
 use launcher_core::{Edition, Host, InstanceStore, Kind, NewInstance, is_instance_running};
 use tempfile::TempDir;
 

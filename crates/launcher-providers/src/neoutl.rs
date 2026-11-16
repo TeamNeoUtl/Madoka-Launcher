@@ -9,6 +9,7 @@ use crate::{Http, Provider, ProviderError};
 
 const RELEASES_URL: &str = "https://codeberg.org/api/v1/repos/TeamNeoUtl/NeoUtl/releases?limit=50";
 
+#[expect(clippy::expect_used, reason = "the pattern is a constant literal")]
 static ASSET: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^neoutl-(linux|windows)-x86_64\.zip$").expect("static regex"));
 

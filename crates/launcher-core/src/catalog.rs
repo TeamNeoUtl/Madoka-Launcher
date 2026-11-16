@@ -253,8 +253,7 @@ impl Recipe {
                     if *directory { "directory" } else { "file" },
                     archive_dir
                         .as_deref()
-                        .map(|dir| format!(" (archive directory {dir})"))
-                        .unwrap_or_default()
+                        .map_or_default(|dir| format!(" (archive directory {dir})"))
                 ),
             });
         }

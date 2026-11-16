@@ -59,7 +59,7 @@ pub fn state_label(state: &TaskState) -> String {
     }
 }
 
-pub fn state_icon(state: &TaskState) -> &'static str {
+pub const fn state_icon(state: &TaskState) -> &'static str {
     match state {
         TaskState::Queued => style::icons::HOURGLASS,
         TaskState::Running { .. } => style::icons::SYNC,

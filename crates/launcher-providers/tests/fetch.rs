@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] functions may panic"
+)]
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -61,7 +66,7 @@ async fn progress_is_monotonic_and_ends_at_the_content_length() {
     server.join().unwrap();
 
     assert_eq!(fs::read(&dest).unwrap(), body);
-    let seen = recorder.0.lock().unwrap();
+    let seen = recorder.0.into_inner().unwrap();
     assert_eq!(
         seen.first(),
         Some(&Progress {

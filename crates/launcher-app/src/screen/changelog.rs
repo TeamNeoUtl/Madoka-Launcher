@@ -8,7 +8,7 @@ pub struct Section<'a> {
 }
 
 /// Version found in a heading line, e.g. `## [1.2.3] - 2024-01-01` or `### v1.2`.
-fn heading_version(line: &str) -> Option<Option<String>> {
+fn heading_version(line: &str) -> Option<String> {
     let rest = line.trim_start();
     let hashes = rest.chars().take_while(|c| *c == '#').count();
     if !(1..=4).contains(&hashes) {
@@ -18,7 +18,7 @@ fn heading_version(line: &str) -> Option<Option<String>> {
     if title.is_empty() {
         return None;
     }
-    let version = title
+    title
         .split(|c: char| c.is_whitespace() || matches!(c, '[' | ']' | '(' | ')' | ':' | ','))
         .map(|word| word.trim_start_matches(['v', 'V']))
         .find(|word| {
@@ -28,8 +28,7 @@ fn heading_version(line: &str) -> Option<Option<String>> {
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
                 && !word.chars().all(|c| c.is_ascii_digit() && word.len() == 4)
         })
-        .map(str::to_owned);
-    Some(version)
+        .map(str::to_owned)
 }
 
 /// Sections that start at a heading with a version. Text before the first one is dropped.
@@ -40,7 +39,7 @@ pub fn split(changelog: &str) -> Vec<Section<'_>> {
     for line in changelog.split_inclusive('\n') {
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
-        } else if !fenced && let Some(Some(version)) = heading_version(line) {
+        } else if !fenced && let Some(version) = heading_version(line) {
             starts.push((offset, version));
         }
         offset += line.len();
@@ -94,10 +93,10 @@ pub fn since<'a>(changelog: &'a str, installed: &str) -> Option<Vec<Section<'a>>
 /// The changelog text of the versions newer than `installed`.
 /// The whole `changelog` when it has no version sections.
 pub fn range_text(changelog: &str, installed: &str) -> String {
-    match since(changelog, installed) {
-        Some(sections) => sections.iter().map(|section| section.text).collect(),
-        None => changelog.to_owned(),
-    }
+    since(changelog, installed).map_or_else(
+        || changelog.to_owned(),
+        |sections| sections.iter().map(|section| section.text).collect(),
+    )
 }
 
 #[cfg(test)]

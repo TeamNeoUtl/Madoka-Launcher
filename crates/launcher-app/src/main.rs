@@ -59,7 +59,7 @@ fn main() -> ExitCode {
         .font(style::ICON_FONT_BYTES)
         .default_font(font)
         .theme(App::theme)
-        .subscription(App::subscription)
+        .subscription(|_| App::subscription())
         .run();
     match result {
         Ok(()) => {
@@ -74,7 +74,7 @@ fn main() -> ExitCode {
 }
 
 fn window_settings() -> window::Settings {
-    let side = (ICON_RGBA.len() / 4).isqrt() as u32;
+    let side = u32::try_from((ICON_RGBA.len() / 4).isqrt()).unwrap_or(0);
     let icon = window::icon::from_rgba(ICON_RGBA.to_vec(), side, side)
         .inspect_err(|error| warn!(%error, "window icon"))
         .ok();

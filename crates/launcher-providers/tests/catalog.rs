@@ -1,3 +1,11 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::needless_pass_by_value,
+    reason = "helpers may panic; empty checks and owned JSON arguments keep call sites short"
+)]
+
 use std::collections::HashMap;
 
 use launcher_core::{
@@ -17,11 +25,16 @@ const SHA384_SRI: &str = "sha384-YJcXuvmKzJ3nUsGPHaylBdFI9Q4AxAwSDUqpDyZ2wLzYQaU
 struct FixtureHttp(HashMap<String, Vec<u8>>);
 
 impl Http for FixtureHttp {
-    async fn get(&self, url: &Url) -> Result<Vec<u8>, HttpError> {
-        self.0.get(url.as_str()).cloned().ok_or(HttpError::Status {
-            status: 404,
-            url: url.to_string(),
-        })
+    fn get(&self, url: &Url) -> impl Future<Output = Result<Vec<u8>, HttpError>> + Send {
+        std::future::ready(
+            self.0
+                .get(url.as_str())
+                .cloned()
+                .ok_or_else(|| HttpError::Status {
+                    status: 404,
+                    url: url.to_string(),
+                }),
+        )
     }
 }
 

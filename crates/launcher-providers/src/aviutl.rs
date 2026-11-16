@@ -123,14 +123,13 @@ fn app_check(target: &str, hash: &str) -> Option<FileCheck> {
 fn checks_of(release: Option<&RawRelease>) -> Vec<FileCheck> {
     release
         .and_then(|release| release.integrity.as_ref())
-        .map(|integrity| {
+        .map_or_default(|integrity| {
             integrity
                 .file
                 .iter()
                 .filter_map(|file| app_check(&file.target, &file.hash))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 fn release_of<'a>(releases: &'a [RawRelease], version: &str) -> Option<&'a RawRelease> {

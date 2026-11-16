@@ -10,6 +10,7 @@ use crate::{Http, Provider, ProviderError};
 const RELEASES_URL: &str = "https://api.github.com/repos/GT-610/freya-nle/releases?per_page=30";
 
 /// Release asset names keep the identifier that predates the rename to Freya NLE.
+#[expect(clippy::expect_used, reason = "the pattern is a constant literal")]
 static WINDOWS_ASSET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^AviQtl-(MSVC|MSYS2-UCRT64)-x86_64\.zip$").expect("static regex")
 });

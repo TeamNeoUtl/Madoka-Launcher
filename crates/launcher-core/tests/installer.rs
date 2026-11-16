@@ -1,3 +1,10 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::assert_is_empty,
+    reason = "helpers outside #[test] functions may panic; `assert_eq!` on empty needs a type"
+)]
+
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -31,12 +38,12 @@ impl FakeFetcher {
 }
 
 impl Fetcher for FakeFetcher {
-    async fn fetch(
+    fn fetch(
         &self,
         _url: &Url,
         dest: &Path,
         progress: &dyn ProgressSink,
-    ) -> Result<(), Error> {
+    ) -> impl Future<Output = Result<(), Error>> + Send {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let body = self.body.lock().unwrap().clone();
         let size = body.len() as u64;
@@ -44,15 +51,18 @@ impl Fetcher for FakeFetcher {
             done: 0,
             total: Some(size),
         });
-        fs::write(dest, &body).map_err(|source| Error::Fetch {
-            url: dest.display().to_string(),
-            message: source.to_string(),
-        })?;
-        progress.report(Progress {
-            done: size,
-            total: Some(size),
-        });
-        Ok(())
+        let written = fs::write(dest, &body)
+            .map_err(|source| Error::Fetch {
+                url: dest.display().to_string(),
+                message: source.to_string(),
+            })
+            .inspect(|()| {
+                progress.report(Progress {
+                    done: size,
+                    total: Some(size),
+                });
+            });
+        std::future::ready(written)
     }
 }
 
@@ -104,8 +114,10 @@ fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+        .fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").unwrap();
+            hex
+        })
 }
 
 fn artifact_with_hash(name: &str, host: &str, hex: Option<String>) -> Artifact {

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -34,6 +35,10 @@ pub fn scan_xxh3_128(app_dir: &Path) -> HashSet<String> {
         .min(files.len());
     let chunk = files.len().div_ceil(threads);
     thread::scope(|scope| {
+        #[expect(
+            clippy::needless_collect,
+            reason = "every thread must start before the first join"
+        )]
         let workers: Vec<_> = files
             .chunks(chunk)
             .map(|paths| {
@@ -54,11 +59,16 @@ pub fn scan_xxh3_128(app_dir: &Path) -> HashSet<String> {
 }
 
 /// Holds when `checks` is not empty and every check holds.
+///
 /// A check holds when the file at its path has the recorded hash,
 /// or, for XXH3-128, when a scanned file at another path has that hash.
 /// `app_dir` is the directory of the executable. `Root::Tmp` checks do not hold.
 #[must_use]
-pub fn is_present(app_dir: &Path, checks: &[FileCheck], scanned: &HashSet<String>) -> bool {
+pub fn is_present<S: BuildHasher>(
+    app_dir: &Path,
+    checks: &[FileCheck],
+    scanned: &HashSet<String, S>,
+) -> bool {
     !checks.is_empty() && checks.iter().all(|check| holds(app_dir, check, scanned))
 }
 
@@ -80,7 +90,7 @@ pub fn check_path(app_dir: &Path, check: &FileCheck) -> Option<PathBuf> {
     )
 }
 
-fn holds(app_dir: &Path, check: &FileCheck, scanned: &HashSet<String>) -> bool {
+fn holds<S: BuildHasher>(app_dir: &Path, check: &FileCheck, scanned: &HashSet<String, S>) -> bool {
     let Some(path) = check_path(app_dir, check) else {
         return false;
     };

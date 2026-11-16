@@ -59,7 +59,7 @@ fn tabs() -> [(Tab, Cow<'static, str>, &'static str); 6] {
 }
 
 /// Identifier of the scrollable that lists the catalog packages of the browse tab.
-fn browse_scroll_id() -> Id {
+const fn browse_scroll_id() -> Id {
     Id::new("browse-packages")
 }
 
@@ -243,7 +243,7 @@ impl State {
         self.pending_updates = false;
         self.update_preview = None;
         self.license_dialog_content = None;
-        self.name = instance.config.name.clone();
+        self.name.clone_from(&instance.config.name);
         self.group = instance.config.group.clone().unwrap_or_default();
         if matches!(self.catalog, Catalog::Loading) {
             self.catalog = Catalog::Idle;
@@ -276,7 +276,6 @@ impl State {
         has_catalog(self.kind) && matches!(self.catalog, Catalog::Idle)
     }
 
-    /// Tries to parse the json_input as a Package or RawEntry and append to catalog.
     /// Registers the manifest in `json_input` into the open catalog and fills `json_log`
     /// with the operations that installing it performs.
     /// A manifest with an `installer` has the shape of an `index.json` entry.
@@ -323,14 +322,14 @@ impl State {
                         .and_then(|d| d.get("name"))
                         .and_then(|v| v.as_str())
                 })
-                .map_or_else(|| t!("unknown_author").into_owned(), str::to_owned)
-                .to_owned();
+                .map_or_else(|| t!("unknown_author").into_owned(), str::to_owned);
             let niconi_commons_id = value
                 .get("niconiCommonsId")
                 .or_else(|| value.get("niconi_commons_id"))
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
-            let page_url = url::Url::parse("https://github.com").unwrap();
+            let page_url =
+                url::Url::parse("https://github.com").map_err(|error| error.to_string())?;
             let mut pkg = Package::simple(id, name, page_url.clone(), PackageSource::Web(page_url));
             pkg.summary = summary;
             pkg.author = author;
@@ -422,29 +421,21 @@ pub fn view<'a>(
     let tab_card = m3::card(card::Style::filled(theme), column(tabs).spacing(8))
         .width(Length::Fixed(TAB_LIST_WIDTH));
 
-    let content: Element<'a, Message> = if let Some(pkg_id) = &state.viewing_package_id {
-        if let Some(package) = state.package(pkg_id) {
-            package_detail_view(theme, state, instance, package)
-        } else {
-            match state.tab {
-                Tab::Version => version_tab(theme, instance),
-                Tab::Plugins => plugins_tab(theme, instance),
-                Tab::Browse => browse_tab(theme, state, instance),
-                Tab::Commons => commons_tab(theme, state, instance),
-                Tab::JsonRegister => json_register_tab(theme, state),
-                Tab::Settings => settings_tab(theme, state),
-            }
-        }
-    } else {
-        match state.tab {
+    let viewed = state
+        .viewing_package_id
+        .as_deref()
+        .and_then(|package_id| state.package(package_id));
+    let content: Element<'a, Message> = viewed.map_or_else(
+        || match state.tab {
             Tab::Version => version_tab(theme, instance),
             Tab::Plugins => plugins_tab(theme, instance),
             Tab::Browse => browse_tab(theme, state, instance),
             Tab::Commons => commons_tab(theme, state, instance),
             Tab::JsonRegister => json_register_tab(theme, state),
             Tab::Settings => settings_tab(theme, state),
-        }
-    };
+        },
+        |package| package_detail_view(theme, state, instance, package),
+    );
     let content_card = m3::card(card::Style::filled(theme), content)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -1054,10 +1045,10 @@ fn pending_warning(pending: &Pending) -> String {
             t!("unverified_warning").into_owned()
         };
     }
-    let warning = match &pending.package.deprecation_message {
-        Some(message) => t!("deprecated_install_warning_message", message = message).into_owned(),
-        None => t!("deprecated_install_warning").into_owned(),
-    };
+    let warning = pending.package.deprecation_message.as_ref().map_or_else(
+        || t!("deprecated_install_warning").into_owned(),
+        |message| t!("deprecated_install_warning_message", message = message).into_owned(),
+    );
     let hint = t!("deprecated_alternate_hint");
     if browser {
         format!("{warning} {hint} {}", t!("open_browser_warning"))

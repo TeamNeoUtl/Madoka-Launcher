@@ -521,7 +521,7 @@ impl App {
         .into()
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
+    pub fn subscription() -> Subscription<Message> {
         Subscription::batch([
             iced::time::every(REDRAW_INTERVAL).map(|_| Message::Redraw),
             iced::event::listen_with(|event, _status, _window| match event {
@@ -1006,7 +1006,7 @@ impl App {
                 Task::none()
             }
             M::LoadSampleJson => {
-                state.json_input = r#"{
+                r#"{
   "id": "example.myplugin",
   "name": "My Custom Plugin",
   "type": "plugin",
@@ -1031,7 +1031,7 @@ impl App {
     }
   ]
 }"#
-                .to_owned();
+                .clone_into(&mut state.json_input);
                 Task::none()
             }
             M::RegisterJsonPackage => {
@@ -1406,13 +1406,13 @@ impl App {
             return Task::none();
         };
         self.selected = Some(id);
-        let mut state = match self.saved_edits.remove(&id) {
-            Some(mut saved) => {
+        let mut state = self.saved_edits.remove(&id).map_or_else(
+            || edit::State::new(instance),
+            |mut saved| {
                 saved.reset_transient(instance);
                 saved
-            }
-            None => edit::State::new(instance),
-        };
+            },
+        );
         configure(&mut state);
         let load = state.needs_catalog();
         if load {
@@ -1583,10 +1583,9 @@ fn pending_follow_up(state: &mut edit::State) -> Task<Message> {
 /// Returns the task that scrolls the browse list back to the offset of `state`.
 fn restore_browse_scroll(state: &mut edit::State) -> Task<Message> {
     state.pending_scroll = Some(state.scroll_y).filter(|offset| *offset > 0.0);
-    match state.pending_scroll {
-        Some(offset) => edit::restore_scroll(offset),
-        None => Task::none(),
-    }
+    state
+        .pending_scroll
+        .map_or_else(Task::none, edit::restore_scroll)
 }
 
 /// Restores the window from the minimized state and focuses it.
@@ -1621,11 +1620,9 @@ impl App {
             self.notice = Some(t!("instance_running_error").into_owned());
             return Task::none();
         }
-        let state = self.edit.as_ref().expect("checked above");
         let name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let handle = self
             .services
             .board
@@ -1643,22 +1640,21 @@ fn load_screenshots(services: &Services, state: &mut edit::State) -> Task<Messag
         .viewing_package_id
         .as_deref()
         .and_then(|package_id| state.package(package_id))
-        .map(|package| {
+        .map_or_default(|package| {
             package
                 .screenshots
                 .iter()
                 .filter(|url| !state.images.contains_key(*url))
                 .cloned()
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let id = state.id;
     let tasks: Vec<Task<Message>> = urls
         .into_iter()
         .map(|url| {
             state.images.insert(url.clone(), edit::ImageState::Loading);
             Task::perform(services.clone().fetch_image(url.clone()), move |result| {
-                Message::ImageLoaded(id, url.clone(), result)
+                Message::ImageLoaded(id, url, result)
             })
         })
         .collect();

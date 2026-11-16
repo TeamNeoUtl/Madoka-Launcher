@@ -16,6 +16,7 @@ const LITE_SUFFIX: &str = "_Lite.zip";
 const PLUGIN_EXTENSION: &str = ".ymme";
 const GITHUB_HOST: &str = "github.com";
 
+#[expect(clippy::expect_used, reason = "the pattern is a constant literal")]
 static APP_ASSET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^YukkuriMovieMaker_v[0-9.]+(_Lite)?\.zip$").expect("static regex")
 });
@@ -46,8 +47,6 @@ struct RawEntry {
     name: String,
     url: String,
     author: String,
-    #[allow(dead_code)]
-    author_url: String,
     description: String,
     #[serde(default = "enabled_by_default")]
     is_enabled: bool,

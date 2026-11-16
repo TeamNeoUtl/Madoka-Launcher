@@ -334,7 +334,7 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
         .as_ref()
         .and_then(|img| img.get("detailImages"))
         .and_then(Value::as_array)
-        .map(|arr| {
+        .map_or_default(|arr| {
             arr.iter()
                 .filter_map(Value::as_str)
                 .map(|path| {
@@ -344,8 +344,7 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
                         .map_or_else(|| path.to_owned(), String::from)
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let changelog = entry
         .changelog
         .as_ref()
