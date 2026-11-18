@@ -3342,7 +3342,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-app"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "embed-resource",
  "fontdb 0.24.0",
@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-browser"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "tao",
  "wry",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-core"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "directories",
@@ -3400,7 +3400,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-providers"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "hickory-resolver",
  "launcher-core",
