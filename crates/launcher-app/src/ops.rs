@@ -806,6 +806,7 @@ impl Services {
             origin: launcher_core::Origin::Direct(page_url.clone()),
             hash: None,
             steps: build_au2pkg_steps(&files),
+            uninstall_steps: Vec::new(),
             checks: Vec::new(),
         };
         let package = Package::simple(
@@ -956,6 +957,7 @@ impl Services {
                         })
                         .collect(),
                     paused: false,
+                    uninstall_steps: recipe.uninstall_steps.clone(),
                 };
                 if store.add_or_update_plugin(id, record).is_ok() {
                     detected_names.push(pkg.name.clone());
@@ -1412,6 +1414,7 @@ mod tests {
             source: "test".to_owned(),
             files: Vec::new(),
             paused: false,
+            uninstall_steps: Vec::new(),
         }
     }
 
@@ -1436,6 +1439,7 @@ mod tests {
                 origin: Origin::Direct(url),
                 hash: None,
                 steps: Vec::new(),
+                uninstall_steps: Vec::new(),
                 checks: vec![FileCheck {
                     location: Location {
                         root: Root::Data,

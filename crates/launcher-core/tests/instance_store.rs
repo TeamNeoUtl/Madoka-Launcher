@@ -25,6 +25,7 @@ fn plugin(files: &[&str]) -> PluginRecord {
         source: "github:owner/repo".to_owned(),
         files: files.iter().map(|f| (*f).to_owned()).collect(),
         paused: false,
+        uninstall_steps: Vec::new(),
     }
 }
 

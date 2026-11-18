@@ -268,6 +268,7 @@ fn recipe(package: &RawPackage) -> Option<Recipe> {
         origin,
         hash: archive_hash(release),
         steps,
+        uninstall_steps: Vec::new(),
         checks: checks_of(release),
     })
 }

@@ -122,6 +122,7 @@ fn plan(steps: Vec<Step>, checks: Vec<FileCheck>) -> StagedPlan {
         },
         version: "1.0".to_owned(),
         steps,
+        uninstall_steps: Vec::new(),
         checks,
     }
 }
@@ -323,6 +324,7 @@ fn recipe(checks: Vec<FileCheck>) -> Recipe {
         origin: Origin::Direct(Url::parse("https://example.com/browsed.zip").unwrap()),
         hash: None,
         steps: vec![Step::Extract, copy_plugins("a.aux2")],
+        uninstall_steps: Vec::new(),
         checks,
     }
 }

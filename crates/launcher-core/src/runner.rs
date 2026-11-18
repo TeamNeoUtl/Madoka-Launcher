@@ -167,7 +167,7 @@ impl Launched {
 /// Adds the executable bits to a file that has none. The launcher has selected this file
 /// as the executable of the instance, so the bits are set at launch.
 #[cfg(unix)]
-fn ensure_executable(path: &Path) -> Result<(), Error> {
+pub(crate) fn ensure_executable(path: &Path) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
 
     let metadata = fs::metadata(path).map_err(|e| Error::io(path, e))?;

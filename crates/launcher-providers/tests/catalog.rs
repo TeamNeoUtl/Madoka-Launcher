@@ -438,6 +438,7 @@ fn recipe_package(origin: Origin, hash: bool) -> Package {
             .then(|| launcher_core::Hash::parse_sri(SHA384_SRI))
             .flatten(),
         steps: vec![Step::Extract],
+        uninstall_steps: Vec::new(),
         checks: Vec::new(),
     };
     Package::simple("d/p", "p", url, PackageSource::Recipe(recipe))

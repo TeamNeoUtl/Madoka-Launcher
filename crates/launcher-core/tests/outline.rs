@@ -21,6 +21,7 @@ fn outline_lists_download_steps_and_checks_in_order() {
                 to: location(Root::Data, "Plugin"),
             },
         ],
+        uninstall_steps: Vec::new(),
         checks: vec![FileCheck {
             location: location(Root::Data, "Plugin/a.auf2"),
             hash: Hash {
@@ -53,6 +54,7 @@ fn outline_names_the_root_without_a_path() {
         steps: vec![Step::RunAuoSetup {
             path: location(Root::App, ""),
         }],
+        uninstall_steps: Vec::new(),
         checks: Vec::new(),
     };
     assert_eq!(

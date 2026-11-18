@@ -181,8 +181,10 @@ fn license_template(kind: &str, copyrights: &[RawCopyright]) -> Option<String> {
 #[derive(Debug, Deserialize)]
 struct RawInstaller {
     source: Value,
-    #[serde(default)]
+    #[serde(default, alias = "installSteps")]
     install: Vec<RawAction>,
+    #[serde(default, alias = "uninstallSteps")]
+    uninstall: Vec<RawAction>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,7 +201,18 @@ enum RawAction {
     #[serde(rename = "copy")]
     Copy { from: String, to: String },
     #[serde(rename = "delete")]
-    Delete {},
+    Delete {
+        #[serde(default)]
+        path: Option<String>,
+    },
+    #[serde(rename = "run")]
+    Run {
+        path: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        elevate: bool,
+    },
     #[serde(other)]
     Unsupported,
 }
@@ -310,21 +323,61 @@ fn recipe(entry: &RawEntry) -> Option<Recipe> {
                 from: location(from)?,
                 to: location(to)?,
             }),
+            RawAction::Run {
+                path,
+                args,
+                elevate,
+            } => steps.push(Step::Run {
+                path: location(path)?,
+                args: args.clone(),
+                elevate: *elevate,
+            }),
             // A new instance holds no file that an install-time delete targets.
-            RawAction::Delete {} => {}
+            RawAction::Delete { .. } => {}
             RawAction::Download {} | RawAction::Unsupported => return None,
         }
     }
-    if !steps.iter().any(|step| matches!(step, Step::Copy { .. })) {
+    if !steps
+        .iter()
+        .any(|step| matches!(step, Step::Copy { .. } | Step::Run { .. }))
+    {
         return None;
     }
+    let uninstall_steps = uninstall_steps(&entry.installer.uninstall)?;
     Some(Recipe {
         version: entry.latest_version.clone(),
         origin,
         hash: None,
         steps,
+        uninstall_steps,
         checks: checks(entry),
     })
+}
+
+fn uninstall_steps(actions: &[RawAction]) -> Option<Vec<Step>> {
+    let mut steps = Vec::new();
+    for action in actions {
+        match action {
+            RawAction::Delete { path: Some(path) } => {
+                steps.push(Step::Delete {
+                    path: location(path)?,
+                });
+            }
+            RawAction::Run {
+                path,
+                args,
+                elevate,
+            } => {
+                steps.push(Step::Run {
+                    path: location(path)?,
+                    args: args.clone(),
+                    elevate: *elevate,
+                });
+            }
+            _ => return None,
+        }
+    }
+    Some(steps)
 }
 
 /// Entries other than the editor itself. Entries that `recipe` rejects open in the browser.

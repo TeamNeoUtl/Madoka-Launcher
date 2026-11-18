@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::Error;
+use crate::{Error, Step};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -63,6 +63,8 @@ pub struct PluginRecord {
     pub files: Vec<String>,
     #[serde(default)]
     pub paused: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uninstall_steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

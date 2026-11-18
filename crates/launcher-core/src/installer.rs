@@ -44,6 +44,7 @@ impl Drop for TempDir {
 struct Staging<'a> {
     version: &'a str,
     steps: &'a [Step],
+    uninstall_steps: &'a [Step],
     checks: &'a [FileCheck],
     archive: &'a Path,
     name: &'a str,
@@ -232,6 +233,10 @@ impl<F: Fetcher> Installer<F> {
         let paused = is_paused(&instance.config.plugins, &package.id);
 
         if let Some((position, record)) = record_of(&instance.config.plugins, &package.id) {
+            if !record.uninstall_steps.is_empty() {
+                let roots = Roots::locate(instance.config.kind, &app_dir, None)?;
+                stage::run_uninstall(&roots, &record.uninstall_steps)?;
+            }
             delete_files(&app_dir, &app_dir, &record.files)?;
             instance.config.plugins.remove(position);
             self.store.save(&instance)?;
@@ -248,6 +253,7 @@ impl<F: Fetcher> Installer<F> {
                 .map(|file| format!("{plugin_dir}/{file}"))
                 .collect(),
             paused,
+            uninstall_steps: Vec::new(),
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
@@ -277,6 +283,7 @@ impl<F: Fetcher> Installer<F> {
         let staging = Staging {
             version: &plan.version,
             steps: &plan.steps,
+            uninstall_steps: &plan.uninstall_steps,
             checks: &plan.checks,
             archive: &download.path,
             name: &plan.artifact.name,
@@ -310,6 +317,7 @@ impl<F: Fetcher> Installer<F> {
         let staging = Staging {
             version: &recipe.version,
             steps: &recipe.steps,
+            uninstall_steps: &recipe.uninstall_steps,
             checks: &recipe.checks,
             archive,
             name,
@@ -332,6 +340,9 @@ impl<F: Fetcher> Installer<F> {
         let paused = is_paused(&instance.config.plugins, &package.id);
 
         if let Some((position, record)) = record_of(&instance.config.plugins, &package.id) {
+            if !record.uninstall_steps.is_empty() {
+                stage::run_uninstall(&roots, &record.uninstall_steps)?;
+            }
             let floor = removal_floor(&instance);
             delete_files(&app_dir, &floor, &record.files)?;
             instance.config.plugins.remove(position);
@@ -351,6 +362,7 @@ impl<F: Fetcher> Installer<F> {
             source: package.source.label(),
             files: relative_files(&app_dir, &created.files)?,
             paused,
+            uninstall_steps: staging.uninstall_steps.to_vec(),
         };
         instance.config.plugins.push(record.clone());
         self.store.save(&instance)?;
@@ -370,6 +382,11 @@ impl<F: Fetcher> Installer<F> {
         info!(%id, package = plugin_id, "remove package");
         let (position, record) = record_of(&instance.config.plugins, plugin_id)
             .ok_or_else(|| Error::PluginNotFound(plugin_id.to_owned()))?;
+        if !record.uninstall_steps.is_empty() {
+            let tmp = TempDir::create(&self.root)?;
+            let roots = Roots::locate(instance.config.kind, &instance.app_dir(), Some(&tmp.0))?;
+            stage::run_uninstall(&roots, &record.uninstall_steps)?;
+        }
         delete_files(
             &instance.app_dir(),
             &removal_floor(&instance),

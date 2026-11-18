@@ -36,6 +36,7 @@ pub fn finish(package: &Package, recipe: &Recipe, mut artifact: Artifact) -> Ins
         artifact,
         version: recipe.version.clone(),
         steps: recipe.steps.clone(),
+        uninstall_steps: recipe.uninstall_steps.clone(),
         checks: recipe.checks.clone(),
     })
 }

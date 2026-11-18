@@ -89,6 +89,26 @@ pub fn run(
                 created.files.extend(added);
                 result?;
             }
+            Step::Run {
+                path,
+                args,
+                elevate,
+            } => {
+                let exe = roots.resolve(path)?;
+                let before = snapshot_files(&roots.app);
+                let result = run_program(&exe, args, *elevate);
+                let mut added: Vec<PathBuf> = snapshot_files(&roots.app)
+                    .into_iter()
+                    .filter(|file| !before.contains(file))
+                    .collect();
+                added.sort();
+                created.files.extend(added);
+                result?;
+            }
+            Step::Delete { path } => {
+                let target = roots.resolve(path)?;
+                delete_path(&target)?;
+            }
             Step::Copy { from, to } => {
                 copy(&roots.resolve(from)?, &roots.resolve(to)?, created)?;
             }
@@ -328,4 +348,93 @@ fn snapshot_files(dir: &Path) -> std::collections::HashSet<PathBuf> {
         }
     }
     files
+}
+
+/// Runs uninstall `steps` in order.
+pub fn run_uninstall(roots: &Roots, steps: &[Step]) -> Result<(), Error> {
+    for step in steps {
+        debug!(?step, "uninstall step");
+        match step {
+            Step::Delete { path } => {
+                let target = roots.resolve(path)?;
+                delete_path(&target)?;
+            }
+            Step::Run {
+                path,
+                args,
+                elevate,
+            } => {
+                let exe = roots.resolve(path)?;
+                run_program(&exe, args, *elevate)?;
+            }
+            Step::RunAuoSetup { path } => {
+                let exe = roots.resolve(path)?;
+                run_auo_setup(&exe)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Deletes a file or directory tree at `path` if it exists.
+pub(crate) fn delete_path(path: &Path) -> Result<(), Error> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.is_dir() {
+        fs::remove_dir_all(path).map_err(|e| Error::io(path, e))?;
+    } else {
+        fs::remove_file(path).map_err(|e| Error::io(path, e))?;
+    }
+    Ok(())
+}
+
+fn run_program(exe: &Path, args: &[String], elevate: bool) -> Result<(), Error> {
+    if !exe.is_file() {
+        return Err(Error::io(
+            exe,
+            std::io::Error::new(std::io::ErrorKind::NotFound, "executable not found"),
+        ));
+    }
+    #[cfg(unix)]
+    crate::runner::ensure_executable(exe)?;
+
+    let mut command = if elevate && cfg!(windows) {
+        let mut cmd = std::process::Command::new("powershell.exe");
+        let arg_list = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let script = if arg_list.is_empty() {
+            format!(
+                "$p = Start-Process -FilePath '{}' -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+                exe.display()
+            )
+        } else {
+            format!(
+                "$p = Start-Process -FilePath '{}' -ArgumentList @({arg_list}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+                exe.display()
+            )
+        };
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(args);
+        cmd
+    };
+    if let Some(dir) = exe.parent() {
+        command.current_dir(dir);
+    }
+    let status = command.status().map_err(|source| Error::io(exe, source))?;
+    if !status.success() {
+        return Err(Error::LaunchFailed {
+            exe: exe.to_owned(),
+            status: status.to_string(),
+            log: String::new(),
+        });
+    }
+    Ok(())
 }

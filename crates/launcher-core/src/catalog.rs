@@ -173,6 +173,17 @@ pub enum Step {
     RunAuoSetup { path: Location },
     /// Copies a file into the directory `to`, or the content of a directory into `to`.
     Copy { from: Location, to: Location },
+    /// Deletes the file or directory at `path` if it exists.
+    Delete { path: Location },
+    /// Runs the program at `path` with `args`, optionally elevated.
+    /// Waits until the program exits. Fails when the exit status is non-zero.
+    Run {
+        path: Location,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        elevate: bool,
+    },
     /// Copies an extracted file or directory to `<App>/<name>`.
     /// The source is `<archive_dir>/<last component of name>` below `Root::Tmp`.
     /// Without `archive_dir`, or when that path is absent, the source is the unique
@@ -232,6 +243,8 @@ pub struct Recipe {
     /// Hash of the downloaded archive.
     pub hash: Option<Hash>,
     pub steps: Vec<Step>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uninstall_steps: Vec<Step>,
     /// Hashes of the files that exist after the steps ran.
     pub checks: Vec<FileCheck>,
 }
@@ -247,6 +260,22 @@ impl Recipe {
                 Step::ExtractSfx => "extract 7z self-extractor -> tmp".to_owned(),
                 Step::RunAuoSetup { path } => format!("run auo_setup2 {}", describe(path)),
                 Step::Copy { from, to } => format!("copy {} -> {}", describe(from), describe(to)),
+                Step::Delete { path } => format!("delete {}", describe(path)),
+                Step::Run {
+                    path,
+                    args,
+                    elevate,
+                } => {
+                    let mut text = format!("run {}", describe(path));
+                    if !args.is_empty() {
+                        text.push(' ');
+                        text.push_str(&args.join(" "));
+                    }
+                    if *elevate {
+                        text.push_str(" (elevated)");
+                    }
+                    text
+                }
                 Step::Place {
                     name,
                     archive_dir,
@@ -267,6 +296,28 @@ impl Recipe {
                 describe(&check.location),
                 check.hash.hex
             ));
+        }
+        for step in &self.uninstall_steps {
+            let line = match step {
+                Step::Delete { path } => format!("uninstall delete {}", describe(path)),
+                Step::Run {
+                    path,
+                    args,
+                    elevate,
+                } => {
+                    let mut text = format!("uninstall run {}", describe(path));
+                    if !args.is_empty() {
+                        text.push(' ');
+                        text.push_str(&args.join(" "));
+                    }
+                    if *elevate {
+                        text.push_str(" (elevated)");
+                    }
+                    text
+                }
+                _ => "uninstall".to_owned(),
+            };
+            lines.push(line);
         }
         lines
     }
@@ -448,6 +499,7 @@ pub struct StagedPlan {
     pub artifact: Artifact,
     pub version: String,
     pub steps: Vec<Step>,
+    pub uninstall_steps: Vec<Step>,
     pub checks: Vec<FileCheck>,
 }
 
