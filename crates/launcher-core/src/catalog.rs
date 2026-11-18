@@ -368,6 +368,9 @@ pub struct Package {
     /// Text that the catalog gives for a deprecated package, e.g. the replacement to use.
     #[serde(default)]
     pub deprecation_message: Option<String>,
+    /// Markdown that the user confirms before the installation.
+    #[serde(default)]
+    pub notice: Option<String>,
     /// Prerequisites: the catalog's `dependencies` and `relations.requires`.
     #[serde(default)]
     pub dependencies: Vec<String>,
@@ -405,6 +408,7 @@ impl Package {
             tags: Vec::new(),
             deprecated: false,
             deprecation_message: None,
+            notice: None,
             dependencies: Vec::new(),
             relations: Relations::default(),
             licenses: Vec::new(),

@@ -1222,7 +1222,7 @@ impl App {
                     Task::none()
                 }
             }
-            plan if plan.is_verified() && !package.deprecated => {
+            plan if plan.is_verified() && !package.deprecated && package.notice.is_none() => {
                 self.start_install(id, package, plan)
             }
             plan => {

@@ -677,6 +677,31 @@ fn aviutl2_catalog_reads_relations_and_merges_requires_into_dependencies() {
 }
 
 #[test]
+fn aviutl2_catalog_reads_the_notice_and_drops_a_blank_one() {
+    let mut noted = entry("noted", github_source(), copy_actions());
+    noted["notice"] = json!({"markdownSource": "Close the editor first."});
+    let mut blank = entry("blank", github_source(), copy_actions());
+    blank["notice"] = json!({"text": "  \n"});
+    let index = json!([
+        entry(
+            "core",
+            json!({"direct": "https://x.example/setup.exe"}),
+            json!([])
+        ),
+        noted,
+        blank,
+        entry("plain", github_source(), copy_actions()),
+    ]);
+    let packages = parse_aviutl2_catalog(&bytes(&index)).unwrap();
+    assert_eq!(
+        find(&packages, "noted").notice.as_deref(),
+        Some("Close the editor first.")
+    );
+    assert_eq!(find(&packages, "blank").notice, None);
+    assert_eq!(find(&packages, "plain").notice, None);
+}
+
+#[test]
 fn aviutl2_catalog_resolves_screenshots_and_keeps_the_deprecation_message() {
     let mut shot = entry("shot", github_source(), copy_actions());
     shot["images"] = json!({"detailImages": ["https://x.example/a.png", "shots/b.png"]});

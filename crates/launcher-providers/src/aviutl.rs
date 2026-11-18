@@ -305,6 +305,7 @@ pub fn parse_apm_packages(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
                 tags: Vec::new(),
                 deprecated: false,
                 deprecation_message: None,
+                notice: None,
                 dependencies: Vec::new(),
                 relations: Relations::default(),
                 licenses: Vec::new(),

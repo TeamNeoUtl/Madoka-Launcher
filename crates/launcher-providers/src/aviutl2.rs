@@ -61,6 +61,8 @@ struct RawEntry {
     #[serde(default)]
     changelog: Option<Value>,
     #[serde(default)]
+    notice: Option<Value>,
+    #[serde(default)]
     images: Option<Value>,
 }
 
@@ -376,12 +378,8 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
                 })
                 .collect()
         });
-    let changelog = entry
-        .changelog
-        .as_ref()
-        .and_then(|c| c.get("markdownSource").or_else(|| c.get("text")))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let changelog = markdown_of(entry.changelog.as_ref());
+    let notice = markdown_of(entry.notice.as_ref()).filter(|text| !text.trim().is_empty());
 
     let mut release_dates: Vec<String> = entry
         .version
@@ -414,9 +412,18 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
         },
         licenses: entry.licenses.into_iter().map(license_of).collect(),
         changelog,
+        notice,
         screenshots,
         release_dates,
     }
+}
+
+/// Markdown text of a `markdownSource` or `text` field. `None` when `value` holds neither.
+fn markdown_of(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|v| v.get("markdownSource").or_else(|| v.get("text")))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// Parses one catalog entry, a JSON object of the `index.json` shape, into a package.

@@ -1041,6 +1041,8 @@ fn pending_warning(pending: &Pending) -> String {
     if !pending.package.deprecated {
         return if browser {
             t!("open_browser_warning").into_owned()
+        } else if pending.plan.is_verified() {
+            t!("notice_confirm").into_owned()
         } else {
             t!("unverified_warning").into_owned()
         };
@@ -1057,35 +1059,47 @@ fn pending_warning(pending: &Pending) -> String {
     }
 }
 
+/// Height of the notice that the confirmation card shows.
+const NOTICE_HEIGHT: f32 = 200.0;
+
 fn pending_card<'a>(theme: &Theme, pending: &Pending) -> Element<'a, Message> {
-    m3::card(
-        card::Style::filled(theme),
-        row![
-            style::icon(style::icons::WARNING)
-                .size(20)
-                .color(theme.error()),
-            style::label(
+    let header = row![
+        style::icon(style::icons::WARNING)
+            .size(20)
+            .color(theme.error()),
+        style::label(
+            theme,
+            format!("{}: {}", pending.package.name, pending_warning(pending))
+        )
+        .size(13)
+        .width(Length::Fill),
+        m3::button(
+            button::Style::filled(theme, Accent::Primary),
+            style::btn_content(style::icons::CHECK, t!("continue")),
+        )
+        .on_press(Message::ConfirmPending),
+        m3::button(
+            button::Style::tonal(theme, Accent::Primary),
+            style::btn_content(style::icons::CLOSE, t!("cancel")),
+        )
+        .on_press(Message::CancelPending),
+    ]
+    .spacing(8)
+    .align_y(Vertical::Center);
+    let mut body = column![header].spacing(8);
+    if let Some(notice) = &pending.package.notice {
+        body = body.push(
+            scrollable(crate::screen::markdown::view(
                 theme,
-                format!("{}: {}", pending.package.name, pending_warning(pending))
-            )
-            .size(13)
-            .width(Length::Fill),
-            m3::button(
-                button::Style::filled(theme, Accent::Primary),
-                style::btn_content(style::icons::CHECK, t!("continue")),
-            )
-            .on_press(Message::ConfirmPending),
-            m3::button(
-                button::Style::tonal(theme, Accent::Primary),
-                style::btn_content(style::icons::CLOSE, t!("cancel")),
-            )
-            .on_press(Message::CancelPending),
-        ]
-        .spacing(8)
-        .align_y(Vertical::Center),
-    )
-    .width(Length::Fill)
-    .into()
+                notice,
+                Message::OpenLink,
+            ))
+            .height(Length::Fixed(NOTICE_HEIGHT)),
+        );
+    }
+    m3::card(card::Style::filled(theme), body)
+        .width(Length::Fill)
+        .into()
 }
 
 /// Builds only the rows near the viewport. Spacers keep the height of the omitted rows.
