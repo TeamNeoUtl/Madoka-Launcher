@@ -231,8 +231,8 @@ impl<F: Fetcher> Installer<F> {
         let app_dir = instance.app_dir();
         let paused = is_paused(&instance.config.plugins, &package.id);
 
-        if let Some(position) = position_of(&instance.config.plugins, &package.id) {
-            delete_files(&app_dir, &app_dir, &instance.config.plugins[position].files)?;
+        if let Some((position, record)) = record_of(&instance.config.plugins, &package.id) {
+            delete_files(&app_dir, &app_dir, &record.files)?;
             instance.config.plugins.remove(position);
             self.store.save(&instance)?;
         }
@@ -331,9 +331,9 @@ impl<F: Fetcher> Installer<F> {
         let roots = Roots::locate(instance.config.kind, &app_dir, Some(&tmp.0))?;
         let paused = is_paused(&instance.config.plugins, &package.id);
 
-        if let Some(position) = position_of(&instance.config.plugins, &package.id) {
+        if let Some((position, record)) = record_of(&instance.config.plugins, &package.id) {
             let floor = removal_floor(&instance);
-            delete_files(&app_dir, &floor, &instance.config.plugins[position].files)?;
+            delete_files(&app_dir, &floor, &record.files)?;
             instance.config.plugins.remove(position);
             self.store.save(&instance)?;
         }
@@ -368,12 +368,12 @@ impl<F: Fetcher> Installer<F> {
     pub fn remove_package(&self, id: InstanceId, plugin_id: &str) -> Result<(), Error> {
         let mut instance = self.store.load(id)?;
         info!(%id, package = plugin_id, "remove package");
-        let position = position_of(&instance.config.plugins, plugin_id)
+        let (position, record) = record_of(&instance.config.plugins, plugin_id)
             .ok_or_else(|| Error::PluginNotFound(plugin_id.to_owned()))?;
         delete_files(
             &instance.app_dir(),
             &removal_floor(&instance),
-            &instance.config.plugins[position].files,
+            &record.files,
         )?;
         instance.config.plugins.remove(position);
         self.store.save(&instance)
@@ -516,8 +516,11 @@ fn plugin_dir(kind: Kind, package: &Package) -> Result<String, Error> {
     }
 }
 
-fn position_of(plugins: &[PluginRecord], id: &str) -> Option<usize> {
-    plugins.iter().position(|plugin| plugin.id == id)
+fn record_of<'a>(plugins: &'a [PluginRecord], id: &str) -> Option<(usize, &'a PluginRecord)> {
+    plugins
+        .iter()
+        .enumerate()
+        .find(|(_, plugin)| plugin.id == id)
 }
 
 /// A reinstall keeps the pause that the user set on the package.

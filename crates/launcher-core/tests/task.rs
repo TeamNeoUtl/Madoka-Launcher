@@ -1,16 +1,23 @@
 use launcher_core::{InstanceId, InstanceLocks, Progress, ProgressSink, TaskBoard, TaskState};
 
+/// State of the oldest task of `board`; fails the test when the board holds no task.
+fn first_state(board: &TaskBoard) -> TaskState {
+    let mut tasks = board.snapshot();
+    assert!(!tasks.is_empty(), "board holds no task");
+    tasks.swap_remove(0).state
+}
+
 #[test]
 fn board_records_each_state() {
     let board = TaskBoard::default();
     let first = board.add("first");
     let second = board.add("second");
     assert!(board.has_active());
-    assert_eq!(board.snapshot()[0].state, TaskState::Queued);
+    assert_eq!(first_state(&board), TaskState::Queued);
 
     first.running(1, 2);
     assert_eq!(
-        board.snapshot()[0].state,
+        first_state(&board),
         TaskState::Running {
             done: 1,
             total: 2,
@@ -22,15 +29,20 @@ fn board_records_each_state() {
     second.finish(&Err::<(), &str>("boom"));
 
     let tasks = board.snapshot();
-    assert_eq!(tasks[0].state, TaskState::Succeeded);
+    let states: Vec<&TaskState> = tasks.iter().map(|task| &task.state).collect();
     assert_eq!(
-        tasks[1].state,
-        TaskState::Failed {
-            reason: "boom".to_owned()
-        }
+        states,
+        [
+            &TaskState::Succeeded,
+            &TaskState::Failed {
+                reason: "boom".to_owned()
+            }
+        ]
     );
-    assert_ne!(tasks[0].id, tasks[1].id);
-    assert_eq!(tasks[0].title, "first");
+    let ids: Vec<_> = tasks.iter().map(|task| &task.id).collect();
+    assert!(matches!(ids.as_slice(), [left, right] if left != right));
+    let titles: Vec<&str> = tasks.iter().map(|task| task.title.as_str()).collect();
+    assert_eq!(titles, ["first", "second"]);
     assert!(!board.has_active());
 }
 
@@ -44,12 +56,12 @@ fn transfer_is_recorded_only_while_running_and_reset_by_the_next_step() {
     };
 
     handle.report(first);
-    assert_eq!(board.snapshot()[0].state, TaskState::Queued);
+    assert_eq!(first_state(&board), TaskState::Queued);
 
     handle.running(0, 2);
     handle.report(first);
     assert_eq!(
-        board.snapshot()[0].state,
+        first_state(&board),
         TaskState::Running {
             done: 0,
             total: 2,
@@ -59,7 +71,7 @@ fn transfer_is_recorded_only_while_running_and_reset_by_the_next_step() {
 
     handle.running(1, 2);
     assert_eq!(
-        board.snapshot()[0].state,
+        first_state(&board),
         TaskState::Running {
             done: 1,
             total: 2,
@@ -119,7 +131,7 @@ fn sink_reports_to_the_task_of_its_handle() {
         total: Some(10),
     });
     assert_eq!(
-        board.snapshot()[0].state,
+        first_state(&board),
         TaskState::Running {
             done: 0,
             total: 1,

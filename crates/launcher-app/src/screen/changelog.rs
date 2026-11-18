@@ -14,7 +14,7 @@ fn heading_version(line: &str) -> Option<String> {
     if !(1..=4).contains(&hashes) {
         return None;
     }
-    let title = rest[hashes..].trim();
+    let title = rest.trim_start_matches('#').trim();
     if title.is_empty() {
         return None;
     }
@@ -47,10 +47,12 @@ pub fn split(changelog: &str) -> Vec<Section<'_>> {
     let mut sections = Vec::with_capacity(starts.len());
     for (index, (start, version)) in starts.iter().enumerate() {
         let end = starts.get(index + 1).map_or(changelog.len(), |next| next.0);
-        sections.push(Section {
-            version: Some(version.clone()),
-            text: &changelog[*start..end],
-        });
+        if let Some(text) = changelog.get(*start..end) {
+            sections.push(Section {
+                version: Some(version.clone()),
+                text,
+            });
+        }
     }
     sections
 }

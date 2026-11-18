@@ -1,4 +1,5 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
 allowed-duplicate-crates = ["base64", "block-buffer", "const-oid", "cpufeatures", "crypto-common", "digest", "sha2"]
 too-many-lines-threshold = 400

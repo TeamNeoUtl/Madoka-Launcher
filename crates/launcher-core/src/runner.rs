@@ -226,7 +226,9 @@ fn reap(mut child: Child) {
 fn read_tail(path: &Path) -> String {
     let bytes = fs::read(path).unwrap_or_default();
     let start = bytes.len().saturating_sub(LOG_TAIL_BYTES);
-    String::from_utf8_lossy(&bytes[start..]).trim().to_owned()
+    bytes.get(start..).map_or_else(String::new, |tail| {
+        String::from_utf8_lossy(tail).trim().to_owned()
+    })
 }
 
 /// Checks if an executable belonging to this instance is currently running.

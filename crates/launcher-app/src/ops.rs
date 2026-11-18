@@ -1244,14 +1244,15 @@ fn newer_than(
     installed: Option<&str>,
     accepts: impl Fn(&AppVersion) -> bool,
 ) -> Option<AppVersion> {
-    let candidate = list
+    let (candidate, newest) = list
         .iter()
-        .position(|version| !version.prerelease && accepts(version))?;
+        .enumerate()
+        .find(|(_, version)| !version.prerelease && accepts(version))?;
     let current = installed
         .and_then(|installed| list.iter().position(|version| version.version == installed));
     current
         .is_none_or(|current| current > candidate)
-        .then(|| list[candidate].clone())
+        .then(|| newest.clone())
 }
 
 /// Latest app and addon versions that have an artifact for `selection` and differ from `config`.

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use launcher_core::{
     AppSelection, AppVersion, Artifact, FileCheck, Hash, Host, InstallPlan, Kind, Location, Origin,
-    Package, PackageSource, Recipe, Root, Step,
+    Package, PackageSource, Recipe, Relations, Root, Step,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -306,6 +306,7 @@ pub fn parse_apm_packages(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
                 deprecated: false,
                 deprecation_message: None,
                 dependencies: Vec::new(),
+                relations: Relations::default(),
                 licenses: Vec::new(),
                 changelog: None,
                 screenshots: Vec::new(),

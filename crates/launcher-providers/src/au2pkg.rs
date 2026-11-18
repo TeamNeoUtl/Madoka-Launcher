@@ -106,20 +106,26 @@ pub fn collect_au2pkg_files(entries: &[String]) -> Vec<Au2pkgFile> {
     let mut files: Vec<Au2pkgFile> = Vec::new();
     for entry in entries {
         let parts = normalize_path(entry);
-        if parts.len() < 2 || parts.contains(&"..") {
+        let Some((&head, tail)) = parts.split_first() else {
+            continue;
+        };
+        let Some((_, dirs)) = tail.split_last() else {
+            continue;
+        };
+        if parts.contains(&"..") {
             continue;
         }
         let Some(&root) = AU2PKG_ALLOWED_ROOTS
             .iter()
-            .find(|root| root.eq_ignore_ascii_case(parts[0]))
+            .find(|root| root.eq_ignore_ascii_case(head))
         else {
             continue;
         };
-        let archive_path = parts.join("/").replacen(parts[0], root, 1);
+        let archive_path = parts.join("/").replacen(head, root, 1);
         if files.iter().any(|file| file.archive_path == archive_path) {
             continue;
         }
-        let parent = parts[1..parts.len() - 1].join("/");
+        let parent = dirs.join("/");
         let rel = if parent.is_empty() {
             root.to_owned()
         } else {
@@ -213,10 +219,9 @@ mod tests {
                 "Language/ja.txt"
             ]
         );
-        assert_eq!(files[1].install_to.rel, "Plugin/sub");
-        assert_eq!(files[1].install_to.root, Root::Data);
-        assert_eq!(files[0].install_to.rel, "Plugin");
-        assert_eq!(files[3].install_to.rel, "Language");
+        let targets: Vec<&str> = files.iter().map(|f| f.install_to.rel.as_str()).collect();
+        assert_eq!(targets, ["Plugin", "Plugin/sub", "Script", "Language"]);
+        assert!(files.iter().all(|f| f.install_to.root == Root::Data));
     }
 
     #[test]
@@ -224,10 +229,10 @@ mod tests {
         let files = collect_au2pkg_files(&names(&["Plugin/sub/a.auf2", "Script\\b.anm"]));
         let steps = build_au2pkg_steps(&files);
         assert_eq!(steps.len(), 3);
-        assert_eq!(steps[0], Step::Extract);
+        assert_eq!(steps.first(), Some(&Step::Extract));
         assert_eq!(
-            steps[1],
-            Step::Copy {
+            steps.get(1),
+            Some(&Step::Copy {
                 from: Location {
                     root: Root::Tmp,
                     rel: "Plugin/sub/a.auf2".to_owned()
@@ -236,7 +241,7 @@ mod tests {
                     root: Root::Data,
                     rel: "Plugin/sub".to_owned()
                 },
-            }
+            })
         );
     }
 }

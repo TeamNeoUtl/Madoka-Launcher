@@ -23,7 +23,9 @@ fn serve(status: u16, body: String) -> (String, JoinHandle<String>) {
             body.len()
         )
         .unwrap();
-        String::from_utf8_lossy(&request[..length]).into_owned()
+        request.get(..length).map_or_else(String::new, |received| {
+            String::from_utf8_lossy(received).into_owned()
+        })
     });
     (base, server)
 }

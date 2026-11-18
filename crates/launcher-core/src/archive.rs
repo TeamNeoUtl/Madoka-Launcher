@@ -142,7 +142,9 @@ fn strip_common_root(entries: &mut Vec<Entry>) {
     }
     entries.retain(|entry| entry.rel != root);
     for entry in entries.iter_mut() {
-        entry.rel = entry.rel[prefix.len()..].to_owned();
+        if let Some(stripped) = entry.rel.strip_prefix(&prefix).map(str::to_owned) {
+            entry.rel = stripped;
+        }
     }
 }
 
@@ -268,11 +270,12 @@ fn find_seven_zip_signature(bytes: &[u8]) -> Option<usize> {
 /// and `Error::Zip` when `sfx` holds no 7z data or the extraction fails.
 pub fn extract_sfx(sfx: &Path, dest: &Path) -> Result<(), Error> {
     let bytes = fs::read(sfx).map_err(|source| Error::io(sfx, source))?;
-    let offset = find_seven_zip_signature(&bytes)
+    let payload = find_seven_zip_signature(&bytes)
+        .and_then(|offset| bytes.get(offset..))
         .ok_or_else(|| Error::zip(sfx, "7z signature not found"))?;
     fs::create_dir_all(dest).map_err(|source| Error::io(dest, source))?;
     sevenz_rust2::decompress_with_extract_fn_and_password(
-        Cursor::new(&bytes[offset..]),
+        Cursor::new(payload),
         dest,
         sevenz_rust2::Password::empty(),
         |entry, reader, target| {

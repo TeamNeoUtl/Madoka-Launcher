@@ -712,7 +712,13 @@ fn reinstall_keeps_the_pause_of_the_package() {
         .unwrap();
 
     assert!(record.paused);
-    assert!(reload(&f).config.plugins[0].paused);
+    assert!(
+        reload(&f)
+            .config
+            .plugins
+            .first()
+            .is_some_and(|plugin| plugin.paused)
+    );
 }
 
 #[test]

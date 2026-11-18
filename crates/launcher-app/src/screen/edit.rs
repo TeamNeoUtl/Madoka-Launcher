@@ -260,8 +260,8 @@ impl State {
     /// `packages` with the registered manifests, which replace entries of the same id.
     pub fn with_registered(&self, mut packages: Vec<Package>) -> Vec<Package> {
         for pkg in &self.registered {
-            match packages.iter().position(|p| p.id == pkg.id) {
-                Some(pos) => packages[pos] = pkg.clone(),
+            match packages.iter_mut().find(|p| p.id == pkg.id) {
+                Some(slot) => *slot = pkg.clone(),
                 None => packages.insert(0, pkg.clone()),
             }
         }
@@ -338,8 +338,8 @@ impl State {
         };
 
         let id = pkg.id.clone();
-        match self.registered.iter().position(|p| p.id == id) {
-            Some(pos) => self.registered[pos] = pkg,
+        match self.registered.iter_mut().find(|p| p.id == id) {
+            Some(slot) => *slot = pkg,
             None => self.registered.insert(0, pkg),
         }
         match &self.catalog {
@@ -1108,7 +1108,9 @@ fn package_list<'a>(
     let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(end - start + 2);
     rows.push(spacer(extent(start)));
     rows.extend(
-        shown[start..end]
+        shown
+            .get(start..end)
+            .unwrap_or_default()
             .iter()
             .map(|package| package_row(theme, package, status_of(instance, package))),
     );
@@ -1526,6 +1528,93 @@ fn settings_tab<'a>(theme: &'a Theme, state: &'a State) -> Element<'a, Message> 
     fields.into()
 }
 
+fn id_refs(list: &[String]) -> Vec<&str> {
+    list.iter().map(String::as_str).collect()
+}
+
+/// Relation sets in display order, as the locale key of the heading and the ids.
+fn relation_sets(package: &Package) -> [(&'static str, Vec<&str>); 5] {
+    let relations = &package.relations;
+    [
+        ("relation_recommends", id_refs(&relations.recommends)),
+        ("relation_conflicts", id_refs(&relations.conflicts)),
+        ("relation_similar", id_refs(&relations.similar)),
+        ("relation_replaces", id_refs(&relations.replaces)),
+        (
+            "relation_fork_of",
+            relations.fork_of.iter().map(String::as_str).collect(),
+        ),
+    ]
+}
+
+/// One card per non-empty relation set of `package`.
+fn relation_cards<'a>(
+    theme: &'a Theme,
+    state: &State,
+    instance: &Instance,
+    package: &Package,
+) -> Vec<Element<'a, Message>> {
+    relation_sets(package)
+        .into_iter()
+        .filter(|(_, ids)| !ids.is_empty())
+        .map(|(key, ids)| {
+            let conflicting = key == "relation_conflicts";
+            let chips: Vec<Element<'a, Message>> = ids
+                .into_iter()
+                .map(|id| {
+                    let installed = instance.config.plugins.iter().any(|record| record.id == id);
+                    let known = state.package(id);
+                    let name = known.map_or(id, |found| found.name.as_str());
+                    let (glyph, accent, suffix) = match (installed, known.is_some()) {
+                        (true, _) if conflicting => (
+                            style::icons::WARNING,
+                            Accent::Secondary,
+                            Some(t!("dep_installed")),
+                        ),
+                        (true, _) => (
+                            style::icons::CHECK_CIRCLE,
+                            Accent::Tertiary,
+                            Some(t!("dep_installed")),
+                        ),
+                        (false, true) => (style::icons::LINK, Accent::Tertiary, None),
+                        (false, false) => (
+                            style::icons::LINK,
+                            Accent::Secondary,
+                            Some(t!("dep_not_in_catalog")),
+                        ),
+                    };
+                    let label = suffix
+                        .map_or_else(|| name.to_owned(), |suffix| format!("{name} ({suffix})"));
+                    m3::button(
+                        button::Style::tonal(theme, accent),
+                        style::btn_content(glyph, label),
+                    )
+                    .on_press_maybe(
+                        known.map(|found| Message::ViewPackageDetails(Some(found.id.clone()))),
+                    )
+                    .into()
+                })
+                .collect();
+            let body = column![
+                row![
+                    style::icon(style::icons::LAYERS)
+                        .size(18)
+                        .color(theme.primary()),
+                    style::label(theme, t!(key).into_owned()).size(15),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                row(chips).spacing(8).wrap(),
+            ]
+            .spacing(8)
+            .padding(Padding::from([10.0, 14.0]));
+            m3::card(card::Style::filled(theme), body)
+                .width(Length::Fill)
+                .into()
+        })
+        .collect()
+}
+
 fn package_detail_view<'a>(
     theme: &'a Theme,
     state: &'a State,
@@ -1663,7 +1752,7 @@ fn package_detail_view<'a>(
     if !package.screenshots.is_empty() {
         let len = package.screenshots.len();
         let idx = state.active_screenshot_idx.min(len - 1);
-        let current_url = &package.screenshots[idx];
+        let current_url = package.screenshots.get(idx).map_or("", String::as_str);
 
         let prev_btn = m3::button(
             button::Style::tonal(theme, Accent::Primary),
@@ -1820,6 +1909,11 @@ fn package_detail_view<'a>(
         let dep_card = m3::card(card::Style::filled(theme), dep_column).width(Length::Fill);
         content = content.push(dep_card);
     }
+
+    // PLAN 1: Relations other than the prerequisites
+    content = relation_cards(theme, state, instance, package)
+        .into_iter()
+        .fold(content, iced::widget::Column::push);
 
     // 6-23: Licenses
     if !package.licenses.is_empty() {

@@ -89,7 +89,10 @@ fn list_returns_instances_and_failures() {
     let listing = store.list().unwrap();
     assert_eq!(listing.instances, vec![a]);
     assert_eq!(listing.failures.len(), 1);
-    assert_eq!(listing.failures[0].dir, b.dir);
+    assert_eq!(
+        listing.failures.first().map(|failure| &failure.dir),
+        Some(&b.dir)
+    );
 }
 
 #[test]

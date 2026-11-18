@@ -18,7 +18,7 @@ const XXH3_128_HEX_DIGITS: usize = 32;
 const READ_CHUNK: usize = 64 * 1024;
 /// Seconds that `Step::RunAuoSetup` waits for the setup program.
 pub const AUO_SETUP_TIMEOUT_SECS: u64 = 600;
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+const HEX_RADIX: u32 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HashAlgo {
@@ -97,8 +97,9 @@ impl Hash {
 
 fn to_hex<'a>(bytes: impl Iterator<Item = &'a u8>) -> String {
     bytes.fold(String::new(), |mut hex, &byte| {
-        hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
-        hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+        for nibble in [byte >> 4, byte & 0x0f] {
+            hex.extend(char::from_digit(u32::from(nibble), HEX_RADIX));
+        }
         hex
     })
 }
@@ -113,7 +114,9 @@ fn read_chunks<R>(
         if read == 0 {
             return Ok(());
         }
-        consume(&buffer[..read]);
+        if let Some(chunk) = buffer.get(..read) {
+            consume(chunk);
+        }
     }
 }
 
@@ -320,6 +323,32 @@ impl From<LicenseRepr> for License {
     }
 }
 
+/// Catalog relations of a package other than the prerequisites, which `Package::dependencies` holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Relations {
+    #[serde(default)]
+    pub recommends: Vec<String>,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    #[serde(default)]
+    pub similar: Vec<String>,
+    #[serde(default)]
+    pub replaces: Vec<String>,
+    #[serde(default)]
+    pub fork_of: Option<String>,
+}
+
+impl Relations {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.recommends.is_empty()
+            && self.conflicts.is_empty()
+            && self.similar.is_empty()
+            && self.replaces.is_empty()
+            && self.fork_of.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Package {
     pub id: String,
@@ -339,8 +368,11 @@ pub struct Package {
     /// Text that the catalog gives for a deprecated package, e.g. the replacement to use.
     #[serde(default)]
     pub deprecation_message: Option<String>,
+    /// Prerequisites: the catalog's `dependencies` and `relations.requires`.
     #[serde(default)]
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub relations: Relations,
     #[serde(default)]
     pub licenses: Vec<License>,
     #[serde(default)]
@@ -374,6 +406,7 @@ impl Package {
             deprecated: false,
             deprecation_message: None,
             dependencies: Vec::new(),
+            relations: Relations::default(),
             licenses: Vec::new(),
             changelog: None,
             screenshots: Vec::new(),

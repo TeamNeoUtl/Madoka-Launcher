@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 
 use launcher_core::{
     AppSelection, AppVersion, Artifact, Edition, Host, InstallPlan, Kind, Package, PackageSource,
+    Relations,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -113,6 +114,7 @@ pub fn parse_ymm4_catalog(bytes: &[u8]) -> Result<Vec<Package>, ProviderError> {
             deprecated: false,
             deprecation_message: None,
             dependencies: Vec::new(),
+            relations: Relations::default(),
             licenses: Vec::new(),
             changelog: None,
             screenshots: Vec::new(),

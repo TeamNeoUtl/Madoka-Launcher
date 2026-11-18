@@ -19,8 +19,8 @@ mod task;
 pub use archive::{extract_sfx, zip_entry_names, zip_read_entry};
 pub use catalog::{
     AUO_SETUP_TIMEOUT_SECS, AppSelection, AppVersion, Artifact, FileCheck, Hash, HashAlgo,
-    InstallPlan, License, Location, Origin, Package, PackageSource, Recipe, Root, StagedPlan, Step,
-    commons_url,
+    InstallPlan, License, Location, Origin, Package, PackageSource, Recipe, Relations, Root,
+    StagedPlan, Step, commons_url,
 };
 pub use config::Config;
 pub use error::Error;

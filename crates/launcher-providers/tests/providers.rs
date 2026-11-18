@@ -92,7 +92,9 @@ fn asset(name: &str) -> Value {
 
 fn asset_with_digest(name: &str, digest: &str) -> Value {
     let mut value = asset(name);
-    value["digest"] = json!(digest);
+    if let Some(fields) = value.as_object_mut() {
+        fields.insert("digest".to_owned(), json!(digest));
+    }
     value
 }
 

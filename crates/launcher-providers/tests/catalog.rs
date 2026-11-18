@@ -158,12 +158,16 @@ fn aviutl2_index() -> Vec<u8> {
         json!({"direct": "https://spring-fragrance.mints.ne.jp/aviutl/AviUtl2_v2.1.16_setup.exe"}),
         json!([]),
     );
-    core["latest-version"] = json!("v2.1.16");
-    core["version"] = json!([
-        {"version": "v2.1.16", "release_date": "2026-02-01",
-            "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]},
-        {"version": "v2.1.9", "release_date": "2025-12-01",
-            "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]}]);
+    let fields = core.as_object_mut().unwrap();
+    fields.insert("latest-version".to_owned(), json!("v2.1.16"));
+    fields.insert(
+        "version".to_owned(),
+        json!([
+            {"version": "v2.1.16", "release_date": "2026-02-01",
+                "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]},
+            {"version": "v2.1.9", "release_date": "2025-12-01",
+                "file": [{"path": "{appDir}/aviutl2.exe", "XXH3_128": ZERO_XXH}]}]),
+    );
     bytes(&json!([core]))
 }
 
@@ -214,8 +218,9 @@ fn apm_package(id: &str, extra: Value) -> Value {
         "releases": [{"version": "1.0", "integrity": {
             "archive": SHA384_SRI, "file": [{"target": "a.auf", "hash": SHA384_SRI}]}}]
     });
+    let fields = package.as_object_mut().unwrap();
     for (key, value) in extra.as_object().unwrap() {
-        package[key] = value.clone();
+        fields.insert(key.clone(), value.clone());
     }
     package
 }
@@ -637,6 +642,38 @@ fn aviutl2_catalog_builds_a_recipe_for_a_self_extracting_installer() {
             },
         ]
     );
+}
+
+#[test]
+fn aviutl2_catalog_reads_relations_and_merges_requires_into_dependencies() {
+    let mut linked = entry("linked", github_source(), copy_actions());
+    linked["dependencies"] = json!(["base", "shared"]);
+    linked["relations"] = json!({
+        "requires": ["shared", "extra"],
+        "recommends": ["nice"],
+        "conflicts": ["old", "other"],
+        "similar": ["alike"],
+        "replaces": ["legacy"],
+        "forkOf": "origin",
+    });
+    let index = json!([
+        entry(
+            "core",
+            json!({"direct": "https://x.example/setup.exe"}),
+            json!([])
+        ),
+        linked,
+        entry("plain", github_source(), copy_actions()),
+    ]);
+    let packages = parse_aviutl2_catalog(&bytes(&index)).unwrap();
+    let linked = find(&packages, "linked");
+    assert_eq!(linked.dependencies, ["base", "shared", "extra"]);
+    assert_eq!(linked.relations.recommends, ["nice"]);
+    assert_eq!(linked.relations.conflicts, ["old", "other"]);
+    assert_eq!(linked.relations.similar, ["alike"]);
+    assert_eq!(linked.relations.replaces, ["legacy"]);
+    assert_eq!(linked.relations.fork_of.as_deref(), Some("origin"));
+    assert!(find(&packages, "plain").relations.is_empty());
 }
 
 #[test]

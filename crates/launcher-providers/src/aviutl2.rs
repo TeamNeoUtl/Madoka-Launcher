@@ -1,6 +1,6 @@
 use launcher_core::{
     AppSelection, AppVersion, Artifact, FileCheck, Hash, Host, InstallPlan, Kind, License,
-    Location, Origin, Package, PackageSource, Recipe, Root, Step,
+    Location, Origin, Package, PackageSource, Recipe, Relations, Root, Step,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -55,11 +55,41 @@ struct RawEntry {
     #[serde(default)]
     dependencies: Vec<String>,
     #[serde(default)]
+    relations: RawRelations,
+    #[serde(default)]
     licenses: Vec<RawLicense>,
     #[serde(default)]
     changelog: Option<Value>,
     #[serde(default)]
     images: Option<Value>,
+}
+
+/// Relation sets of the upstream catalog; `requires` joins the prerequisites.
+#[derive(Debug, Default, Deserialize)]
+struct RawRelations {
+    #[serde(default)]
+    requires: Vec<String>,
+    #[serde(default)]
+    recommends: Vec<String>,
+    #[serde(default)]
+    conflicts: Vec<String>,
+    #[serde(default)]
+    similar: Vec<String>,
+    #[serde(default)]
+    replaces: Vec<String>,
+    #[serde(default, rename = "forkOf")]
+    fork_of: Option<String>,
+}
+
+/// `first` followed by the ids of `second` that `first` lacks.
+fn merged_ids(first: Vec<String>, second: Vec<String>) -> Vec<String> {
+    let mut ids = first;
+    for id in second {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
 }
 
 /// License templates of the upstream catalog; `<years>` and `<holder>` are placeholders.
@@ -210,20 +240,21 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<RawEntry>, ProviderError> {
 
 /// Resolves `{tmp}/x`, `{pluginsDir}/x` and the like. `None` for any other text.
 fn location(text: &str) -> Option<Location> {
-    let (placeholder, root, base) = PLACEHOLDERS
-        .iter()
-        .find(|(placeholder, _, _)| text.starts_with(placeholder))?;
-    let rest = text[placeholder.len()..].replace('\\', "/");
+    let (root, base, rest) = PLACEHOLDERS.iter().find_map(|(placeholder, root, base)| {
+        text.strip_prefix(placeholder)
+            .map(|rest| (*root, *base, rest))
+    })?;
+    let rest = rest.replace('\\', "/");
     if !(rest.is_empty() || rest.starts_with('/')) || rest.contains('{') {
         return None;
     }
     let rest = rest.trim_matches('/');
     let rel = match (base.is_empty(), rest.is_empty()) {
         (true, _) => rest.to_owned(),
-        (false, true) => (*base).to_owned(),
+        (false, true) => base.to_owned(),
         (false, false) => format!("{base}/{rest}"),
     };
-    Some(Location { root: *root, rel })
+    Some(Location { root, rel })
 }
 
 fn origin(source: &Value) -> Option<Origin> {
@@ -373,7 +404,14 @@ fn package_of(entry: RawEntry, fallback: &Url) -> Package {
         tags: entry.tags,
         deprecated,
         deprecation_message,
-        dependencies: entry.dependencies,
+        dependencies: merged_ids(entry.dependencies, entry.relations.requires),
+        relations: Relations {
+            recommends: entry.relations.recommends,
+            conflicts: entry.relations.conflicts,
+            similar: entry.relations.similar,
+            replaces: entry.relations.replaces,
+            fork_of: entry.relations.fork_of,
+        },
         licenses: entry.licenses.into_iter().map(license_of).collect(),
         changelog,
         screenshots,

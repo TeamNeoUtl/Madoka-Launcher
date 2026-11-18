@@ -10,14 +10,13 @@ const DOWNLOAD_ENDPOINT: &str = "https://drive.usercontent.google.com/download";
 pub fn confirm_url(html: &str) -> Option<Url> {
     let mut rest = html;
     while let Some(start) = rest.find("<form") {
-        rest = &rest[start..];
-        let tag_end = rest.find('>')?;
-        let tag = &rest[..=tag_end];
-        rest = &rest[tag_end + 1..];
+        let (_, from_form) = rest.split_at_checked(start)?;
+        let (tag, after) = split_tag(from_form)?;
+        rest = after;
         if attribute(tag, "id").as_deref() != Some("download-form") {
             continue;
         }
-        let body = &rest[..rest.find("</form>").unwrap_or(rest.len())];
+        let body = after.split_once("</form>").map_or(after, |(body, _)| body);
         let mut url = Url::parse(&attribute(tag, "action")?).ok()?;
         for input in tags(body, "<input") {
             if let Some(name) = attribute(input, "name") {
@@ -40,18 +39,24 @@ pub fn fallback_url(file_id: &str) -> Option<Url> {
     .ok()
 }
 
+/// Splits `text` after its first `>` into the tag, `>` included, and the remainder.
+fn split_tag(text: &str) -> Option<(&str, &str)> {
+    let end = text.find('>')?;
+    text.split_at_checked(end + 1)
+}
+
 fn tags<'a>(html: &'a str, open: &'a str) -> impl Iterator<Item = &'a str> {
     html.match_indices(open).filter_map(|(start, _)| {
-        let end = html[start..].find('>')?;
-        Some(&html[start..=start + end])
+        let (tag, _) = split_tag(html.get(start..)?)?;
+        Some(tag)
     })
 }
 
 fn attribute(tag: &str, name: &str) -> Option<String> {
     let needle = format!(" {name}=\"");
-    let start = tag.find(&needle)? + needle.len();
-    let length = tag[start..].find('"')?;
-    Some(unescape(&tag[start..start + length]))
+    let (_, after_needle) = tag.split_once(&needle)?;
+    let (value, _) = after_needle.split_once('"')?;
+    Some(unescape(value))
 }
 
 fn unescape(text: &str) -> String {
