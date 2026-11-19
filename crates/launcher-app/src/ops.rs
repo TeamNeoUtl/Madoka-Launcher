@@ -7,7 +7,8 @@ use launcher_core::{
     AppSelection, AppVersion, Bundle, Config, Edition, Error, Fetcher, Host, InstallPlan,
     Installer, Instance, InstanceConfig, InstanceId, InstanceLocks, InstanceStore, Kind, Launched,
     NewInstance, PROBE_WINDOW, Package, PackageSource, PluginRecord, ProgressSink, TaskBoard,
-    TaskHandle, open_directory, portable_root, set_portable, zip_entry_names, zip_read_entry,
+    TaskHandle, detect_version, open_directory, portable_root, set_portable, zip_entry_names,
+    zip_read_entry,
 };
 use launcher_providers::au2pkg::{build_au2pkg_steps, collect_au2pkg_files, is_au2pkg_filename};
 use launcher_providers::{
@@ -22,6 +23,7 @@ use url::Url;
 use crate::i18n::Locale;
 
 const CREATE_STEPS: u16 = 2;
+const IMPORT_STEPS: u16 = 2;
 const DELETE_STEPS: u16 = 1;
 const LAUNCH_STEPS: u16 = 2;
 const WRITE_STEPS: u16 = 1;
@@ -85,6 +87,19 @@ pub struct CreateRequest {
     pub version: AppVersion,
     /// Plugin that is extracted beside the editor.
     pub addon: Option<AppVersion>,
+}
+
+/// An existing install that becomes an instance.
+#[derive(Debug, Clone)]
+pub struct ImportRequest {
+    pub name: String,
+    pub kind: Kind,
+    pub edition: Edition,
+    pub group: Option<String>,
+    /// Folder of the install. The import copies it and leaves it unchanged.
+    pub source: PathBuf,
+    /// Versions whose files identify the installed version, newest first.
+    pub versions: Vec<AppVersion>,
 }
 
 /// Result of `Services::update_all`.
@@ -692,6 +707,16 @@ impl Services {
         result.ok()
     }
 
+    /// Copies the install at `request.source` into a new instance, reads its version
+    /// from the file hashes, and registers the plugins that the catalog recognizes.
+    pub async fn import(self, handle: TaskHandle, request: ImportRequest) -> Option<InstanceId> {
+        info!(name = %request.name, kind = ?request.kind, source = %request.source.display(), "import task start");
+        let result = self.import_instance(&handle, request).await;
+        log_outcome("import", &result);
+        handle.finish(&result);
+        result.ok()
+    }
+
     pub async fn delete(self, handle: TaskHandle, id: InstanceId) {
         info!(%id, "delete task start");
         let result = self.delete_instance(&handle, id).await;
@@ -1235,6 +1260,68 @@ impl Services {
             .await?;
         }
         Ok(id)
+    }
+
+    async fn import_instance(
+        &self,
+        handle: &TaskHandle,
+        request: ImportRequest,
+    ) -> Result<InstanceId, OpError> {
+        let ImportRequest {
+            name,
+            kind,
+            edition,
+            group,
+            source,
+            versions,
+        } = request;
+        handle.running(0, IMPORT_STEPS);
+        let store = self.store.clone();
+        let host = self.host;
+        let instance = blocking(move || {
+            let app_version = detect_version(&source, kind, host, &versions)
+                .map_or_else(|| UNKNOWN_VERSION.to_owned(), |found| found.version.clone());
+            store.import(
+                NewInstance {
+                    name,
+                    kind,
+                    edition,
+                    bundle: Bundle::Archive,
+                    app_version,
+                    group,
+                },
+                &source,
+                host,
+            )
+        })
+        .await?;
+        let id = instance.config.id;
+        handle.running(1, IMPORT_STEPS);
+        self.register_present_plugins(id, kind).await;
+        Ok(id)
+    }
+
+    /// Records the catalog packages whose files the instance holds.
+    /// A failure leaves the instance without records, so the import still succeeds.
+    async fn register_present_plugins(&self, id: InstanceId, kind: Kind) {
+        if !has_catalog(kind) {
+            return;
+        }
+        let packages = match self.clone().catalog(kind, false).await {
+            Ok(packages) => packages,
+            Err(error) => {
+                warn!(%id, %error, "catalog unavailable, plugin scan skipped");
+                return;
+            }
+        };
+        match self
+            .clone()
+            .scan_and_register_manual_plugins(id, packages)
+            .await
+        {
+            Ok(found) => info!(%id, count = found.len(), "plugins registered after import"),
+            Err(error) => warn!(%id, %error, "plugin scan failed"),
+        }
     }
 
     async fn delete_instance(&self, handle: &TaskHandle, id: InstanceId) -> Result<(), OpError> {

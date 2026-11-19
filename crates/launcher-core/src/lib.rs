@@ -27,7 +27,7 @@ pub use error::Error;
 pub use fetch::{
     ALLOWED_HOSTS, Fetcher, HTTP_HOSTS, NoProgress, Progress, ProgressSink, is_allowed_url,
 };
-pub use hash::{SCAN_DIRS, check_path, is_present, scan_xxh3_128};
+pub use hash::{SCAN_DIRS, check_path, detect_version, is_present, scan_xxh3_128};
 pub use host::Host;
 pub use installer::Installer;
 pub use lock::InstanceLocks;

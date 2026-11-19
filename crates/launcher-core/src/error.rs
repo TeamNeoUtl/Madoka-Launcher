@@ -44,6 +44,8 @@ pub enum Error {
     HashRequired(String),
     #[error("{0} exists already")]
     AlreadyExists(PathBuf),
+    #[error("{0} contains or lies inside the instances directory")]
+    OverlappingSource(PathBuf),
     #[error("archive has no entry for {0}")]
     EntryNotFound(String),
     #[error("archive has several entries for {0}")]

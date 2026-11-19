@@ -8,7 +8,8 @@ use std::fs;
 use std::path::Path;
 
 use launcher_core::{
-    FileCheck, Hash, HashAlgo, Location, Root, check_path, is_present, scan_xxh3_128,
+    AppVersion, FileCheck, Hash, HashAlgo, Host, Kind, Location, Root, check_path, detect_version,
+    is_present, scan_xxh3_128,
 };
 use tempfile::tempdir;
 
@@ -138,4 +139,62 @@ fn check_path_joins_root_and_rel() {
     let data = check_path(dir.path(), &data_check("Plugin/a", hash));
     assert_eq!(app, Some(dir.path().join("Plugin").join("a")));
     assert_eq!(data, Some(dir.path().join("data").join("Plugin").join("a")));
+}
+
+fn version(label: &str, checks: Vec<FileCheck>) -> AppVersion {
+    AppVersion {
+        version: label.to_owned(),
+        prerelease: false,
+        published_at: None,
+        artifacts: Vec::new(),
+        checks,
+    }
+}
+
+#[test]
+fn detect_version_returns_the_oldest_version_with_matching_files() {
+    let dir = tempdir().expect("tempdir");
+    let same = write(dir.path(), "aviutl2.exe", b"exe");
+    let other = write(dir.path(), "other.bin", b"other");
+    let versions = [
+        version("v3", vec![check("aviutl2.exe", other)]),
+        version("v2", vec![check("aviutl2.exe", same.clone())]),
+        version("v1", vec![check("aviutl2.exe", same)]),
+    ];
+    let found = detect_version(dir.path(), Kind::Aviutl2, Host::Windows, &versions);
+    assert_eq!(found.map(|v| v.version.as_str()), Some("v1"));
+}
+
+#[test]
+fn detect_version_finds_the_executable_in_a_subdirectory() {
+    let dir = tempdir().expect("tempdir");
+    let exe = write(dir.path(), "AviUtl2/aviutl2.exe", b"exe");
+    let versions = [version("v1", vec![check("aviutl2.exe", exe)])];
+    let found = detect_version(dir.path(), Kind::Aviutl2, Host::Windows, &versions);
+    assert_eq!(found.map(|v| v.version.as_str()), Some("v1"));
+}
+
+#[test]
+fn detect_version_is_none_when_no_hash_matches() {
+    let dir = tempdir().expect("tempdir");
+    write(dir.path(), "aviutl2.exe", b"exe");
+    let other = write(dir.path(), "other.bin", b"other");
+    let versions = [version("v1", vec![check("aviutl2.exe", other)])];
+    assert!(detect_version(dir.path(), Kind::Aviutl2, Host::Windows, &versions).is_none());
+}
+
+#[test]
+fn detect_version_is_none_for_a_version_without_checks() {
+    let dir = tempdir().expect("tempdir");
+    write(dir.path(), "aviutl2.exe", b"exe");
+    let versions = [version("v1", Vec::new())];
+    assert!(detect_version(dir.path(), Kind::Aviutl2, Host::Windows, &versions).is_none());
+}
+
+#[test]
+fn detect_version_is_none_without_an_executable() {
+    let dir = tempdir().expect("tempdir");
+    let hash = write(dir.path(), "readme.txt", b"exe");
+    let versions = [version("v1", vec![check("readme.txt", hash)])];
+    assert!(detect_version(dir.path(), Kind::Aviutl2, Host::Windows, &versions).is_none());
 }

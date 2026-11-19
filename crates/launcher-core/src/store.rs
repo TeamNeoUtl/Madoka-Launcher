@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{Error, Host, Instance, InstanceConfig, InstanceId, NewInstance, PluginRecord};
+use crate::{
+    Error, Host, Instance, InstanceConfig, InstanceId, NewInstance, PluginRecord, find_executable,
+};
 
 const INSTANCES_DIR: &str = "instances";
 const TEMP_SUFFIX: &str = ".tmp";
@@ -75,6 +77,50 @@ impl InstanceStore {
             "instance created"
         );
         Ok(instance)
+    }
+
+    /// Copies the install at `source` into the app directory of a new instance.
+    /// The source stays unchanged. Symbolic links and `launch.log` are left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::OverlappingSource` when `source` contains or lies inside the instances
+    /// directory, `Error::ExecutableNotFound` when `source` holds no executable of `new.kind`,
+    /// the errors of `create`, and `Error::Io` when the copy fails.
+    /// The new directory is removed on failure.
+    pub fn import(&self, new: NewInstance, source: &Path, host: Host) -> Result<Instance, Error> {
+        self.ensure_disjoint(source)?;
+        find_executable(source, new.kind, host)?;
+        let instance = self.create(new, host)?;
+        if let Err(error) = copy_dir(source, &instance.app_dir()) {
+            let _ = fs::remove_dir_all(&instance.dir);
+            return Err(error);
+        }
+        info!(
+            id = %instance.config.id,
+            source = %source.display(),
+            dir = %instance.dir.display(),
+            "instance imported"
+        );
+        Ok(instance)
+    }
+
+    /// # Errors
+    ///
+    /// Returns `Error::Io` when a directory cannot be created or resolved,
+    /// and `Error::OverlappingSource` when one directory contains the other.
+    fn ensure_disjoint(&self, source: &Path) -> Result<(), Error> {
+        fs::create_dir_all(&self.instances_dir).map_err(|e| Error::io(&self.instances_dir, e))?;
+        let instances = self
+            .instances_dir
+            .canonicalize()
+            .map_err(|e| Error::io(&self.instances_dir, e))?;
+        let resolved = source.canonicalize().map_err(|e| Error::io(source, e))?;
+        if instances.starts_with(&resolved) || resolved.starts_with(&instances) {
+            Err(Error::OverlappingSource(resolved))
+        } else {
+            Ok(())
+        }
     }
 
     /// # Errors

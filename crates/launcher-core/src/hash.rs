@@ -6,8 +6,10 @@ use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::catalog::{FileCheck, Hash, HashAlgo, Root};
+use crate::catalog::{AppVersion, FileCheck, Hash, HashAlgo, Root};
+use crate::runner::find_executable;
 use crate::stage::DATA_DIR;
+use crate::{Host, Kind};
 
 /// Directories under the app directory and under its `data` directory
 /// that hold manually placed plugins and scripts.
@@ -70,6 +72,27 @@ pub fn is_present<S: BuildHasher>(
     scanned: &HashSet<String, S>,
 ) -> bool {
     !checks.is_empty() && checks.iter().all(|check| holds(app_dir, check, scanned))
+}
+
+/// Version of `versions` whose recorded files all match the install at `app_dir`.
+///
+/// `versions` holds the newest first. Versions can share the same files, so the oldest match
+/// is returned: a wrong label then offers an update instead of hiding one.
+/// `None` when `app_dir` holds no executable of `kind` or no version matches.
+#[must_use]
+pub fn detect_version<'a>(
+    app_dir: &Path,
+    kind: Kind,
+    host: Host,
+    versions: &'a [AppVersion],
+) -> Option<&'a AppVersion> {
+    let exe = find_executable(app_dir, kind, host).ok()?;
+    let exe_dir = exe.parent()?;
+    let scanned = HashSet::new();
+    versions
+        .iter()
+        .rev()
+        .find(|version| is_present(exe_dir, &version.checks, &scanned))
 }
 
 /// Path of the file that `check` names, below `app_dir`, the directory of the executable.

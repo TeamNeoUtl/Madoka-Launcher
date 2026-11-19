@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use iced::alignment::Vertical;
 use iced::widget::{checkbox, column, row, scrollable};
@@ -12,7 +13,7 @@ use launcher_core::{AppVersion, Bundle, Edition, Host, Kind};
 use launcher_providers::{Versions, has_provider};
 use rust_i18n::t;
 
-use crate::ops::CreateRequest;
+use crate::ops::{CreateRequest, ImportRequest};
 use crate::strings;
 use crate::style::{self, Tone};
 
@@ -40,9 +41,20 @@ pub enum Message {
     VersionSelected(VersionChoice),
     AddonSelected(VersionChoice),
     ToggleRecommended(bool),
+    PickSource,
+    /// `None` when the user cancelled the folder dialog.
+    SourcePicked(Option<PathBuf>),
+    ClearSource,
     Reload,
     Submit,
     Cancel,
+}
+
+/// What the submit button starts.
+#[derive(Debug, Clone)]
+pub enum Submission {
+    Create(CreateRequest),
+    Import(ImportRequest),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +121,8 @@ pub struct Form {
     pub addon_selected: Option<VersionChoice>,
     pub addon_choices: Vec<VersionChoice>,
     pub install_recommended: bool,
+    /// Folder of an existing install. `Some` turns the submit into an import.
+    pub source: Option<PathBuf>,
     pub load: Load,
     versions: Vec<AppVersion>,
     addon_versions: Vec<AppVersion>,
@@ -132,6 +146,7 @@ impl Form {
             addon_selected: None,
             addon_choices: Vec::new(),
             install_recommended: true,
+            source: None,
             load: Load::Idle,
             versions: Vec::new(),
             addon_versions: Vec::new(),
@@ -156,8 +171,24 @@ impl Form {
         matches!(self.load, Load::Idle)
     }
 
+    /// `true` when the selected kind can take over an existing install.
+    pub fn offers_import(&self) -> bool {
+        self.kind == Kind::Aviutl2
+    }
+
+    /// Selects the install folder. A blank name becomes the folder name.
+    pub fn set_source(&mut self, source: PathBuf) {
+        if self.name.trim().is_empty()
+            && let Some(name) = source.file_name()
+        {
+            self.name = name.to_string_lossy().into_owned();
+        }
+        self.source = Some(source);
+    }
+
     pub fn select_kind(&mut self, kind: Kind) {
         self.kind = kind;
+        self.source = None;
         self.edition = Edition::Normal;
         self.begin_load();
     }
@@ -209,8 +240,32 @@ impl Form {
 
     pub fn can_submit(&self) -> bool {
         !self.name.trim().is_empty()
-            && self.selected.is_some()
-            && (!self.has_addon() || self.addon_selected.is_some())
+            && (self.source.is_some()
+                || (self.selected.is_some()
+                    && (!self.has_addon() || self.addon_selected.is_some())))
+    }
+
+    pub fn submission(&self) -> Option<Submission> {
+        self.source.as_ref().map_or_else(
+            || self.request().map(Submission::Create),
+            |source| self.import_request(source).map(Submission::Import),
+        )
+    }
+
+    fn import_request(&self, source: &Path) -> Option<ImportRequest> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let group = self.group.trim();
+        Some(ImportRequest {
+            name: name.to_owned(),
+            kind: self.kind,
+            edition: self.edition,
+            group: (!group.is_empty()).then(|| group.to_owned()),
+            source: source.to_owned(),
+            versions: self.versions.clone(),
+        })
     }
 
     pub fn request(&self) -> Option<CreateRequest> {
@@ -301,50 +356,65 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
     if form.kind == Kind::Ymm4 {
         fields = fields.push(edition_picker(theme, form.edition));
     }
-    fields = fields.push(labeled_with_icon(
-        theme,
-        style::icons::HISTORY,
-        t!("version"),
-        version_picker(
-            form,
-            theme,
-            &form.choices,
-            form.selected.as_ref(),
-            Message::VersionSelected,
-        ),
-    ));
-    if form.has_addon() {
+    if form.offers_import() {
         fields = fields.push(labeled_with_icon(
             theme,
-            style::icons::EXTENSION,
-            t!("addon_version"),
+            style::icons::FOLDER_OPEN,
+            t!("import_source"),
+            source_picker(form, theme),
+        ));
+    }
+    if form.source.is_none() {
+        fields = fields.push(labeled_with_icon(
+            theme,
+            style::icons::HISTORY,
+            t!("version"),
             version_picker(
                 form,
                 theme,
-                &form.addon_choices,
-                form.addon_selected.as_ref(),
-                Message::AddonSelected,
+                &form.choices,
+                form.selected.as_ref(),
+                Message::VersionSelected,
             ),
         ));
-    }
-    if form.offers_bundle() {
-        fields = fields.push(
-            checkbox(form.app_image)
-                .label(t!("bundle_appimage"))
-                .on_toggle(Message::AppImageToggled),
-        );
-    }
-    if form.kind == Kind::Aviutl2 {
-        fields = fields.push(
-            checkbox(form.install_recommended)
-                .label(t!("recommended_plugins"))
-                .on_toggle(Message::ToggleRecommended),
-        );
+        if form.has_addon() {
+            fields = fields.push(labeled_with_icon(
+                theme,
+                style::icons::EXTENSION,
+                t!("addon_version"),
+                version_picker(
+                    form,
+                    theme,
+                    &form.addon_choices,
+                    form.addon_selected.as_ref(),
+                    Message::AddonSelected,
+                ),
+            ));
+        }
+        if form.offers_bundle() {
+            fields = fields.push(
+                checkbox(form.app_image)
+                    .label(t!("bundle_appimage"))
+                    .on_toggle(Message::AppImageToggled),
+            );
+        }
+        if form.kind == Kind::Aviutl2 {
+            fields = fields.push(
+                checkbox(form.install_recommended)
+                    .label(t!("recommended_plugins"))
+                    .on_toggle(Message::ToggleRecommended),
+            );
+        }
     }
 
+    let submit_content = if form.source.is_some() {
+        style::btn_content(style::icons::IMPORT, t!("import_submit"))
+    } else {
+        style::btn_content(style::icons::ADD, t!("create"))
+    };
     let submit = m3::button(
         button::Style::filled(theme, Accent::Primary),
-        style::btn_content(style::icons::ADD, t!("create")),
+        submit_content,
     )
     .on_press_maybe(form.can_submit().then_some(Message::Submit));
     let cancel = m3::button(
@@ -430,6 +500,27 @@ fn labeled_with_icon<'a>(
     ]
     .spacing(4)
     .into()
+}
+
+fn source_picker<'a>(form: &'a Form, theme: &Theme) -> Element<'a, Message> {
+    let pick = m3::button(
+        button::Style::tonal(theme, Accent::Primary),
+        style::btn_content(style::icons::FOLDER_OPEN, t!("import_pick")),
+    )
+    .on_press(Message::PickSource);
+    let mut picker = row![pick].spacing(8).align_y(Vertical::Center);
+    if let Some(source) = &form.source {
+        picker = picker
+            .push(style::label(theme, source.display().to_string()).size(12))
+            .push(
+                m3::button(
+                    button::Style::tonal(theme, Accent::Primary),
+                    style::btn_content(style::icons::CLOSE, t!("import_clear")),
+                )
+                .on_press(Message::ClearSource),
+            );
+    }
+    picker.into()
 }
 
 fn edition_picker<'a>(theme: &Theme, current: Edition) -> Element<'a, Message> {
@@ -518,5 +609,63 @@ fn version_picker<'a>(
                 .style(style::scroll(theme))
                 .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn aviutl2_form() -> Form {
+        let mut form = Form::new(Host::Windows);
+        form.select_kind(Kind::Aviutl2);
+        form
+    }
+
+    #[test]
+    fn source_turns_the_submission_into_an_import_named_after_the_folder() {
+        let mut form = aviutl2_form();
+        form.set_source(PathBuf::from("tools/MyAviUtl2"));
+        assert!(form.can_submit());
+        assert!(matches!(
+            form.submission(),
+            Some(Submission::Import(request)) if request.name == "MyAviUtl2"
+        ));
+    }
+
+    #[test]
+    fn typed_name_survives_the_folder_selection() {
+        let mut form = aviutl2_form();
+        form.name = "main".to_owned();
+        form.set_source(PathBuf::from("tools/MyAviUtl2"));
+        assert!(matches!(
+            form.submission(),
+            Some(Submission::Import(request)) if request.name == "main"
+        ));
+    }
+
+    #[test]
+    fn blank_name_blocks_the_import() {
+        let mut form = aviutl2_form();
+        form.set_source(PathBuf::from("/"));
+        assert_eq!(form.name, "");
+        assert!(!form.can_submit());
+        assert!(form.submission().is_none());
+    }
+
+    #[test]
+    fn kind_change_drops_the_source() {
+        let mut form = aviutl2_form();
+        form.set_source(PathBuf::from("tools/MyAviUtl2"));
+        form.select_kind(Kind::Ymm4);
+        assert!(form.source.is_none());
+    }
+
+    #[test]
+    fn only_aviutl2_offers_the_import() {
+        let mut form = aviutl2_form();
+        assert!(form.offers_import());
+        form.select_kind(Kind::Ymm4);
+        assert!(!form.offers_import());
     }
 }

@@ -19,6 +19,7 @@ use launcher_providers::au2pkg::is_au2pkg_filename;
 use crate::deeplink::{self, DeepLinkAction};
 use crate::ops::{AppUpdates, Browsed, ConfigEntry, Loaded, RestoreReport, Services};
 use crate::screen::edit::{self, Catalog, Pending, Tab};
+use crate::screen::new_instance::Submission;
 use crate::screen::{main_screen, new_instance, settings, tasks};
 use crate::{strings, style};
 
@@ -746,20 +747,41 @@ impl App {
                 self.form.begin_load();
                 self.load_versions()
             }
+            M::PickSource => Task::perform(pick_folder(), |folder| {
+                Message::New(new_instance::Message::SourcePicked(folder))
+            }),
+            M::SourcePicked(folder) => {
+                if let Some(folder) = folder {
+                    self.form.set_source(folder);
+                }
+                Task::none()
+            }
+            M::ClearSource => {
+                self.form.source = None;
+                Task::none()
+            }
             M::Submit => {
-                let Some(request) = self.form.request() else {
+                let Some(submission) = self.form.submission() else {
                     return Task::none();
                 };
-                let title = format!("{}: {}", t!("task_create"), request.name);
-                let handle = self.services.board.add(title);
-                self.pending_recommended =
-                    self.form.kind == Kind::Aviutl2 && self.form.install_recommended;
+                self.pending_recommended = matches!(submission, Submission::Create(_))
+                    && self.form.kind == Kind::Aviutl2
+                    && self.form.install_recommended;
                 self.form = new_instance::Form::new(self.services.host);
                 self.screen = Screen::Main;
-                Task::perform(
-                    self.services.clone().create(handle, request),
-                    Message::Created,
-                )
+                let services = self.services.clone();
+                match submission {
+                    Submission::Create(request) => {
+                        let title = format!("{}: {}", t!("task_create"), request.name);
+                        let handle = services.board.add(title);
+                        Task::perform(services.create(handle, request), Message::Created)
+                    }
+                    Submission::Import(request) => {
+                        let title = format!("{}: {}", t!("task_import"), request.name);
+                        let handle = services.board.add(title);
+                        Task::perform(services.import(handle, request), Message::Created)
+                    }
+                }
             }
             M::Cancel => {
                 self.screen = Screen::Main;
@@ -1581,6 +1603,12 @@ async fn save_text(file_name: &'static str, text: String) -> Result<Option<Strin
         .await
         .map_err(|error| error.to_string())?;
     Ok(Some(handle.path().display().to_string()))
+}
+
+/// Folder that the user picks. `None` means cancelled.
+async fn pick_folder() -> Option<std::path::PathBuf> {
+    let handle = rfd::AsyncFileDialog::new().pick_folder().await?;
+    Some(handle.path().to_path_buf())
 }
 
 /// Reads a UTF-8 text file that the user picks. `None` means cancelled or unreadable.

@@ -228,3 +228,80 @@ fn set_versions_writes_the_app_and_the_addon_version() {
     let text = std::fs::read_to_string(created.config_path()).unwrap();
     assert!(!text.contains("addon_version"));
 }
+
+#[test]
+fn import_copies_the_install_and_leaves_the_source() {
+    let root = TempDir::new().unwrap();
+    let source = TempDir::new().unwrap();
+    std::fs::create_dir_all(source.path().join("Plugin")).unwrap();
+    std::fs::write(source.path().join("aviutl2.exe"), b"exe").unwrap();
+    std::fs::write(source.path().join("Plugin/a.auo2"), b"a").unwrap();
+    std::fs::write(source.path().join("launch.log"), b"log").unwrap();
+    let store = InstanceStore::new(root.path());
+
+    let imported = store
+        .import(new_instance(Kind::Aviutl2), source.path(), Host::Windows)
+        .unwrap();
+
+    let app = imported.app_dir();
+    assert_eq!(std::fs::read(app.join("aviutl2.exe")).unwrap(), b"exe");
+    assert_eq!(std::fs::read(app.join("Plugin/a.auo2")).unwrap(), b"a");
+    assert!(!app.join("launch.log").exists());
+    assert!(source.path().join("aviutl2.exe").is_file());
+    assert_eq!(store.load(imported.config.id).unwrap(), imported);
+}
+
+#[test]
+fn import_rejects_a_folder_without_the_executable() {
+    let root = TempDir::new().unwrap();
+    let source = TempDir::new().unwrap();
+    std::fs::write(source.path().join("readme.txt"), b"x").unwrap();
+    let store = InstanceStore::new(root.path());
+
+    let result = store.import(new_instance(Kind::Aviutl2), source.path(), Host::Windows);
+
+    assert!(matches!(result, Err(Error::ExecutableNotFound { .. })));
+    assert_eq!(store.list().unwrap().instances.len(), 0);
+}
+
+#[test]
+fn import_rejects_a_source_that_contains_the_instances_directory() {
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("aviutl2.exe"), b"exe").unwrap();
+    let store = InstanceStore::new(root.path());
+
+    let result = store.import(new_instance(Kind::Aviutl2), root.path(), Host::Windows);
+
+    assert!(matches!(result, Err(Error::OverlappingSource(_))));
+}
+
+#[test]
+fn import_rejects_a_source_inside_the_instances_directory() {
+    let root = TempDir::new().unwrap();
+    let store = InstanceStore::new(root.path());
+    let existing = store
+        .create(new_instance(Kind::Aviutl2), Host::Windows)
+        .unwrap();
+    std::fs::write(existing.app_dir().join("aviutl2.exe"), b"exe").unwrap();
+
+    let result = store.import(
+        new_instance(Kind::Aviutl2),
+        &existing.app_dir(),
+        Host::Windows,
+    );
+
+    assert!(matches!(result, Err(Error::OverlappingSource(_))));
+}
+
+#[test]
+fn import_rejects_an_unsupported_host() {
+    let root = TempDir::new().unwrap();
+    let source = TempDir::new().unwrap();
+    std::fs::write(source.path().join("aviutl2"), b"exe").unwrap();
+    let store = InstanceStore::new(root.path());
+
+    let result = store.import(new_instance(Kind::Aviutl2), source.path(), Host::Linux);
+
+    assert!(matches!(result, Err(Error::UnsupportedKind { .. })));
+    assert_eq!(store.list().unwrap().instances.len(), 0);
+}
