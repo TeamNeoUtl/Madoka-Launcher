@@ -378,7 +378,7 @@ pub fn run_uninstall(roots: &Roots, steps: &[Step]) -> Result<(), Error> {
 }
 
 /// Deletes a file or directory tree at `path` if it exists.
-pub(crate) fn delete_path(path: &Path) -> Result<(), Error> {
+pub fn delete_path(path: &Path) -> Result<(), Error> {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return Ok(());
     };

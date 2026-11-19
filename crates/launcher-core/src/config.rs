@@ -26,6 +26,9 @@ pub struct Config {
     /// DNS servers of the launcher requests. Empty selects the built-in default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dns: Vec<IpAddr>,
+    /// The dialog of installed deprecated packages stays closed after the user chose so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_deprecated_notice: bool,
 }
 
 impl Config {

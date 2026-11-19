@@ -105,6 +105,8 @@ pub struct App {
     browse_queue: VecDeque<(InstanceId, Package, Url)>,
     browsing: bool,
     pending_recommended: bool,
+    /// The user chose to keep the dialog of installed deprecated packages closed.
+    hide_deprecated_notice: bool,
     /// Start-up URL. It runs after the instance list has loaded.
     pending_deeplink: Option<String>,
 }
@@ -128,6 +130,7 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", "),
         };
+        let hide_deprecated_notice = services.hides_deprecated_notice();
         let app = Self {
             services,
             theme: Theme::default(mode),
@@ -144,6 +147,7 @@ impl App {
             browse_queue: VecDeque::new(),
             browsing: false,
             pending_recommended: false,
+            hide_deprecated_notice,
             pending_deeplink: deeplink::url_from_args(),
         };
         let load = Task::batch([
@@ -235,6 +239,11 @@ impl App {
                     Ok(packages) => Catalog::Ready(state.with_registered(packages)),
                     Err(reason) => Catalog::Failed(reason),
                 };
+                if !self.hide_deprecated_notice
+                    && let Some(instance) = self.instances.iter().find(|i| i.config.id == id)
+                {
+                    state.check_deprecated(instance);
+                }
                 let follow = if state.tab == Tab::Browse && state.viewing_package_id.is_none() {
                     restore_browse_scroll(state)
                 } else {
@@ -773,6 +782,7 @@ impl App {
             M::Install(_)
                 | M::ConfirmPending
                 | M::Remove(_)
+                | M::RemoveDeprecated(_)
                 | M::RequestUpdateAll
                 | M::ConfirmUpdateAll
                 | M::SaveSettings
@@ -864,12 +874,26 @@ impl App {
                 state.pending = None;
                 Task::none()
             }
-            M::Remove(plugin_id) => {
-                let title = format!("{}: {plugin_id}", t!("task_remove"));
-                let handle = self.services.board.add(title);
+            M::Remove(plugin_id) => remove_task(&self.services, id, plugin_id),
+            M::RemoveDeprecated(plugin_id) => {
+                if let Some(plugins) = &mut state.deprecated_dialog {
+                    plugins.retain(|plugin| plugin.id != plugin_id);
+                    if plugins.is_empty() {
+                        state.deprecated_dialog = None;
+                    }
+                }
+                remove_task(&self.services, id, plugin_id)
+            }
+            M::CloseDeprecatedDialog => {
+                state.deprecated_dialog = None;
+                Task::none()
+            }
+            M::SuppressDeprecatedDialog => {
+                state.deprecated_dialog = None;
+                self.hide_deprecated_notice = true;
                 Task::perform(
-                    self.services.clone().remove_plugin(handle, id, plugin_id),
-                    |()| Message::Finished,
+                    self.services.clone().save_hide_deprecated_notice(),
+                    |result| Message::Saved(result.map_err(|error| error.to_string())),
                 )
             }
             M::RequestUpdateAll => {
@@ -1661,6 +1685,15 @@ fn load_screenshots(services: &Services, state: &mut edit::State) -> Task<Messag
     Task::batch(tasks)
 }
 
+fn remove_task(services: &Services, id: InstanceId, plugin_id: String) -> Task<Message> {
+    let title = format!("{}: {plugin_id}", t!("task_remove"));
+    let handle = services.board.add(title);
+    Task::perform(
+        services.clone().remove_plugin(handle, id, plugin_id),
+        |()| Message::Finished,
+    )
+}
+
 fn update_all_task(services: &Services, id: InstanceId, name: &str) -> Task<Message> {
     let handle = services
         .board
@@ -1699,6 +1732,47 @@ mod tests {
     fn open_edit_screen(app: &mut App) {
         app.edit = Some(edit::State::new(&app.instances[0]));
         app.screen = Screen::Edit;
+    }
+
+    fn deprecated_catalog(app: &mut App) -> Vec<Package> {
+        let url = Url::parse("https://example.com").unwrap();
+        let mut package = Package::simple("a.b", "a", url.clone(), PackageSource::Web(url));
+        package.deprecated = true;
+        app.instances[0]
+            .config
+            .plugins
+            .push(launcher_core::PluginRecord {
+                id: package.id.clone(),
+                version: "1".to_owned(),
+                source: String::new(),
+                files: Vec::new(),
+                paused: false,
+                uninstall_steps: Vec::new(),
+            });
+        vec![package]
+    }
+
+    #[test]
+    fn deprecated_dialog_lists_installed_deprecated_plugins_once() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        open_edit_screen(&mut app);
+        let catalog = deprecated_catalog(&mut app);
+        let _ = app.update(Message::CatalogLoaded(id, Ok(catalog.clone())));
+        let state = app.edit.as_mut().unwrap();
+        assert_eq!(state.deprecated_dialog.as_ref().map(Vec::len), Some(1));
+        state.deprecated_dialog = None;
+        let _ = app.update(Message::CatalogLoaded(id, Ok(catalog)));
+        assert!(app.edit.as_ref().unwrap().deprecated_dialog.is_none());
+    }
+
+    #[test]
+    fn deprecated_dialog_stays_closed_after_suppression() {
+        let (_root, mut app, id) = app_with_instance(Kind::Aviutl2);
+        open_edit_screen(&mut app);
+        let catalog = deprecated_catalog(&mut app);
+        app.hide_deprecated_notice = true;
+        let _ = app.update(Message::CatalogLoaded(id, Ok(catalog)));
+        assert!(app.edit.as_ref().unwrap().deprecated_dialog.is_none());
     }
 
     #[test]

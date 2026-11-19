@@ -95,6 +95,11 @@ pub enum Message {
     SortOrderChanged(SortOrder),
     StatusFilterChanged(StatusFilter),
     ToggleHideDeprecated,
+    CloseDeprecatedDialog,
+    /// Closes the dialog for good.
+    SuppressDeprecatedDialog,
+    /// Plugin id.
+    RemoveDeprecated(String),
     Scrolled(f32, f32),
     ReloadCatalog,
     /// Package id.
@@ -159,6 +164,21 @@ pub struct Pending {
     pub plan: InstallPlan,
 }
 
+/// Installed plugin that the catalog marks as deprecated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeprecatedPlugin {
+    pub id: String,
+    pub name: String,
+    pub message: Option<String>,
+}
+
+/// Whether the installed deprecated plugins were listed for a state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeprecatedCheck {
+    Pending,
+    Done,
+}
+
 pub type UpdatePreviewItem = (String, String, String, Option<String>);
 
 pub struct State {
@@ -197,6 +217,8 @@ pub struct State {
     pub preview_open: bool,
     pub license_dialog_content: Option<String>,
     pub update_preview: Option<Vec<UpdatePreviewItem>>,
+    pub deprecated_dialog: Option<Vec<DeprecatedPlugin>>,
+    pub deprecated_check: DeprecatedCheck,
     pub name: String,
     pub group: String,
 }
@@ -231,6 +253,8 @@ impl State {
             preview_open: false,
             license_dialog_content: None,
             update_preview: None,
+            deprecated_dialog: None,
+            deprecated_check: DeprecatedCheck::Pending,
             name: instance.config.name.clone(),
             group: instance.config.group.clone().unwrap_or_default(),
         }
@@ -242,12 +266,40 @@ impl State {
         self.pending_install = None;
         self.pending_updates = false;
         self.update_preview = None;
+        self.deprecated_dialog = None;
         self.license_dialog_content = None;
         self.name.clone_from(&instance.config.name);
         self.group = instance.config.group.clone().unwrap_or_default();
         if matches!(self.catalog, Catalog::Loading) {
             self.catalog = Catalog::Idle;
         }
+    }
+
+    /// Opens the dialog of installed deprecated plugins, once per state, as soon as the catalog is ready.
+    pub fn check_deprecated(&mut self, instance: &Instance) {
+        let Catalog::Ready(packages) = &self.catalog else {
+            return;
+        };
+        if self.deprecated_check == DeprecatedCheck::Done {
+            return;
+        }
+        let found: Vec<DeprecatedPlugin> = instance
+            .config
+            .plugins
+            .iter()
+            .filter_map(|record| {
+                let package = packages
+                    .iter()
+                    .find(|package| package.id == record.id && package.deprecated)?;
+                Some(DeprecatedPlugin {
+                    id: record.id.clone(),
+                    name: package.name.clone(),
+                    message: package.deprecation_message.clone(),
+                })
+            })
+            .collect();
+        self.deprecated_check = DeprecatedCheck::Done;
+        self.deprecated_dialog = Some(found).filter(|found| !found.is_empty());
     }
 
     pub fn package(&self, id: &str) -> Option<&Package> {
@@ -452,7 +504,82 @@ pub fn view<'a>(
         body = body.push(update_preview_modal(theme, items));
     }
 
+    if let Some(items) = &state.deprecated_dialog {
+        body = body.push(deprecated_dialog(theme, items));
+    }
+
     body.into()
+}
+
+fn deprecated_dialog<'a>(theme: &'a Theme, items: &'a [DeprecatedPlugin]) -> Element<'a, Message> {
+    let rows: Vec<Element<'a, Message>> = items
+        .iter()
+        .map(|plugin| {
+            let message = plugin
+                .message
+                .clone()
+                .unwrap_or_else(|| t!("deprecated_warning").into_owned());
+            let info = column![
+                row![
+                    style::icon(style::icons::WARNING)
+                        .size(16)
+                        .color(theme.error()),
+                    style::label(theme, plugin.name.clone()).size(15),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center),
+                text(message).size(13).color(theme.tertiary()),
+            ]
+            .spacing(4)
+            .width(Length::Fill);
+            let remove = m3::button(
+                style::danger_button(theme),
+                style::btn_content(style::icons::DELETE, t!("delete")),
+            )
+            .on_press(Message::RemoveDeprecated(plugin.id.clone()));
+            m3::card(
+                style::tile_card(theme, false),
+                row![info, remove].spacing(8).align_y(Vertical::Center),
+            )
+            .padding(Padding::from([8.0, 12.0]))
+            .width(Length::Fill)
+            .into()
+        })
+        .collect();
+
+    m3::card(
+        card::Style::filled(theme),
+        column![
+            row![
+                style::icon(style::icons::WARNING)
+                    .size(20)
+                    .color(theme.error()),
+                style::label(theme, t!("deprecated_dialog_title")).size(16),
+                style::label(theme, t!("items_count", count = items.len()).into_owned()).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+            scrollable(column(rows).spacing(6)).height(Length::Fixed(200.0)),
+            row![
+                m3::button(
+                    button::Style::filled(theme, Accent::Primary),
+                    style::btn_content(style::icons::CLOSE, t!("close")),
+                )
+                .on_press(Message::CloseDeprecatedDialog),
+                m3::button(
+                    button::Style::tonal(theme, Accent::Primary),
+                    style::btn_content(style::icons::INFO, t!("deprecated_dialog_suppress")),
+                )
+                .on_press(Message::SuppressDeprecatedDialog),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center),
+        ]
+        .spacing(12)
+        .padding(Padding::from([14.0, 18.0])),
+    )
+    .width(Length::Fill)
+    .into()
 }
 
 fn update_preview_modal<'a>(

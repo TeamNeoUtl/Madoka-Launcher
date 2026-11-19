@@ -185,6 +185,7 @@ pub struct Services {
     font: Option<String>,
     locale: Locale,
     dns_servers: Vec<IpAddr>,
+    hide_deprecated_notice: bool,
     dns: Dns,
     browsed: Arc<ReqwestFetcher>,
     token: Option<String>,
@@ -205,6 +206,7 @@ impl Services {
         let theme = config.theme;
         let font = config.font;
         let dns_servers = config.dns;
+        let hide_deprecated_notice = config.hide_deprecated_notice;
         let dns = Dns::new(&dns_servers);
         let http = ReqwestHttp::with_dns(&user_agent, token.clone(), dns.clone())
             .map_err(ProviderError::from)?;
@@ -223,6 +225,7 @@ impl Services {
             font,
             locale,
             dns_servers,
+            hide_deprecated_notice,
             dns,
             browsed,
             token,
@@ -287,6 +290,22 @@ impl Services {
         blocking(move || {
             let mut config = Config::load(&root)?;
             config.dns = servers;
+            config.save(&root)
+        })
+        .await
+    }
+
+    /// `true` when `config.toml` kept the dialog of installed deprecated packages closed at start.
+    pub const fn hides_deprecated_notice(&self) -> bool {
+        self.hide_deprecated_notice
+    }
+
+    /// Writes the choice to keep the dialog of installed deprecated packages closed to `config.toml`.
+    pub async fn save_hide_deprecated_notice(self) -> Result<(), OpError> {
+        let root = self.root.clone();
+        blocking(move || {
+            let mut config = Config::load(&root)?;
+            config.hide_deprecated_notice = true;
             config.save(&root)
         })
         .await

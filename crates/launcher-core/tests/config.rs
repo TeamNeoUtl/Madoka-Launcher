@@ -33,6 +33,7 @@ fn save_then_load_returns_the_same_value() {
         font: Some("Noto Sans".to_owned()),
         locale: Some("ja".to_owned()),
         dns: vec!["94.140.14.14".parse().unwrap()],
+        hide_deprecated_notice: true,
     };
     config.save(dir.path()).unwrap();
     assert_eq!(Config::load(dir.path()).unwrap(), config);
@@ -61,4 +62,13 @@ fn updating_one_value_keeps_the_others() {
     let reloaded = Config::load(dir.path()).unwrap();
     assert_eq!(reloaded.github_token.as_deref(), Some("abc"));
     assert_eq!(reloaded.theme.as_deref(), Some("Dark"));
+}
+
+#[test]
+fn deprecated_notice_is_shown_by_default_and_omitted_when_shown() {
+    let dir = tempdir().unwrap();
+    assert!(!Config::load(dir.path()).unwrap().hide_deprecated_notice);
+    Config::default().save(dir.path()).unwrap();
+    let text = fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert!(!text.contains("hide_deprecated_notice"));
 }
