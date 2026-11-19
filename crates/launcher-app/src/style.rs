@@ -53,15 +53,15 @@ pub mod icons {
     pub const UPDATE: &str = "\u{e923}"; // update
     pub const OPEN_IN_NEW: &str = "\u{e89e}"; // open_in_new
     pub const SYNC: &str = "\u{e627}"; // sync
-    pub const HOURGLASS: &str = "\u{e85d}"; // hourglass_top
+    pub const HOURGLASS: &str = "\u{ea5b}"; // hourglass_top
     pub const LANGUAGE: &str = "\u{e894}"; // language
     pub const MOVIE: &str = "\u{e02c}"; // movie
-    pub const VIDEOCAM: &str = "\u{e30a}"; // videocam
-    pub const LAYERS: &str = "\u{e865}"; // layers
+    pub const VIDEOCAM: &str = "\u{e04b}"; // videocam
+    pub const LAYERS: &str = "\u{e53b}"; // layers
     pub const PLAY_CIRCLE: &str = "\u{e038}"; // play_circle
     pub const GROUP: &str = "\u{e7ef}"; // group
-    pub const HISTORY: &str = "\u{e897}"; // history / version
-    pub const TUNE: &str = "\u{e1c4}"; // tune / settings
+    pub const HISTORY: &str = "\u{e889}"; // history / version
+    pub const TUNE: &str = "\u{e429}"; // tune / settings
     pub const SHARE: &str = "\u{e80d}"; // share
     pub const COPY: &str = "\u{e14d}"; // content_copy
     pub const LINK: &str = "\u{e157}"; // link
@@ -76,7 +76,7 @@ pub mod icons {
     pub const IMAGE: &str = "\u{e3f4}"; // image
     pub const DESCRIPTION: &str = "\u{e873}"; // description
     pub const PERSON: &str = "\u{e7fd}"; // person / author
-    pub const POLICY: &str = "\u{e899}"; // policy / license
+    pub const POLICY: &str = "\u{ea17}"; // policy / license
 }
 
 pub fn button_icon(glyph: &'static str) -> Icon<'static> {

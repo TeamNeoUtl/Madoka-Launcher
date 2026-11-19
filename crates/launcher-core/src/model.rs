@@ -51,6 +51,17 @@ pub enum Edition {
     Lite,
 }
 
+/// Distribution format of a build that ships in several. Only `Kind::Freya` on Linux has a choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Bundle {
+    /// Compressed archive of the executable and its libraries.
+    #[default]
+    Archive,
+    /// One self-contained executable file.
+    AppImage,
+}
+
 const ADDON_LABEL: &str = "exedit";
 /// Separator of the combined version text that earlier launcher versions stored in `app_version`.
 const LEGACY_ADDON_SEPARATOR: &str = " / exedit ";
@@ -74,6 +85,8 @@ pub struct InstanceConfig {
     pub kind: Kind,
     #[serde(default)]
     pub edition: Edition,
+    #[serde(default)]
+    pub bundle: Bundle,
     pub app_version: String,
     /// Version of the plugin that sits beside the editor. `None` when the kind has no such plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,7 +127,8 @@ impl InstanceConfig {
     /// # Errors
     ///
     /// Returns `Error::EmptyName` for a blank name, `Error::InvalidEdition` for `Edition::Lite`
-    /// on a kind other than `Kind::Ymm4`, `Error::EmptyPluginId` for a blank plugin id,
+    /// on a kind other than `Kind::Ymm4`, `Error::InvalidBundle` for `Bundle::AppImage`
+    /// on a kind other than `Kind::Freya`, `Error::EmptyPluginId` for a blank plugin id,
     /// and `Error::UnsafePath` for a plugin file path that leaves the app directory.
     pub fn validate(&self) -> Result<(), Error> {
         if self.name.trim().is_empty() {
@@ -124,6 +138,12 @@ impl InstanceConfig {
             return Err(Error::InvalidEdition {
                 kind: self.kind,
                 edition: self.edition,
+            });
+        }
+        if self.bundle == Bundle::AppImage && self.kind != Kind::Freya {
+            return Err(Error::InvalidBundle {
+                kind: self.kind,
+                bundle: self.bundle,
             });
         }
         for plugin in &self.plugins {
@@ -143,6 +163,7 @@ pub struct NewInstance {
     pub name: String,
     pub kind: Kind,
     pub edition: Edition,
+    pub bundle: Bundle,
     pub app_version: String,
     pub group: Option<String>,
 }

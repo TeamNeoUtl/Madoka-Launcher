@@ -80,6 +80,7 @@ fn fixture(kind: Kind) -> Fixture {
                 name: "main".to_owned(),
                 kind,
                 edition: Edition::Normal,
+                bundle: launcher_core::Bundle::Archive,
                 app_version: "v1".to_owned(),
                 group: None,
             },
@@ -875,4 +876,95 @@ async fn update_app_follows_the_directory_of_the_installed_executable() {
     assert_eq!(fs::read(root.join("lib/x.dll")).unwrap(), b"dll");
     assert_eq!(fs::read(root.join("keep.ini")).unwrap(), b"mine");
     assert!(!app.join("v2").exists());
+}
+
+fn tar_zst_bytes(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for &(name, data, mode) in entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(mode);
+        builder.append_data(&mut header, name, data).unwrap();
+    }
+    zstd::encode_all(builder.into_inner().unwrap().as_slice(), 0).unwrap()
+}
+
+async fn install_freya_app(f: &Fixture, name: &str, bytes: &[u8]) -> Result<(), Error> {
+    f.installer.fetcher().set(bytes.to_vec());
+    f.installer
+        .install_app(f.instance.config.id, &[artifact(name, bytes)], &NoProgress)
+        .await
+}
+
+#[tokio::test]
+async fn install_app_extracts_tar_zst_tree() {
+    let f = fixture(Kind::Freya);
+    let bytes = tar_zst_bytes(&[("freya-nle", b"bin", 0o755), ("lib/x.so", b"so", 0o644)]);
+    install_freya_app(&f, "app.tar.zst", &bytes).await.unwrap();
+
+    let app = f.instance.app_dir();
+    assert_eq!(fs::read(app.join("freya-nle")).unwrap(), b"bin");
+    assert_eq!(fs::read(app.join("lib/x.so")).unwrap(), b"so");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_keeps_executable_bits_from_the_tar() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(Kind::Freya);
+    let bytes = tar_zst_bytes(&[("freya-nle", b"bin", 0o750), ("lib/x.so", b"so", 0o600)]);
+    install_freya_app(&f, "app.tar.zst", &bytes).await.unwrap();
+
+    let app = f.instance.app_dir();
+    let mode = |name: &str| fs::metadata(app.join(name)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode("freya-nle"), 0o755);
+    assert_eq!(mode("lib/x.so"), 0o644);
+}
+
+#[tokio::test]
+async fn install_app_rejects_a_symlink_in_the_tar() {
+    let f = fixture(Kind::Freya);
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Symlink);
+    header.set_size(0);
+    builder
+        .append_link(&mut header, "link", "/etc/passwd")
+        .unwrap();
+    let bytes = zstd::encode_all(builder.into_inner().unwrap().as_slice(), 0).unwrap();
+
+    let result = install_freya_app(&f, "app.tar.zst", &bytes).await;
+    assert!(matches!(result, Err(Error::SymlinkEntry(_))));
+    assert!(all_files(&f.instance.app_dir()).is_empty());
+}
+
+#[tokio::test]
+async fn install_app_stores_an_executable_download_under_the_executable_name() {
+    let f = fixture(Kind::Freya);
+    let bytes = b"\x7fELF-appimage".to_vec();
+    install_freya_app(&f, "Freya-NLE-0.8.1-linux-x86_64.AppImage", &bytes)
+        .await
+        .unwrap();
+
+    let files = all_files(&f.instance.app_dir());
+    assert_eq!(files, [f.instance.app_dir().join("freya-nle")]);
+    assert_eq!(fs::read(&files[0]).unwrap(), bytes);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_makes_the_executable_download_runnable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(Kind::Freya);
+    install_freya_app(&f, "app.AppImage", b"\x7fELF-appimage")
+        .await
+        .unwrap();
+
+    let mode = fs::metadata(f.instance.app_dir().join("freya-nle"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755);
 }

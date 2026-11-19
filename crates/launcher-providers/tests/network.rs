@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use launcher_core::{AppSelection, Edition, Host};
+use launcher_core::{AppSelection, Bundle, Edition, Host};
 use launcher_providers::{FreyaProvider, NeoutlProvider, Provider, ReqwestHttp, Ymm4Provider};
 
 fn http() -> ReqwestHttp {
@@ -15,7 +15,11 @@ fn http() -> ReqwestHttp {
 }
 
 const fn selection(host: Host, edition: Edition) -> AppSelection {
-    AppSelection { host, edition }
+    AppSelection {
+        host,
+        edition,
+        bundle: Bundle::Archive,
+    }
 }
 
 /// Every host has at least one version with an installable artifact.

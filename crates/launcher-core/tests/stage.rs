@@ -52,6 +52,7 @@ fn fixture(kind: Kind, exe: &str) -> Fixture {
                 name: "main".to_owned(),
                 kind,
                 edition: Edition::Normal,
+                bundle: launcher_core::Bundle::Archive,
                 app_version: "v1".to_owned(),
                 group: None,
             },

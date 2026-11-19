@@ -4,8 +4,8 @@ use std::process::Stdio;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use launcher_core::{
-    AppSelection, AppVersion, Config, Edition, Error, Fetcher, Host, InstallPlan, Installer,
-    Instance, InstanceConfig, InstanceId, InstanceLocks, InstanceStore, Kind, Launched,
+    AppSelection, AppVersion, Bundle, Config, Edition, Error, Fetcher, Host, InstallPlan,
+    Installer, Instance, InstanceConfig, InstanceId, InstanceLocks, InstanceStore, Kind, Launched,
     NewInstance, PROBE_WINDOW, Package, PackageSource, PluginRecord, ProgressSink, TaskBoard,
     TaskHandle, open_directory, portable_root, set_portable, zip_entry_names, zip_read_entry,
 };
@@ -80,6 +80,7 @@ pub struct CreateRequest {
     pub name: String,
     pub kind: Kind,
     pub edition: Edition,
+    pub bundle: Bundle,
     pub group: Option<String>,
     pub version: AppVersion,
     /// Plugin that is extracted beside the editor.
@@ -438,6 +439,7 @@ impl Services {
         let selection = AppSelection {
             host: self.host,
             edition: config.edition,
+            bundle: config.bundle,
         };
         let versions = provider.versions().await?;
         let (app, addon) = newer_app_versions(&provider, config, selection, &versions);
@@ -1095,6 +1097,7 @@ impl Services {
         let selection = AppSelection {
             host: self.host,
             edition: config.edition,
+            bundle: config.bundle,
         };
         let versions = provider.versions().await?;
         let (app, addon) = newer_app_versions(&provider, config, selection, &versions);
@@ -1173,6 +1176,7 @@ impl Services {
             name,
             kind,
             edition,
+            bundle,
             group,
             version,
             addon,
@@ -1182,6 +1186,7 @@ impl Services {
         let selection = AppSelection {
             host: self.host,
             edition,
+            bundle,
         };
         let mut artifacts = provider.plan_install_app(&version, selection)?;
         let mut checks = version.checks.clone();
@@ -1199,6 +1204,7 @@ impl Services {
                 name,
                 kind,
                 edition,
+                bundle,
                 app_version: version.version.clone(),
                 group,
             },
@@ -1418,6 +1424,7 @@ mod tests {
                     name: "t".to_owned(),
                     kind,
                     edition: Edition::Normal,
+                    bundle: launcher_core::Bundle::Archive,
                     app_version: "1".to_owned(),
                     group: None,
                 },

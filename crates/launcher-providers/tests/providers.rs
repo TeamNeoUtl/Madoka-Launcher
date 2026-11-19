@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use launcher_core::{AppSelection, Edition, Host, InstallPlan, Kind, Package, PackageSource};
+use launcher_core::{
+    AppSelection, Bundle, Edition, Host, InstallPlan, Kind, Package, PackageSource,
+};
 use launcher_providers::{
     FreyaProvider, Http, HttpError, NeoutlProvider, Provider, ProviderError, Ymm4Provider,
     parse_ymm4_catalog,
@@ -28,14 +30,17 @@ const YMM4_INDEX_URL: &str = "https://manjubox.net/ymm4plugins.yml";
 const WINDOWS: AppSelection = AppSelection {
     host: Host::Windows,
     edition: Edition::Normal,
+    bundle: Bundle::Archive,
 };
 const WINDOWS_LITE: AppSelection = AppSelection {
     host: Host::Windows,
     edition: Edition::Lite,
+    bundle: Bundle::Archive,
 };
 const LINUX: AppSelection = AppSelection {
     host: Host::Linux,
     edition: Edition::Normal,
+    bundle: Bundle::Archive,
 };
 
 enum Reply {
@@ -461,6 +466,30 @@ async fn freya_selects_by_host_and_ignores_other_names() {
 }
 
 #[tokio::test]
+async fn freya_accepts_the_windows_asset_of_releases_from_0_8() {
+    let windows = "Freya-NLE-0.8.1-windows-x86_64.zip";
+    let provider = freya(vec![
+        release(
+            "v0.8.1",
+            vec![
+                asset(windows),
+                asset("Freya-NLE-0.8.1-macos-arm64.zip"),
+                asset("Freya-NLE-0.8.1-linux-x86_64.AppImage"),
+            ],
+        ),
+        release("v0.7.0", vec![asset("AviQtl-MSVC-x86_64.zip")]),
+    ]);
+    let versions = provider.app_versions().await.unwrap();
+    let tags: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+    assert_eq!(tags, ["v0.8.1", "v0.7.0"]);
+    assert_eq!(names(&versions[0].artifacts), [windows]);
+    assert_eq!(
+        names(&provider.plan_install_app(&versions[0], WINDOWS).unwrap()),
+        [windows]
+    );
+}
+
+#[tokio::test]
 async fn malformed_release_body_is_a_json_error() {
     let provider = Ymm4Provider::new(FixtureHttp::new(vec![(
         YMM4_RELEASES_URL,
@@ -570,4 +599,37 @@ async fn web_package_opens_in_browser_without_a_request() {
         InstallPlan::OpenInBrowser(web_url)
     );
     assert!(log.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn freya_selects_the_linux_bundle_by_choice() {
+    let appimage = "Freya-NLE-0.8.1-linux-x86_64.AppImage";
+    let archive = "Freya-NLE-0.8.1-linux-x86_64-archlinux.tar.zst";
+    let provider = freya(vec![
+        release(
+            "v0.8.1",
+            vec![
+                asset(appimage),
+                asset(archive),
+                asset("Freya-NLE-0.8.1-windows-x86_64.zip"),
+            ],
+        ),
+        release("v0.7.0", vec![asset("AviQtl-Arch-Linux-x86_64.zip")]),
+    ]);
+    let versions = provider.app_versions().await.unwrap();
+    let plan = |index: usize, bundle| {
+        let selection = AppSelection { bundle, ..LINUX };
+        provider.plan_install_app(&versions[index], selection)
+    };
+
+    assert_eq!(names(&plan(0, Bundle::AppImage).unwrap()), [appimage]);
+    assert_eq!(names(&plan(0, Bundle::Archive).unwrap()), [archive]);
+    assert_eq!(
+        names(&plan(1, Bundle::Archive).unwrap()),
+        ["AviQtl-Arch-Linux-x86_64.zip"]
+    );
+    assert!(matches!(
+        plan(1, Bundle::AppImage),
+        Err(ProviderError::NoMatchingAsset { .. })
+    ));
 }

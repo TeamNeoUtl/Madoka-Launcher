@@ -50,6 +50,7 @@ impl InstanceStore {
             name: new.name,
             kind: new.kind,
             edition: new.edition,
+            bundle: new.bundle,
             app_version: new.app_version,
             addon_version: None,
             group: new.group,

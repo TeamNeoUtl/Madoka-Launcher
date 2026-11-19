@@ -93,6 +93,7 @@ fn spawn_sets_the_executable_bit_and_reports_the_exit_status() {
                 name: "n".to_owned(),
                 kind: Kind::Neoutl,
                 edition: Edition::Normal,
+                bundle: launcher_core::Bundle::Archive,
                 app_version: "1".to_owned(),
                 group: None,
             },

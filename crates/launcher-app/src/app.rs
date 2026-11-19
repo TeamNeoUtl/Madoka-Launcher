@@ -725,6 +725,11 @@ impl App {
                 self.refilter();
                 Task::none()
             }
+            M::AppImageToggled(checked) => {
+                self.form.app_image = checked;
+                self.refilter();
+                Task::none()
+            }
             M::VersionSelected(choice) => {
                 self.form.selected = Some(choice);
                 Task::none()
@@ -1389,6 +1394,7 @@ impl App {
         let selection = AppSelection {
             host: self.services.host,
             edition: self.form.edition,
+            bundle: self.form.bundle(),
         };
         let kind = self.form.kind;
         let installable = self
@@ -1716,6 +1722,7 @@ mod tests {
                     name: "t".to_owned(),
                     kind,
                     edition: Edition::Normal,
+                    bundle: launcher_core::Bundle::Archive,
                     app_version: "1".to_owned(),
                     group: None,
                 },

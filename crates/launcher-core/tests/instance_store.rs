@@ -13,6 +13,7 @@ fn new_instance(kind: Kind) -> NewInstance {
         name: "main".to_owned(),
         kind,
         edition: Edition::Normal,
+        bundle: launcher_core::Bundle::Archive,
         app_version: "v4.56.1.0".to_owned(),
         group: Some("work".to_owned()),
     }
@@ -128,6 +129,13 @@ fn rejects_invalid_values() {
     assert!(matches!(
         store.create(lite_on_neoutl, Host::Windows),
         Err(Error::InvalidEdition { .. })
+    ));
+
+    let mut app_image_on_neoutl = new_instance(Kind::Neoutl);
+    app_image_on_neoutl.bundle = launcher_core::Bundle::AppImage;
+    assert!(matches!(
+        store.create(app_image_on_neoutl, Host::Windows),
+        Err(Error::InvalidBundle { .. })
     ));
 }
 

@@ -8,7 +8,7 @@ use iced_m3::theme::{Accent, ColorScheme, Theme};
 use iced_m3::widget::button_group::connected;
 use iced_m3::widget::text_input::TextInput;
 use iced_m3::widget::{self as m3, Action, button, card};
-use launcher_core::{AppVersion, Edition, Host, Kind};
+use launcher_core::{AppVersion, Bundle, Edition, Host, Kind};
 use launcher_providers::{Versions, has_provider};
 use rust_i18n::t;
 
@@ -35,6 +35,8 @@ pub enum Message {
     NameChanged(String),
     GroupChanged(String),
     EditionSelected(Edition),
+    /// `true` selects the `AppImage`.
+    AppImageToggled(bool),
     VersionSelected(VersionChoice),
     AddonSelected(VersionChoice),
     ToggleRecommended(bool),
@@ -95,10 +97,13 @@ pub enum Load {
 }
 
 pub struct Form {
+    host: Host,
     pub kind: Kind,
     pub name: String,
     pub group: String,
     pub edition: Edition,
+    /// Choice of the checkbox. `bundle()` tells what applies to the selected kind.
+    pub app_image: bool,
     pub selected: Option<VersionChoice>,
     pub choices: Vec<VersionChoice>,
     pub addon_selected: Option<VersionChoice>,
@@ -116,10 +121,12 @@ impl Form {
             .find(|kind| availability(*kind, host) == Availability::Available)
             .unwrap_or(Kind::Neoutl);
         Self {
+            host,
             kind,
             name: String::new(),
             group: String::new(),
             edition: Edition::Normal,
+            app_image: true,
             selected: None,
             choices: Vec::new(),
             addon_selected: None,
@@ -128,6 +135,20 @@ impl Form {
             load: Load::Idle,
             versions: Vec::new(),
             addon_versions: Vec::new(),
+        }
+    }
+
+    /// `true` when the selected kind ships in several formats on this host.
+    pub fn offers_bundle(&self) -> bool {
+        self.kind == Kind::Freya && self.host == Host::Linux
+    }
+
+    /// Format that the installation uses.
+    pub fn bundle(&self) -> Bundle {
+        if self.offers_bundle() && self.app_image {
+            Bundle::AppImage
+        } else {
+            Bundle::Archive
         }
     }
 
@@ -216,6 +237,7 @@ impl Form {
             name: self.name.trim().to_owned(),
             kind: self.kind,
             edition: self.edition,
+            bundle: self.bundle(),
             group: (!group.is_empty()).then(|| group.to_owned()),
             version,
             addon,
@@ -304,6 +326,13 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, host: Host) -> Element<'a, Mes
                 Message::AddonSelected,
             ),
         ));
+    }
+    if form.offers_bundle() {
+        fields = fields.push(
+            checkbox(form.app_image)
+                .label(t!("bundle_appimage"))
+                .on_toggle(Message::AppImageToggled),
+        );
     }
     if form.kind == Kind::Aviutl2 {
         fields = fields.push(

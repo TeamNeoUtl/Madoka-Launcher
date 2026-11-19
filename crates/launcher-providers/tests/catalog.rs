@@ -544,6 +544,7 @@ fn aviutl_kinds_install_on_windows_only() {
     let selection = |host| AppSelection {
         host,
         edition: Edition::Normal,
+        bundle: launcher_core::Bundle::Archive,
     };
     assert!(
         provider

@@ -31,7 +31,9 @@ pub use hash::{SCAN_DIRS, check_path, is_present, scan_xxh3_128};
 pub use host::Host;
 pub use installer::Installer;
 pub use lock::InstanceLocks;
-pub use model::{Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord};
+pub use model::{
+    Bundle, Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord,
+};
 pub use paths::{PORTABLE_DIR, default_root, portable_root, set_portable, standard_root};
 pub use runner::{
     Launched, PROBE_WINDOW, find_executable, is_instance_running, open_directory, open_url,

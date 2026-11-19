@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{Edition, Host, InstanceId, Kind};
+use crate::{Bundle, Edition, Host, InstanceId, Kind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -22,6 +22,8 @@ pub enum Error {
     UnsupportedKind { kind: Kind, host: Host },
     #[error("edition {edition:?} is invalid for kind {kind:?}")]
     InvalidEdition { kind: Kind, edition: Edition },
+    #[error("bundle {bundle:?} is invalid for kind {kind:?}")]
+    InvalidBundle { kind: Kind, bundle: Bundle },
     #[error("instance name is empty")]
     EmptyName,
     #[error("plugin id is empty")]
@@ -50,6 +52,8 @@ pub enum Error {
     Fetch { url: String, message: String },
     #[error("zip error at {path}: {message}")]
     Zip { path: PathBuf, message: String },
+    #[error("tar error at {path}: {message}")]
+    Tar { path: PathBuf, message: String },
     #[error("symlink entry in archive: {0}")]
     SymlinkEntry(String),
     #[error("plugin {0} is not installed")]
@@ -73,6 +77,13 @@ impl Error {
         Self::Io {
             path: path.into(),
             source,
+        }
+    }
+
+    pub(crate) fn tar(path: impl Into<PathBuf>, source: impl std::fmt::Display) -> Self {
+        Self::Tar {
+            path: path.into(),
+            message: source.to_string(),
         }
     }
 

@@ -20,6 +20,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub const PROBE_WINDOW: Duration = Duration::from_secs(5);
 
 impl Kind {
+    /// File name under which a bare executable download is stored.
+    pub(crate) const fn executable_name(self) -> &'static str {
+        match self.executable_stems() {
+            [first, ..] => first,
+            [] => "",
+        }
+    }
+
     /// File stems accepted as the executable. Compared case-insensitively.
     const fn executable_stems(self) -> &'static [&'static str] {
         match self {

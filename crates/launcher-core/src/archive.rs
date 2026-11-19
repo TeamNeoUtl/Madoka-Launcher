@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader, Cursor};
+use std::io::{self, BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
 use crate::Error;
-use crate::model::ensure_relative_path;
+use crate::model::{ensure_relative_path, ensure_single_component};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
@@ -40,14 +40,49 @@ impl Created {
     }
 }
 
+const MAGIC_LEN: usize = 4;
+const ZSTD_MAGIC: [u8; MAGIC_LEN] = [0x28, 0xB5, 0x2F, 0xFD];
+const ELF_MAGIC: [u8; MAGIC_LEN] = [0x7F, b'E', b'L', b'F'];
+
+enum Source {
+    Zip(ZipArchive<BufReader<File>>),
+    /// Zstandard-compressed tar. `Entry::index` is the position in the stream.
+    TarZstd,
+    /// One file that is stored under `Entry::rel`.
+    Single,
+}
+
+/// Container of a download, told by its first bytes.
+enum Format {
+    Zip,
+    TarZstd,
+    Executable,
+}
+
+fn sniff(path: &Path) -> Result<Format, Error> {
+    let mut head = Vec::with_capacity(MAGIC_LEN);
+    File::open(path)
+        .map_err(|e| Error::io(path, e))?
+        .take(MAGIC_LEN as u64)
+        .read_to_end(&mut head)
+        .map_err(|e| Error::io(path, e))?;
+    Ok(if head == ELF_MAGIC {
+        Format::Executable
+    } else if head == ZSTD_MAGIC {
+        Format::TarZstd
+    } else {
+        Format::Zip
+    })
+}
+
 pub struct Archive {
     path: PathBuf,
-    zip: ZipArchive<BufReader<File>>,
+    source: Source,
     entries: Vec<Entry>,
 }
 
 impl Archive {
-    /// Validates every entry name and type. Writes nothing.
+    /// Opens a zip. Validates every entry name and type. Writes nothing.
     pub(crate) fn open(path: &Path, layout: Layout) -> Result<Self, Error> {
         let file = File::open(path).map_err(|e| Error::io(path, e))?;
         let mut zip = ZipArchive::new(BufReader::new(file)).map_err(|e| Error::zip(path, e))?;
@@ -67,14 +102,76 @@ impl Archive {
             }
             entries.push(Entry { index, rel, is_dir });
         }
+        Ok(Self::new(path, Source::Zip(zip), entries, layout))
+    }
+
+    /// Like `open`, and accepts the other downloads of an app: a Zstandard-compressed tar,
+    /// and a bare executable, which becomes the single file `single_name`.
+    pub(crate) fn open_app(path: &Path, layout: Layout, single_name: &str) -> Result<Self, Error> {
+        match sniff(path)? {
+            Format::Zip => Self::open(path, layout),
+            Format::TarZstd => Self::open_tar(path, layout),
+            Format::Executable => {
+                ensure_single_component(single_name)?;
+                let entry = Entry {
+                    index: 0,
+                    rel: single_name.to_owned(),
+                    is_dir: false,
+                };
+                Ok(Self::new(path, Source::Single, vec![entry], layout))
+            }
+        }
+    }
+
+    fn open_tar(path: &Path, layout: Layout) -> Result<Self, Error> {
+        let mut tar = tar_stream(path)?;
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, entry) in tar.entries().map_err(|e| Error::tar(path, e))?.enumerate() {
+            let entry = entry.map_err(|e| Error::tar(path, e))?;
+            let kind = entry.header().entry_type();
+            if kind.is_pax_global_extensions() {
+                continue;
+            }
+            let name = entry
+                .path()
+                .map_err(|e| Error::tar(path, e))?
+                .to_string_lossy()
+                .into_owned();
+            if kind.is_symlink() || kind.is_hard_link() {
+                return Err(Error::SymlinkEntry(name));
+            }
+            let is_dir = kind.is_dir();
+            if !is_dir && !kind.is_file() {
+                return Err(Error::UnsafePath(name));
+            }
+            let normalized = name.replace('\\', "/");
+            let rel = normalized.trim_start_matches("./").trim_end_matches('/');
+            if rel.is_empty() || rel == "." {
+                continue;
+            }
+            ensure_relative_path(rel)?;
+            if !seen.insert(rel.to_owned()) {
+                return Err(Error::UnsafePath(name));
+            }
+            entries.push(Entry {
+                index,
+                rel: rel.to_owned(),
+                is_dir,
+            });
+        }
+        Ok(Self::new(path, Source::TarZstd, entries, layout))
+    }
+
+    fn new(path: &Path, source: Source, mut entries: Vec<Entry>, layout: Layout) -> Self {
         if layout == Layout::TreeWithoutRoot {
             strip_common_root(&mut entries);
         }
-        Ok(Self {
+        Self {
             path: path.to_owned(),
-            zip,
+            source,
             entries,
-        })
+        }
     }
 
     pub(crate) fn files(&self) -> Vec<String> {
@@ -88,39 +185,109 @@ impl Archive {
     /// Creates every file with `create_new`. On failure removes the files and directories it created.
     pub(crate) fn extract(&mut self, dest: &Path) -> Result<(), Error> {
         let mut created = Created::default();
-        let result = self.write_entries(dest, &mut created);
+        let result = match &mut self.source {
+            Source::Zip(zip) => write_zip(zip, &self.entries, &self.path, dest, &mut created),
+            Source::TarZstd => write_tar(&self.entries, &self.path, dest, &mut created),
+            Source::Single => write_single(&self.entries, &self.path, dest, &mut created),
+        };
         if result.is_err() {
             created.roll_back();
         }
         result
     }
+}
 
-    fn write_entries(&mut self, dest: &Path, created: &mut Created) -> Result<(), Error> {
-        for entry in &self.entries {
-            let target = dest.join(&entry.rel);
-            if entry.is_dir {
-                make_dirs(&target, created)?;
-                continue;
-            }
-            if let Some(parent) = target.parent() {
-                make_dirs(parent, created)?;
-            }
-            let mut source = self
-                .zip
-                .by_index(entry.index)
-                .map_err(|e| Error::zip(&self.path, e))?;
-            let mut out = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&target)
-                .map_err(|e| Error::io(&target, e))?;
-            created.files.push(target.clone());
-            io::copy(&mut source, &mut out).map_err(|e| Error::io(&target, e))?;
-            #[cfg(unix)]
-            set_mode(&target, source.unix_mode())?;
+fn tar_stream(path: &Path) -> Result<tar::Archive<impl Read>, Error> {
+    let file = File::open(path).map_err(|e| Error::io(path, e))?;
+    let decoder = zstd::stream::read::Decoder::new(file).map_err(|e| Error::tar(path, e))?;
+    Ok(tar::Archive::new(decoder))
+}
+
+/// Creates `target` with `create_new` and records it in `created`.
+fn create_file(target: &Path, created: &mut Created) -> Result<File, Error> {
+    let out = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|e| Error::io(target, e))?;
+    created.files.push(target.to_owned());
+    Ok(out)
+}
+
+fn write_zip(
+    zip: &mut ZipArchive<BufReader<File>>,
+    entries: &[Entry],
+    archive: &Path,
+    dest: &Path,
+    created: &mut Created,
+) -> Result<(), Error> {
+    for entry in entries {
+        let target = dest.join(&entry.rel);
+        if entry.is_dir {
+            make_dirs(&target, created)?;
+            continue;
         }
-        Ok(())
+        if let Some(parent) = target.parent() {
+            make_dirs(parent, created)?;
+        }
+        let mut source = zip
+            .by_index(entry.index)
+            .map_err(|e| Error::zip(archive, e))?;
+        let mut out = create_file(&target, created)?;
+        io::copy(&mut source, &mut out).map_err(|e| Error::io(&target, e))?;
+        #[cfg(unix)]
+        set_mode(&target, source.unix_mode())?;
     }
+    Ok(())
+}
+
+fn write_tar(
+    entries: &[Entry],
+    archive: &Path,
+    dest: &Path,
+    created: &mut Created,
+) -> Result<(), Error> {
+    let mut tar = tar_stream(archive)?;
+    let mut wanted = entries.iter().peekable();
+    for (index, entry) in tar
+        .entries()
+        .map_err(|e| Error::tar(archive, e))?
+        .enumerate()
+    {
+        let Some(want) = wanted.next_if(|want| want.index == index) else {
+            continue;
+        };
+        let mut entry = entry.map_err(|e| Error::tar(archive, e))?;
+        let target = dest.join(&want.rel);
+        if want.is_dir {
+            make_dirs(&target, created)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            make_dirs(parent, created)?;
+        }
+        let mut out = create_file(&target, created)?;
+        io::copy(&mut entry, &mut out).map_err(|e| Error::tar(archive, e))?;
+        #[cfg(unix)]
+        set_mode(&target, entry.header().mode().ok())?;
+    }
+    Ok(())
+}
+
+/// Copies the downloaded executable to its entry and sets the executable bits.
+fn write_single(
+    entries: &[Entry],
+    source: &Path,
+    dest: &Path,
+    created: &mut Created,
+) -> Result<(), Error> {
+    for entry in entries {
+        let target = dest.join(&entry.rel);
+        copy_file(source, &target, created)?;
+        #[cfg(unix)]
+        set_mode(&target, Some(0o755))?;
+    }
+    Ok(())
 }
 
 /// Removes the first path component of every entry when one directory holds all entries.
@@ -225,7 +392,6 @@ pub fn zip_entry_names(path: &Path) -> Result<Vec<String>, Error> {
 ///
 /// Returns `Error::Io` when `path` cannot be opened and `Error::Zip` when it is not a zip.
 pub fn zip_read_entry(path: &Path, name: &str, limit: u64) -> Result<Option<Vec<u8>>, Error> {
-    use std::io::Read;
     let file = File::open(path).map_err(|source| Error::io(path, source))?;
     let mut zip =
         ZipArchive::new(BufReader::new(file)).map_err(|source| Error::zip(path, source))?;

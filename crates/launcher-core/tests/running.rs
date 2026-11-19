@@ -13,6 +13,7 @@ fn instance(root: &TempDir) -> launcher_core::Instance {
                 name: "r".to_owned(),
                 kind: Kind::Aviutl2,
                 edition: Edition::Normal,
+                bundle: launcher_core::Bundle::Archive,
                 app_version: "1".to_owned(),
                 group: None,
             },

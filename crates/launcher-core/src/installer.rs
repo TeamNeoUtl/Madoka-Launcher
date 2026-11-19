@@ -120,7 +120,8 @@ impl<F: Fetcher> Installer<F> {
         info!(%id, artifacts = artifacts.len(), "install app");
         for artifact in artifacts {
             let download = self.download(artifact, progress).await?;
-            let mut archive = Archive::open(&download.path, layout_of(kind))?;
+            let mut archive =
+                Archive::open_app(&download.path, layout_of(kind), kind.executable_name())?;
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&app_dir)?;
         }
@@ -157,7 +158,8 @@ impl<F: Fetcher> Installer<F> {
         info!(%id, artifacts = artifacts.len(), "update app");
         for artifact in artifacts {
             let download = self.download(artifact, progress).await?;
-            let mut archive = Archive::open(&download.path, layout_of(kind))?;
+            let mut archive =
+                Archive::open_app(&download.path, layout_of(kind), kind.executable_name())?;
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&staged)?;
         }
