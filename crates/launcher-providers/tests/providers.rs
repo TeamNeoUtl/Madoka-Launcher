@@ -490,24 +490,19 @@ async fn freya_selects_by_host_and_ignores_other_names() {
 #[tokio::test]
 async fn freya_accepts_the_windows_asset_of_releases_from_0_8() {
     let windows = "Freya-NLE-0.8.1-windows-x86_64.zip";
+    let macos = "Freya-NLE-0.8.1-macos-arm64.zip";
+    let appimage = "Freya-NLE-0.8.1-linux-x86_64.AppImage";
     let provider = freya(vec![
         release(
             "v0.8.1",
-            vec![
-                asset(windows),
-                asset("Freya-NLE-0.8.1-macos-arm64.zip"),
-                asset("Freya-NLE-0.8.1-linux-x86_64.AppImage"),
-            ],
+            vec![asset(windows), asset(macos), asset(appimage)],
         ),
         release("v0.7.0", vec![asset("AviQtl-MSVC-x86_64.zip")]),
     ]);
     let versions = provider.app_versions().await.unwrap();
     let tags: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
     assert_eq!(tags, ["v0.8.1", "v0.7.0"]);
-    assert_eq!(
-        names(&versions[0].artifacts),
-        [windows, "Freya-NLE-0.8.1-macos-arm64.zip"]
-    );
+    assert_eq!(names(&versions[0].artifacts), [windows, macos, appimage]);
     assert_eq!(
         names(&provider.plan_install_app(&versions[0], WINDOWS).unwrap()),
         [windows]

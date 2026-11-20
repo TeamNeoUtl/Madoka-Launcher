@@ -25,4 +25,5 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSAppleEventManager",
     "NSObject",
     "NSString",
+    "objc2-core-services",
 ] }
