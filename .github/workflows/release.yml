@@ -48,7 +48,10 @@ jobs:
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "launcher-app") | .version')
           test "v$version" = "$GITHUB_REF_NAME"
-      - run: cargo build --release --workspace
+      - name: Build
+        run: |
+          cargo clean --release --package launcher-app
+          cargo build --release --workspace
       - name: Package (macOS)
         if: runner.os == 'macOS'
         shell: bash

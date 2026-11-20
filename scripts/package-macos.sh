@@ -9,8 +9,8 @@ archive=${3:?output zip}
 app="Madoka Launcher.app"
 
 # The newest `icon.icns` that the build script of launcher-app wrote.
-icon=$(find "$profile_dir/build" -path '*launcher-app-*' -name icon.icns -print0 | xargs -0 ls -t | head -n 1)
-test -n "$icon"
+icon=$(find "$profile_dir/build" -path '*launcher-app-*' -name icon.icns -exec ls -t {} + | sed -n 1p)
+test -n "$icon" || { echo "icon.icns not found under $profile_dir/build" >&2; exit 1; }
 
 rm -rf "$app" "$archive"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
