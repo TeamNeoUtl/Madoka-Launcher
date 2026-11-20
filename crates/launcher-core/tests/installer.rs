@@ -968,3 +968,84 @@ async fn install_app_makes_the_executable_download_runnable() {
         .mode();
     assert_eq!(mode & 0o777, 0o755);
 }
+
+fn app_zip_with_link(link: &str, target: &str) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .start_file(
+            "X.app/Contents/Frameworks/F.framework/Versions/A/F",
+            SimpleFileOptions::default(),
+        )
+        .unwrap();
+    writer.write_all(b"binary").unwrap();
+    writer
+        .add_symlink(link, target, SimpleFileOptions::default())
+        .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+async fn install_app_bytes(f: &Fixture, bytes: &[u8]) -> Result<(), Error> {
+    f.installer.fetcher().set(bytes.to_vec());
+    f.installer
+        .install_app(
+            f.instance.config.id,
+            &[artifact("app.zip", bytes)],
+            &NoProgress,
+        )
+        .await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_creates_a_relative_symlink_inside_the_app() {
+    let f = fixture(Kind::Freya);
+    let link = "X.app/Contents/Frameworks/F.framework/Versions/Current";
+    install_app_bytes(&f, &app_zip_with_link(link, "A"))
+        .await
+        .unwrap();
+
+    let path = f.instance.app_dir().join(link);
+    assert_eq!(fs::read_link(&path).unwrap(), Path::new("A"));
+    assert_eq!(fs::read(path.join("F")).unwrap(), b"binary");
+}
+
+#[tokio::test]
+async fn install_app_rejects_a_symlink_that_leaves_the_app() {
+    let f = fixture(Kind::Freya);
+    let link = "X.app/Contents/Frameworks/escape";
+    for target in ["/etc", "../../../..", "A/../../../../.."] {
+        let result = install_app_bytes(&f, &app_zip_with_link(link, target)).await;
+
+        assert!(matches!(result, Err(Error::SymlinkEntry(_))), "{target}");
+        assert!(all_files(&f.instance.app_dir()).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn install_app_skips_macos_archive_metadata() {
+    let f = fixture(Kind::Freya);
+    let bytes = zip_bytes(&[
+        ("X.app/Contents/MacOS/freya-nle", b"exe"),
+        ("X.app/Contents/MacOS/._freya-nle", b"apple double"),
+        ("X.app/.DS_Store", b"store"),
+        ("__MACOSX/X.app/._Info.plist", b"apple double"),
+    ]);
+    install_app_bytes(&f, &bytes).await.unwrap();
+
+    let files = all_files(&f.instance.app_dir());
+    assert_eq!(
+        files,
+        [f.instance.app_dir().join("X.app/Contents/MacOS/freya-nle")]
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn install_app_accepts_a_mach_o_download_as_a_bare_executable() {
+    let f = fixture(Kind::Freya);
+    let macho = [0xCF, 0xFA, 0xED, 0xFE, 0, 0, 0, 0];
+    install_app_bytes(&f, &macho).await.unwrap();
+
+    let installed = f.instance.app_dir().join("freya-nle");
+    assert_eq!(fs::read(&installed).unwrap(), macho);
+}

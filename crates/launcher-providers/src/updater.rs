@@ -17,6 +17,10 @@ const LAUNCHER_BIN: &str = "Madoka-Launcher";
 const BROWSER_BIN: &str = "Madoka-Browser";
 const TARGET: &str = if cfg!(windows) {
     "windows-x86_64"
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    "macos-arm64"
+} else if cfg!(target_os = "macos") {
+    "macos-x86_64"
 } else {
     "linux-x86_64"
 };

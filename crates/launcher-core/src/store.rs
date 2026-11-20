@@ -80,7 +80,7 @@ impl InstanceStore {
     }
 
     /// Copies the install at `source` into the app directory of a new instance.
-    /// The source stays unchanged. Symbolic links and `launch.log` are left out.
+    /// The source stays unchanged. Symbolic links are kept on unix. `launch.log` is left out.
     ///
     /// # Errors
     ///
@@ -342,7 +342,7 @@ impl InstanceStore {
 
 const SKIPPED_ON_COPY: [&str; 2] = ["launch.log", "instance.toml.tmp"];
 
-/// Copies files and directories. Symbolic links are left out.
+/// Copies files and directories. Symbolic links are kept on unix and left out elsewhere.
 fn copy_dir(from: &Path, to: &Path) -> Result<(), Error> {
     fs::create_dir_all(to).map_err(|e| Error::io(to, e))?;
     for entry in fs::read_dir(from).map_err(|e| Error::io(from, e))? {
@@ -361,7 +361,20 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), Error> {
             copy_dir(&source, &target)?;
         } else if file_type.is_file() {
             fs::copy(&source, &target).map_err(|e| Error::io(&target, e))?;
+        } else if file_type.is_symlink() {
+            copy_symlink(&source, &target)?;
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(source: &Path, target: &Path) -> Result<(), Error> {
+    let link = fs::read_link(source).map_err(|e| Error::io(source, e))?;
+    std::os::unix::fs::symlink(link, target).map_err(|e| Error::io(target, e))
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(_source: &Path, _target: &Path) -> Result<(), Error> {
     Ok(())
 }

@@ -121,3 +121,39 @@ fn spawn_sets_the_executable_bit_and_reports_the_exit_status() {
     write_script("#!/bin/sh\nsleep 2\n");
     spawn().confirm(Duration::from_millis(200)).unwrap();
 }
+
+#[test]
+fn macos_resolves_the_executable_inside_the_app_bundle() {
+    let dir = tempdir().unwrap();
+    touch(dir.path(), "Freya NLE.app/Contents/MacOS/freya-nle");
+    touch(dir.path(), "Freya NLE.app/Contents/Frameworks/freya-nle");
+    let found = find_executable(dir.path(), Kind::Freya, Host::MacOs).unwrap();
+    assert_eq!(
+        found,
+        dir.path().join("Freya NLE.app/Contents/MacOS/freya-nle")
+    );
+}
+
+#[test]
+fn macos_matches_macutl() {
+    let dir = tempdir().unwrap();
+    touch(dir.path(), "MacUtl.app/Contents/MacOS/MacUtl");
+    let found = find_executable(dir.path(), Kind::Macutl, Host::MacOs).unwrap();
+    assert_eq!(found, dir.path().join("MacUtl.app/Contents/MacOS/MacUtl"));
+}
+
+#[test]
+fn macos_accepts_a_bare_executable() {
+    let dir = tempdir().unwrap();
+    touch(dir.path(), "freya-nle");
+    let found = find_executable(dir.path(), Kind::Freya, Host::MacOs).unwrap();
+    assert_eq!(found, dir.path().join("freya-nle"));
+}
+
+#[test]
+fn macos_skips_a_bundle_without_the_executable() {
+    let dir = tempdir().unwrap();
+    touch(dir.path(), "Other.app/Contents/MacOS/other");
+    let missing = find_executable(dir.path(), Kind::Freya, Host::MacOs);
+    assert!(matches!(missing, Err(Error::ExecutableNotFound { .. })));
+}

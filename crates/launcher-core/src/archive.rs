@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Cursor, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use zip::ZipArchive;
 
@@ -20,6 +20,8 @@ struct Entry {
     index: usize,
     rel: String,
     is_dir: bool,
+    /// Target of a symbolic link entry. Validated by `ensure_link_inside`.
+    link: Option<String>,
 }
 
 /// Files and directories that a task created, in creation order.
@@ -43,6 +45,11 @@ impl Created {
 const MAGIC_LEN: usize = 4;
 const ZSTD_MAGIC: [u8; MAGIC_LEN] = [0x28, 0xB5, 0x2F, 0xFD];
 const ELF_MAGIC: [u8; MAGIC_LEN] = [0x7F, b'E', b'L', b'F'];
+/// Mach-O 64-bit little endian, and the universal (fat) binary.
+const MACHO_MAGICS: [[u8; MAGIC_LEN]; 2] = [[0xCF, 0xFA, 0xED, 0xFE], [0xCA, 0xFE, 0xBA, 0xBE]];
+const LINK_TARGET_LIMIT: u64 = 4096;
+const JUNK_NAMES: [&str; 2] = ["__MACOSX", ".DS_Store"];
+const APPLE_DOUBLE_PREFIX: &str = "._";
 
 enum Source {
     Zip(ZipArchive<BufReader<File>>),
@@ -60,13 +67,14 @@ enum Format {
 }
 
 fn sniff(path: &Path) -> Result<Format, Error> {
-    let mut head = Vec::with_capacity(MAGIC_LEN);
+    let mut bytes = Vec::with_capacity(MAGIC_LEN);
     File::open(path)
         .map_err(|e| Error::io(path, e))?
         .take(MAGIC_LEN as u64)
-        .read_to_end(&mut head)
+        .read_to_end(&mut bytes)
         .map_err(|e| Error::io(path, e))?;
-    Ok(if head == ELF_MAGIC {
+    let head: [u8; MAGIC_LEN] = bytes.try_into().unwrap_or_default();
+    Ok(if head == ELF_MAGIC || MACHO_MAGICS.contains(&head) {
         Format::Executable
     } else if head == ZSTD_MAGIC {
         Format::TarZstd
@@ -91,17 +99,32 @@ impl Archive {
         for index in 0..zip.len() {
             let entry = zip.by_index_raw(index).map_err(|e| Error::zip(path, e))?;
             let name = entry.name().map_err(|e| Error::zip(path, e))?.into_owned();
-            if entry.is_symlink() {
-                return Err(Error::SymlinkEntry(name));
-            }
+            let is_symlink = entry.is_symlink();
             let is_dir = entry.is_dir();
+            drop(entry);
             let rel = name.replace('\\', "/").trim_end_matches('/').to_owned();
+            if is_junk(&rel) {
+                continue;
+            }
             ensure_relative_path(&rel)?;
+            let link = if is_symlink {
+                let target = read_link_target(&mut zip, index, path, &name)?;
+                ensure_link_inside(&rel, &target)?;
+                Some(target)
+            } else {
+                None
+            };
             if !seen.insert(rel.clone()) {
                 return Err(Error::UnsafePath(name));
             }
-            entries.push(Entry { index, rel, is_dir });
+            entries.push(Entry {
+                index,
+                rel,
+                is_dir,
+                link,
+            });
         }
+        ensure_not_below_link(&entries)?;
         Ok(Self::new(path, Source::Zip(zip), entries, layout))
     }
 
@@ -117,6 +140,7 @@ impl Archive {
                     index: 0,
                     rel: single_name.to_owned(),
                     is_dir: false,
+                    link: None,
                 };
                 Ok(Self::new(path, Source::Single, vec![entry], layout))
             }
@@ -158,6 +182,7 @@ impl Archive {
                 index,
                 rel: rel.to_owned(),
                 is_dir,
+                link: None,
             });
         }
         Ok(Self::new(path, Source::TarZstd, entries, layout))
@@ -230,6 +255,10 @@ fn write_zip(
         if let Some(parent) = target.parent() {
             make_dirs(parent, created)?;
         }
+        if let Some(link) = &entry.link {
+            make_symlink(link, &target, created)?;
+            continue;
+        }
         let mut source = zip
             .by_index(entry.index)
             .map_err(|e| Error::zip(archive, e))?;
@@ -288,6 +317,91 @@ fn write_single(
         set_mode(&target, Some(0o755))?;
     }
     Ok(())
+}
+
+/// Metadata that macOS archivers add: `__MACOSX/`, `.DS_Store`, and `AppleDouble` `._*` files.
+fn is_junk(rel: &str) -> bool {
+    rel.split('/')
+        .any(|part| JUNK_NAMES.contains(&part) || part.starts_with(APPLE_DOUBLE_PREFIX))
+}
+
+fn read_link_target(
+    zip: &mut ZipArchive<BufReader<File>>,
+    index: usize,
+    archive: &Path,
+    name: &str,
+) -> Result<String, Error> {
+    let entry = zip.by_index(index).map_err(|e| Error::zip(archive, e))?;
+    let mut target = String::new();
+    entry
+        .take(LINK_TARGET_LIMIT)
+        .read_to_string(&mut target)
+        .map_err(|_| Error::SymlinkEntry(name.to_owned()))?;
+    Ok(target)
+}
+
+/// Accepts a symbolic link only on unix, and only when its target is relative and made of
+/// leading `..` components followed by normal components, with no more `..` than the link
+/// has parent directories.
+///
+/// Every accepted target names a path inside the archive root without resolving any other
+/// link. Together with `ensure_not_below_link` no chain of links can leave the root.
+fn ensure_link_inside(rel: &str, target: &str) -> Result<(), Error> {
+    let rejected = || Error::SymlinkEntry(rel.to_owned());
+    if !cfg!(unix) || target.is_empty() || target.contains(['\\', '\0']) {
+        return Err(rejected());
+    }
+    let parents = rel.split('/').count() - 1;
+    let mut ups = 0_usize;
+    let mut normals = 0_usize;
+    for component in Path::new(target).components() {
+        match component {
+            Component::ParentDir if normals == 0 => ups += 1,
+            Component::Normal(_) => normals += 1,
+            Component::CurDir => {}
+            _ => return Err(rejected()),
+        }
+    }
+    if ups > parents {
+        return Err(rejected());
+    }
+    Ok(())
+}
+
+/// Rejects an entry whose parent directory is a symbolic link of the same archive.
+fn ensure_not_below_link(entries: &[Entry]) -> Result<(), Error> {
+    let links: HashSet<&str> = entries
+        .iter()
+        .filter(|entry| entry.link.is_some())
+        .map(|entry| entry.rel.as_str())
+        .collect();
+    if links.is_empty() {
+        return Ok(());
+    }
+    entries
+        .iter()
+        .find(|entry| {
+            Path::new(&entry.rel)
+                .ancestors()
+                .skip(1)
+                .filter_map(Path::to_str)
+                .any(|ancestor| links.contains(ancestor))
+        })
+        .map_or(Ok(()), |entry| Err(Error::UnsafePath(entry.rel.clone())))
+}
+
+/// Creates the symbolic link `target` that points to `link`.
+#[cfg(unix)]
+fn make_symlink(link: &str, target: &Path, created: &mut Created) -> Result<(), Error> {
+    std::os::unix::fs::symlink(link, target).map_err(|e| Error::io(target, e))?;
+    created.files.push(target.to_owned());
+    Ok(())
+}
+
+/// `ensure_link_inside` rejects every link on this host, so no entry reaches this function.
+#[cfg(not(unix))]
+fn make_symlink(link: &str, _target: &Path, _created: &mut Created) -> Result<(), Error> {
+    Err(Error::SymlinkEntry(link.to_owned()))
 }
 
 /// Removes the first path component of every entry when one directory holds all entries.
@@ -470,5 +584,66 @@ mod sfx_tests {
     #[test]
     fn signature_is_absent_from_a_plain_executable() {
         assert_eq!(find_seven_zip_signature(&[0x4D, 0x5A, 0x90, 0x00]), None);
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::{Entry, ensure_link_inside, ensure_not_below_link, is_junk};
+
+    fn entry(rel: &str, link: Option<&str>) -> Entry {
+        Entry {
+            index: 0,
+            rel: rel.to_owned(),
+            is_dir: false,
+            link: link.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn apple_metadata_is_junk() {
+        assert!(is_junk("__MACOSX/X.app/._Info.plist"));
+        assert!(is_junk("X.app/Contents/.DS_Store"));
+        assert!(is_junk("X.app/Contents/._MacOS"));
+        assert!(!is_junk("X.app/Contents/MacOS/x"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_inside_the_root_are_accepted() {
+        assert!(ensure_link_inside("X.app/Frameworks/F.framework/Versions/Current", "A").is_ok());
+        assert!(
+            ensure_link_inside(
+                "X.app/Frameworks/F.framework/Resources",
+                "Versions/Current/Resources"
+            )
+            .is_ok()
+        );
+        assert!(ensure_link_inside("a/b/l", "../../x").is_ok());
+    }
+
+    #[test]
+    fn links_leaving_the_root_are_rejected() {
+        for (rel, target) in [
+            ("l", "/etc/passwd"),
+            ("l", ".."),
+            ("a/l", "../.."),
+            ("a/l", "b/../../.."),
+            ("l", ""),
+            ("l", "C:\\x"),
+        ] {
+            assert!(
+                ensure_link_inside(rel, target).is_err(),
+                "{rel} -> {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_entry_below_a_link_is_rejected() {
+        let entries = [entry("a/l", Some("b")), entry("a/l/file", None)];
+        assert!(ensure_not_below_link(&entries).is_err());
+        let entries = [entry("a/l", Some("b")), entry("a/other", None)];
+        assert!(ensure_not_below_link(&entries).is_ok());
     }
 }

@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use launcher_core::{
-    AppSelection, Bundle, Edition, Host, InstallPlan, Kind, Package, PackageSource,
+    AppSelection, Arch, Bundle, Edition, Host, InstallPlan, Kind, Package, PackageSource,
 };
 use launcher_providers::{
-    FreyaProvider, Http, HttpError, NeoutlProvider, Provider, ProviderError, Ymm4Provider,
-    parse_ymm4_catalog,
+    FreyaProvider, Http, HttpError, MacutlProvider, NeoutlProvider, Provider, ProviderError,
+    Ymm4Provider, parse_ymm4_catalog,
 };
 use serde_json::{Value, json};
 use url::Url;
@@ -23,24 +23,39 @@ const YMM4_RELEASES_URL: &str =
     "https://api.github.com/repos/manju-summoner/YukkuriMovieMaker4/releases?per_page=30";
 const NEOUTL_RELEASES_URL: &str =
     "https://codeberg.org/api/v1/repos/TeamNeoUtl/NeoUtl/releases?limit=50";
+const MACUTL_RELEASES_URL: &str =
+    "https://api.github.com/repos/Ren9618/MacUtl/releases?per_page=30";
 const FREYA_RELEASES_URL: &str =
     "https://api.github.com/repos/GT-610/freya-nle/releases?per_page=30";
 const YMM4_INDEX_URL: &str = "https://manjubox.net/ymm4plugins.yml";
 
 const WINDOWS: AppSelection = AppSelection {
     host: Host::Windows,
+    arch: Arch::X86_64,
     edition: Edition::Normal,
     bundle: Bundle::Archive,
 };
 const WINDOWS_LITE: AppSelection = AppSelection {
     host: Host::Windows,
+    arch: Arch::X86_64,
     edition: Edition::Lite,
     bundle: Bundle::Archive,
 };
 const LINUX: AppSelection = AppSelection {
     host: Host::Linux,
+    arch: Arch::X86_64,
     edition: Edition::Normal,
     bundle: Bundle::Archive,
+};
+const MACOS_ARM64: AppSelection = AppSelection {
+    host: Host::MacOs,
+    arch: Arch::Aarch64,
+    edition: Edition::Normal,
+    bundle: Bundle::Archive,
+};
+const MACOS_X86_64: AppSelection = AppSelection {
+    arch: Arch::X86_64,
+    ..MACOS_ARM64
 };
 
 enum Reply {
@@ -131,6 +146,13 @@ fn ymm4(releases: Vec<Value>) -> Ymm4Provider<FixtureHttp> {
 fn neoutl(releases: Vec<Value>) -> NeoutlProvider<FixtureHttp> {
     NeoutlProvider::new(FixtureHttp::new(vec![(
         NEOUTL_RELEASES_URL,
+        releases_body(releases),
+    )]))
+}
+
+fn macutl(releases: Vec<Value>) -> MacutlProvider<FixtureHttp> {
+    MacutlProvider::new(FixtureHttp::new(vec![(
+        MACUTL_RELEASES_URL,
         releases_body(releases),
     )]))
 }
@@ -482,11 +504,130 @@ async fn freya_accepts_the_windows_asset_of_releases_from_0_8() {
     let versions = provider.app_versions().await.unwrap();
     let tags: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
     assert_eq!(tags, ["v0.8.1", "v0.7.0"]);
-    assert_eq!(names(&versions[0].artifacts), [windows]);
+    assert_eq!(
+        names(&versions[0].artifacts),
+        [windows, "Freya-NLE-0.8.1-macos-arm64.zip"]
+    );
     assert_eq!(
         names(&provider.plan_install_app(&versions[0], WINDOWS).unwrap()),
         [windows]
     );
+}
+
+#[tokio::test]
+async fn freya_selects_the_macos_zip_by_arch() {
+    let arm64 = "Freya-NLE-0.8.1-macos-arm64.zip";
+    let x86_64 = "Freya-NLE-0.8.1-macos-x86_64.zip";
+    let provider = freya(vec![release(
+        "v0.8.1",
+        vec![
+            asset(arm64),
+            asset(x86_64),
+            asset("Freya-NLE-0.8.1-windows-x86_64.zip"),
+        ],
+    )]);
+    let versions = provider.app_versions().await.unwrap();
+
+    assert_eq!(
+        names(
+            &provider
+                .plan_install_app(&versions[0], MACOS_ARM64)
+                .unwrap()
+        ),
+        [arm64]
+    );
+    assert_eq!(
+        names(
+            &provider
+                .plan_install_app(&versions[0], MACOS_X86_64)
+                .unwrap()
+        ),
+        [x86_64]
+    );
+}
+
+#[tokio::test]
+async fn freya_macos_legacy_assets_are_arm64_only() {
+    for legacy in [
+        "Freya-NLE-macOS-Xcode-arm64.zip",
+        "AviQtl-macOS-Xcode-arm64.zip",
+    ] {
+        let provider = freya(vec![release("v0.8.0", vec![asset(legacy)])]);
+        let versions = provider.app_versions().await.unwrap();
+
+        assert_eq!(
+            names(
+                &provider
+                    .plan_install_app(&versions[0], MACOS_ARM64)
+                    .unwrap()
+            ),
+            [legacy]
+        );
+        assert!(matches!(
+            provider.plan_install_app(&versions[0], MACOS_X86_64),
+            Err(ProviderError::NoMatchingAsset { .. })
+        ));
+        assert!(matches!(
+            provider.plan_install_app(&versions[0], WINDOWS),
+            Err(ProviderError::NoMatchingAsset { .. })
+        ));
+    }
+}
+
+#[tokio::test]
+async fn macutl_takes_the_zip_and_keeps_the_digest() {
+    let zip = "MacUtl-0.8.11-macos.zip";
+    let digest = format!("sha256:{}", "ab".repeat(32));
+    let provider = macutl(vec![release(
+        "v0.8.11-mac.3",
+        vec![
+            asset("MacUtl-0.8.11-macos.dmg"),
+            asset_with_digest(zip, &digest),
+        ],
+    )]);
+    let versions = provider.app_versions().await.unwrap();
+
+    assert_eq!(versions[0].version, "v0.8.11-mac.3");
+    assert_eq!(names(&versions[0].artifacts), [zip]);
+    let planned = provider
+        .plan_install_app(&versions[0], MACOS_ARM64)
+        .unwrap();
+    assert_eq!(names(&planned), [zip]);
+    assert_eq!(planned[0].hash.as_ref().unwrap().hex, "ab".repeat(32));
+    assert!(provider.catalog().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn macutl_is_unavailable_outside_apple_silicon() {
+    let provider = macutl(vec![release(
+        "v0.8.11-mac.3",
+        vec![asset("MacUtl-0.8.11-macos.zip")],
+    )]);
+    let versions = provider.app_versions().await.unwrap();
+
+    for selection in [MACOS_X86_64, WINDOWS, LINUX] {
+        assert!(matches!(
+            provider.plan_install_app(&versions[0], selection),
+            Err(ProviderError::UnsupportedHost {
+                kind: Kind::Macutl,
+                ..
+            })
+        ));
+    }
+}
+
+#[tokio::test]
+async fn neoutl_is_unavailable_on_macos() {
+    let provider = neoutl(vec![release("v1", vec![asset("neoutl-linux-x86_64.zip")])]);
+    let versions = provider.app_versions().await.unwrap();
+
+    assert!(matches!(
+        provider.plan_install_app(&versions[0], MACOS_ARM64),
+        Err(ProviderError::UnsupportedHost {
+            kind: Kind::Neoutl,
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

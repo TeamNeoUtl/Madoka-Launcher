@@ -58,6 +58,8 @@ pub enum Error {
     Tar { path: PathBuf, message: String },
     #[error("symlink entry in archive: {0}")]
     SymlinkEntry(String),
+    #[error("code signing failed for {0}")]
+    CodeSignFailed(PathBuf),
     #[error("plugin {0} is not installed")]
     PluginNotFound(String),
     #[error("plugin installation is unsupported for kind {0:?}")]

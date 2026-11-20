@@ -23,10 +23,12 @@ impl<H: Http> NeoutlProvider<H> {
     }
 }
 
-const fn asset_name(host: Host) -> &'static str {
+/// `None` on macOS, where `MacutlProvider` serves the macOS port.
+const fn asset_name(host: Host) -> Option<&'static str> {
     match host {
-        Host::Windows => "neoutl-windows-x86_64.zip",
-        Host::Linux => "neoutl-linux-x86_64.zip",
+        Host::Windows => Some("neoutl-windows-x86_64.zip"),
+        Host::Linux => Some("neoutl-linux-x86_64.zip"),
+        Host::MacOs => None,
     }
 }
 
@@ -50,7 +52,10 @@ impl<H: Http> Provider for NeoutlProvider<H> {
         version: &AppVersion,
         selection: AppSelection,
     ) -> Result<Vec<Artifact>, ProviderError> {
-        let name = asset_name(selection.host);
+        let name = asset_name(selection.host).ok_or(ProviderError::UnsupportedHost {
+            kind: Kind::Neoutl,
+            host: selection.host,
+        })?;
         version
             .artifacts
             .iter()

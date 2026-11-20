@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use launcher_core::{
-    AppSelection, AppVersion, Bundle, Config, Edition, Error, Fetcher, Host, InstallPlan,
+    AppSelection, AppVersion, Arch, Bundle, Config, Edition, Error, Fetcher, Host, InstallPlan,
     Installer, Instance, InstanceConfig, InstanceId, InstanceLocks, InstanceStore, Kind, Launched,
     NewInstance, PROBE_WINDOW, Package, PackageSource, PluginRecord, ProgressSink, TaskBoard,
     TaskHandle, detect_version, open_directory, portable_root, set_portable, zip_entry_names,
@@ -453,6 +453,7 @@ impl Services {
         let provider = MadokaProvider::for_kind(config.kind, self.http())?;
         let selection = AppSelection {
             host: self.host,
+            arch: Arch::current(),
             edition: config.edition,
             bundle: config.bundle,
         };
@@ -1121,6 +1122,7 @@ impl Services {
         let provider = MadokaProvider::for_kind(config.kind, self.http())?;
         let selection = AppSelection {
             host: self.host,
+            arch: Arch::current(),
             edition: config.edition,
             bundle: config.bundle,
         };
@@ -1210,6 +1212,7 @@ impl Services {
         let provider = MadokaProvider::for_kind(kind, self.http())?;
         let selection = AppSelection {
             host: self.host,
+            arch: Arch::current(),
             edition,
             bundle,
         };

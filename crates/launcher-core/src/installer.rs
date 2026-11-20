@@ -9,6 +9,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::archive::{Archive, Created, Layout};
 use crate::model::ensure_single_component;
+use crate::runner::{bundle_root, is_bundle_dir};
+use crate::sign::ensure_signed;
 use crate::stage::{self, Roots};
 use crate::swap::Swap;
 use crate::{
@@ -125,6 +127,7 @@ impl<F: Fetcher> Installer<F> {
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&app_dir)?;
         }
+        sign_installed(kind, &app_dir)?;
         verify_app(kind, &app_dir, checks)?;
         info!(%id, "app installed");
         Ok(())
@@ -136,6 +139,8 @@ impl<F: Fetcher> Installer<F> {
     /// files that the copy replaced and removes the files that it created.
     /// When the new archive keeps its executable in another directory than the installed app,
     /// the files go to the directory of the installed executable.
+    /// A macOS `.app` bundle replaces the installed bundle as a whole, so no file of the old
+    /// version stays behind.
     ///
     /// # Errors
     ///
@@ -163,12 +168,22 @@ impl<F: Fetcher> Installer<F> {
             debug!(name = %artifact.name, files = archive.files().len(), "extract app archive");
             archive.extract(&staged)?;
         }
-        let (source, dest) = match (exe_dir(kind, &staged), exe_dir(kind, &app_dir)) {
-            (Some(new), Some(old)) if new != old => (staged.join(new), app_dir.join(old)),
-            _ => (staged, app_dir.clone()),
+        let backup = tmp.0.join(BACKUP_DIR);
+        let swap = match (install_root(kind, &staged), install_root(kind, &app_dir)) {
+            (Some(new), old) if executable_host(kind) == Host::MacOs && is_bundle_dir(&new) => {
+                let dest = old
+                    .filter(|old| is_bundle_dir(old))
+                    .map_or_else(|| app_dir.join(&new), |old| app_dir.join(old));
+                Swap::replace_dir(&staged.join(&new), &dest, &backup)?
+            }
+            (Some(new), Some(old)) if new != old => {
+                Swap::apply(&staged.join(new), &app_dir.join(old), &backup)?
+            }
+            _ => Swap::apply(&staged, &app_dir, &backup)?,
         };
-        let swap = Swap::apply(&source, &dest, &tmp.0.join(BACKUP_DIR))?;
-        if let Err(error) = verify_app(kind, &app_dir, checks) {
+        if let Err(error) =
+            sign_installed(kind, &app_dir).and_then(|()| verify_app(kind, &app_dir, checks))
+        {
             swap.roll_back();
             return Err(error);
         }
@@ -489,10 +504,24 @@ const fn executable_host(kind: Kind) -> Host {
     }
 }
 
-/// Directory of the executable below `dir`, relative to `dir`. `None` when there is no executable.
-fn exe_dir(kind: Kind, dir: &Path) -> Option<PathBuf> {
+/// Directory that holds the app below `dir`, relative to `dir`: the `.app` bundle of the
+/// executable, or else the directory of the executable. `None` when there is no executable.
+fn install_root(kind: Kind, dir: &Path) -> Option<PathBuf> {
     let exe = find_executable(dir, kind, executable_host(kind)).ok()?;
-    exe.parent()?.strip_prefix(dir).ok().map(Path::to_path_buf)
+    let root = bundle_root(&exe).or_else(|| exe.parent())?;
+    root.strip_prefix(dir).ok().map(Path::to_path_buf)
+}
+
+/// Signs the installed `.app` bundle again when its signature is invalid. Does nothing for
+/// kinds that do not ship a bundle.
+fn sign_installed(kind: Kind, app_dir: &Path) -> Result<(), Error> {
+    if executable_host(kind) != Host::MacOs {
+        return Ok(());
+    }
+    match install_root(kind, app_dir).map(|root| app_dir.join(root)) {
+        Some(bundle) if is_bundle_dir(&bundle) => ensure_signed(&bundle),
+        _ => Ok(()),
+    }
 }
 
 /// Verifies `checks` against the app files. `AviUtl2` gets `data/` beside the executable,

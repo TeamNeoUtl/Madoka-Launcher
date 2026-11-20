@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use launcher_core::{AppSelection, Bundle, Edition, Host};
+use launcher_core::{AppSelection, Arch, Bundle, Edition, Host};
 use launcher_providers::{FreyaProvider, NeoutlProvider, Provider, ReqwestHttp, Ymm4Provider};
 
 fn http() -> ReqwestHttp {
@@ -17,6 +17,7 @@ fn http() -> ReqwestHttp {
 const fn selection(host: Host, edition: Edition) -> AppSelection {
     AppSelection {
         host,
+        arch: Arch::X86_64,
         edition,
         bundle: Bundle::Archive,
     }

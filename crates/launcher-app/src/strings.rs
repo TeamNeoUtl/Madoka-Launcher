@@ -42,6 +42,7 @@ pub const fn kind_label(kind: Kind) -> &'static str {
         Kind::Ymm4 => "YMM4",
         Kind::Neoutl => "NeoUtl",
         Kind::Freya => "Freya NLE",
+        Kind::Macutl => "MacUtl",
     }
 }
 
@@ -56,6 +57,7 @@ pub const fn host_label(host: Host) -> &'static str {
     match host {
         Host::Windows => "Windows",
         Host::Linux => "Linux",
+        Host::MacOs => "macOS",
     }
 }
 

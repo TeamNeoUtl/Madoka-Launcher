@@ -1,6 +1,8 @@
 use std::sync::LazyLock;
 
-use launcher_core::{AppSelection, AppVersion, Artifact, Bundle, Host, InstallPlan, Kind, Package};
+use launcher_core::{
+    AppSelection, AppVersion, Arch, Artifact, Bundle, Host, InstallPlan, Kind, Package,
+};
 use regex::Regex;
 use url::Url;
 
@@ -28,6 +30,14 @@ static LINUX_ARCHIVE: LazyLock<Regex> =
 static LINUX_APPIMAGE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"^Freya-NLE-.+-linux-x86_64\.AppImage$"));
 
+/// macOS builds are zip archives of one `.app`. Releases up to 0.8.0 ship the arm64 build only,
+/// named `Freya-NLE-macOS-Xcode-arm64.zip`, or `AviQtl-…` before 0.8.
+static MACOS_ARM64_ASSET: LazyLock<Regex> = LazyLock::new(|| {
+    pattern(r"^(?:Freya-NLE-.+-macos-arm64|(?:Freya-NLE|AviQtl)-macOS-Xcode-arm64)\.zip$")
+});
+static MACOS_X86_64_ASSET: LazyLock<Regex> =
+    LazyLock::new(|| pattern(r"^Freya-NLE-.+-macos-x86_64\.zip$"));
+
 pub struct FreyaProvider<H> {
     http: H,
 }
@@ -38,21 +48,28 @@ impl<H: Http> FreyaProvider<H> {
     }
 }
 
-fn is_asset_of(host: Host, bundle: Bundle, name: &str) -> bool {
+fn is_asset_of(host: Host, arch: Arch, bundle: Bundle, name: &str) -> bool {
     match (host, bundle) {
         (Host::Windows, _) => WINDOWS_ASSET.is_match(name),
         (Host::Linux, Bundle::Archive) => {
             name == LEGACY_LINUX_ARCHIVE || LINUX_ARCHIVE.is_match(name)
         }
         (Host::Linux, Bundle::AppImage) => LINUX_APPIMAGE.is_match(name),
+        (Host::MacOs, _) => match arch {
+            Arch::Aarch64 => MACOS_ARM64_ASSET.is_match(name),
+            Arch::X86_64 => MACOS_X86_64_ASSET.is_match(name),
+        },
     }
 }
 
 fn is_any_asset(name: &str) -> bool {
-    is_asset_of(Host::Windows, Bundle::Archive, name)
+    is_asset_of(Host::Windows, Arch::X86_64, Bundle::Archive, name)
         || BUNDLES
             .into_iter()
-            .any(|bundle| is_asset_of(Host::Linux, bundle, name))
+            .any(|bundle| is_asset_of(Host::Linux, Arch::X86_64, bundle, name))
+        || [Arch::Aarch64, Arch::X86_64]
+            .into_iter()
+            .any(|arch| is_asset_of(Host::MacOs, arch, Bundle::Archive, name))
 }
 
 impl<H: Http> Provider for FreyaProvider<H> {
@@ -78,7 +95,14 @@ impl<H: Http> Provider for FreyaProvider<H> {
         version
             .artifacts
             .iter()
-            .find(|artifact| is_asset_of(selection.host, selection.bundle, &artifact.name))
+            .find(|artifact| {
+                is_asset_of(
+                    selection.host,
+                    selection.arch,
+                    selection.bundle,
+                    &artifact.name,
+                )
+            })
             .cloned()
             .map(|artifact| vec![artifact])
             .ok_or_else(|| ProviderError::NoMatchingAsset {

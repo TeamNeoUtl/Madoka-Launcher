@@ -41,6 +41,7 @@ pub enum Kind {
     Ymm4,
     Neoutl,
     Freya,
+    Macutl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

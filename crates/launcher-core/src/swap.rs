@@ -35,6 +35,8 @@ impl Tree {
 pub struct Swap {
     moved: Vec<(PathBuf, PathBuf)>,
     created: Created,
+    /// Directories that `replace_dir` moved into place.
+    placed: Vec<PathBuf>,
 }
 
 impl Swap {
@@ -46,6 +48,7 @@ impl Swap {
         let mut swap = Self {
             moved: Vec::new(),
             created: Created::default(),
+            placed: Vec::new(),
         };
         match swap.write(&tree, source, dest, backup) {
             Ok(()) => Ok(swap),
@@ -56,8 +59,48 @@ impl Swap {
         }
     }
 
+    /// Replaces the directory `dest` with the directory `source` as a whole.
+    /// `dest` moves to `backup` first, then `source` moves to `dest`.
+    /// Both moves are renames, so `source`, `dest`, and `backup` must share one volume.
+    /// A failure rolls back before the error returns.
+    pub(crate) fn replace_dir(source: &Path, dest: &Path, backup: &Path) -> Result<Self, Error> {
+        let mut swap = Self {
+            moved: Vec::new(),
+            created: Created::default(),
+            placed: Vec::new(),
+        };
+        match swap.move_dir(source, dest, backup) {
+            Ok(()) => Ok(swap),
+            Err(error) => {
+                swap.roll_back();
+                Err(error)
+            }
+        }
+    }
+
+    fn move_dir(&mut self, source: &Path, dest: &Path, backup: &Path) -> Result<(), Error> {
+        if fs::symlink_metadata(dest).is_ok() {
+            let name = dest
+                .file_name()
+                .ok_or_else(|| Error::UnsafePath(dest.display().to_string()))?;
+            let saved = backup.join(name);
+            fs::create_dir_all(backup).map_err(|e| Error::io(backup, e))?;
+            fs::rename(dest, &saved).map_err(|e| Error::io(dest, e))?;
+            self.moved.push((dest.to_owned(), saved));
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+        fs::rename(source, dest).map_err(|e| Error::io(dest, e))?;
+        self.placed.push(dest.to_owned());
+        Ok(())
+    }
+
     pub(crate) fn roll_back(self) {
         self.created.roll_back();
+        for dir in self.placed {
+            let _ = fs::remove_dir_all(dir);
+        }
         for (target, saved) in self.moved.into_iter().rev() {
             let _ = fs::rename(saved, target);
         }
@@ -91,5 +134,71 @@ impl Swap {
             fs::set_permissions(&target, permissions).map_err(|e| Error::io(&target, e))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::Swap;
+
+    fn bundle(path: &std::path::Path, marker: &str) {
+        fs::create_dir_all(path.join("Contents")).unwrap();
+        fs::write(path.join("Contents/marker"), marker).unwrap();
+    }
+
+    #[test]
+    fn replace_dir_drops_files_of_the_old_directory() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("app/X.app");
+        let source = dir.path().join("new/X.app");
+        bundle(&dest, "old");
+        fs::write(dest.join("Contents/stale"), "stale").unwrap();
+        bundle(&source, "new");
+
+        let swap = Swap::replace_dir(&source, &dest, &dir.path().join("old")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dest.join("Contents/marker")).unwrap(),
+            "new"
+        );
+        assert!(!dest.join("Contents/stale").exists());
+        drop(swap);
+    }
+
+    #[test]
+    fn roll_back_restores_the_old_directory() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("app/X.app");
+        let source = dir.path().join("new/X.app");
+        bundle(&dest, "old");
+        bundle(&source, "new");
+
+        Swap::replace_dir(&source, &dest, &dir.path().join("old"))
+            .unwrap()
+            .roll_back();
+
+        assert_eq!(
+            fs::read_to_string(dest.join("Contents/marker")).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn a_missing_source_leaves_the_old_directory_in_place() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("app/X.app");
+        bundle(&dest, "old");
+
+        let result = Swap::replace_dir(&dir.path().join("none"), &dest, &dir.path().join("old"));
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(dest.join("Contents/marker")).unwrap(),
+            "old"
+        );
     }
 }

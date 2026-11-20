@@ -104,7 +104,7 @@ pub const fn kind_icon(kind: Kind) -> &'static str {
     match kind {
         Kind::Aviutl | Kind::Aviutl2 => icons::MOVIE,
         Kind::Ymm4 => icons::VIDEOCAM,
-        Kind::Neoutl => icons::LAYERS,
+        Kind::Neoutl | Kind::Macutl => icons::LAYERS,
         Kind::Freya => icons::PLAY_CIRCLE,
     }
 }
@@ -125,7 +125,7 @@ pub enum Tone {
 pub const fn kind_tone(kind: Kind) -> Tone {
     match kind {
         Kind::Ymm4 => Tone::Tertiary,
-        Kind::Neoutl => Tone::Primary,
+        Kind::Neoutl | Kind::Macutl => Tone::Primary,
         Kind::Freya | Kind::Aviutl | Kind::Aviutl2 => Tone::Secondary,
     }
 }

@@ -1,8 +1,8 @@
 use launcher_core::{AppSelection, AppVersion, Artifact, InstallPlan, Kind, Package};
 
 use crate::{
-    Aviutl2Provider, AviutlProvider, FreyaProvider, Http, NeoutlProvider, Provider, ProviderError,
-    Versions, Ymm4Provider,
+    Aviutl2Provider, AviutlProvider, FreyaProvider, Http, MacutlProvider, NeoutlProvider, Provider,
+    ProviderError, Versions, Ymm4Provider,
 };
 
 /// Kinds for which `MadokaProvider::for_kind` returns a provider.
@@ -10,7 +10,7 @@ use crate::{
 pub const fn has_provider(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::Aviutl | Kind::Aviutl2 | Kind::Ymm4 | Kind::Neoutl | Kind::Freya
+        Kind::Aviutl | Kind::Aviutl2 | Kind::Ymm4 | Kind::Neoutl | Kind::Freya | Kind::Macutl
     )
 }
 
@@ -27,6 +27,7 @@ pub enum MadokaProvider<H> {
     Ymm4(Ymm4Provider<H>),
     Neoutl(NeoutlProvider<H>),
     Freya(FreyaProvider<H>),
+    Macutl(MacutlProvider<H>),
 }
 
 impl<H: Http> MadokaProvider<H> {
@@ -41,6 +42,7 @@ impl<H: Http> MadokaProvider<H> {
             Kind::Ymm4 => Ok(Self::Ymm4(Ymm4Provider::new(http))),
             Kind::Neoutl => Ok(Self::Neoutl(NeoutlProvider::new(http))),
             Kind::Freya => Ok(Self::Freya(FreyaProvider::new(http))),
+            Kind::Macutl => Ok(Self::Macutl(MacutlProvider::new(http))),
         }
     }
 }
@@ -53,6 +55,7 @@ macro_rules! dispatch {
             Self::Ymm4($provider) => $call,
             Self::Neoutl($provider) => $call,
             Self::Freya($provider) => $call,
+            Self::Macutl($provider) => $call,
         }
     };
 }

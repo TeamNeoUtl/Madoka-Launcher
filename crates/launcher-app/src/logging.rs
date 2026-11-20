@@ -11,15 +11,14 @@ use tracing_subscriber::{EnvFilter, fmt};
 const FILTER_ENV: &str = "Madoka_LOG";
 const DEFAULT_DIRECTIVES: &str =
     "warn,launcher_core=debug,launcher_providers=debug,reqwest=debug,hyper_util=debug";
-const LOG_DIR: &str = "logs";
 const LOG_FILE: &str = "launcher.log";
 const PREVIOUS_LOG_FILE: &str = "launcher.previous.log";
 
-/// Writes records to stderr and to `<root>/logs/launcher.log`.
+/// Writes records to stderr and to `launcher.log` in `launcher_core::log_dir(root)`.
 /// The previous log is kept as `launcher.previous.log`. `Madoka_LOG` overrides the filter.
 /// Panics are recorded as `error` records.
 pub fn init(root: &Path) -> PathBuf {
-    let path = root.join(LOG_DIR).join(LOG_FILE);
+    let path = launcher_core::log_dir(root).join(LOG_FILE);
     let file = open_log_file(&path);
     let file_error = file.as_ref().err().map(ToString::to_string);
 

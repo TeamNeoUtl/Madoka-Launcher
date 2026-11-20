@@ -9,7 +9,8 @@
 use std::collections::HashMap;
 
 use launcher_core::{
-    AppSelection, Edition, Host, InstallPlan, Location, Origin, Package, PackageSource, Root, Step,
+    AppSelection, Arch, Edition, Host, InstallPlan, Location, Origin, Package, PackageSource, Root,
+    Step,
 };
 use launcher_providers::{
     Aviutl2Provider, AviutlProvider, Http, HttpError, Provider, ProviderError, load_any,
@@ -543,6 +544,7 @@ fn aviutl_kinds_install_on_windows_only() {
     let provider = Aviutl2Provider::new(FixtureHttp(HashMap::new()));
     let selection = |host| AppSelection {
         host,
+        arch: Arch::X86_64,
         edition: Edition::Normal,
         bundle: launcher_core::Bundle::Archive,
     };

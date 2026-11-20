@@ -36,6 +36,7 @@ impl Kind {
             Self::Ymm4 => &["YukkuriMovieMaker"],
             Self::Neoutl => &["NeoUtl"],
             Self::Freya => &["freya-nle", "freya", "aviqtl"],
+            Self::Macutl => &["MacUtl"],
         }
     }
 }
@@ -58,15 +59,51 @@ fn is_executable_name(path: &Path, stems: &[&str], host: Host) -> bool {
                 .and_then(|stem| stem.to_str())
                 .unwrap_or_default()
         }
-        Host::Linux => name,
+        Host::Linux | Host::MacOs => name,
     };
     stems
         .iter()
         .any(|candidate| candidate.eq_ignore_ascii_case(stem))
 }
 
+const BUNDLE_EXTENSION: &str = "app";
+const BUNDLE_EXECUTABLE_DIR: [&str; 2] = ["Contents", "MacOS"];
+
+/// `true` for a directory name that ends with `.app`.
+pub fn is_bundle_dir(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(BUNDLE_EXTENSION))
+}
+
+/// `X.app` of the executable `X.app/Contents/MacOS/<exe>`. `None` for any other layout.
+pub fn bundle_root(exe: &Path) -> Option<&Path> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let [first, second] = BUNDLE_EXECUTABLE_DIR;
+    (macos.file_name()? == second && contents.file_name()? == first && is_bundle_dir(bundle))
+        .then_some(bundle)
+}
+
+/// Executable of an application bundle: the file of `Contents/MacOS` that matches `stems`.
+fn bundle_executable(bundle: &Path, stems: &[&str]) -> Option<PathBuf> {
+    let dir = BUNDLE_EXECUTABLE_DIR
+        .into_iter()
+        .fold(bundle.to_path_buf(), |path, part| path.join(part));
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_executable_name(path, stems, Host::MacOs))
+        .min()
+}
+
 /// Searches `app_dir` and its sub-directories down to depth 2, shallowest level first.
+///
 /// Within one level the smallest path wins.
+/// On macOS an `.app` directory counts as one candidate, whose executable is a file of
+/// `Contents/MacOS`. A bare executable is accepted as well.
+///
 /// # Errors
 ///
 /// Returns `Error::Io` when a directory cannot be read,
@@ -83,7 +120,11 @@ pub fn find_executable(app_dir: &Path, kind: Kind, host: Host) -> Result<PathBuf
                 let path = entry.path();
                 let file_type = entry.file_type().map_err(|e| Error::io(&path, e))?;
                 if file_type.is_dir() {
-                    next.push(path);
+                    if host == Host::MacOs && is_bundle_dir(&path) {
+                        found.extend(bundle_executable(&path, stems));
+                    } else {
+                        next.push(path);
+                    }
                 } else if file_type.is_file() && is_executable_name(&path, stems, host) {
                     found.push(path);
                 }
@@ -216,6 +257,7 @@ fn open_with_shell(target: &OsStr, host: Host, error_path: &Path) -> Result<(), 
     let program = match host {
         Host::Windows => "explorer",
         Host::Linux => "xdg-open",
+        Host::MacOs => "open",
     };
     let child = Command::new(program)
         .arg(target)

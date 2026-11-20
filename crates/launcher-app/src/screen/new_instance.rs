@@ -22,12 +22,13 @@ const VERSION_LIST_HEIGHT: f32 = 220.0;
 const ENTRY_PADDING: [f32; 2] = [8.0, 16.0];
 const INPUT_PADDING: f32 = 12.0;
 
-pub const KINDS: [Kind; 5] = [
+pub const KINDS: [Kind; 6] = [
     Kind::Ymm4,
     Kind::Aviutl,
     Kind::Aviutl2,
     Kind::Neoutl,
     Kind::Freya,
+    Kind::Macutl,
 ];
 
 #[derive(Debug, Clone)]

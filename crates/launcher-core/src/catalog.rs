@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256, Sha384};
 use url::Url;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::{Bundle, Edition, Host};
+use crate::{Arch, Bundle, Edition, Host};
 
 const SHA256_DIGEST_PREFIX: &str = "sha256:";
 const SHA384_SRI_PREFIX: &str = "sha384-";
@@ -141,6 +141,7 @@ pub struct AppVersion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppSelection {
     pub host: Host,
+    pub arch: Arch,
     pub edition: Edition,
     pub bundle: Bundle,
 }

@@ -10,6 +10,7 @@ mod lock;
 mod model;
 mod paths;
 mod runner;
+mod sign;
 mod sort;
 mod stage;
 mod store;
@@ -28,13 +29,13 @@ pub use fetch::{
     ALLOWED_HOSTS, Fetcher, HTTP_HOSTS, NoProgress, Progress, ProgressSink, is_allowed_url,
 };
 pub use hash::{SCAN_DIRS, check_path, detect_version, is_present, scan_xxh3_128};
-pub use host::Host;
+pub use host::{Arch, Host};
 pub use installer::Installer;
 pub use lock::InstanceLocks;
 pub use model::{
     Bundle, Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord,
 };
-pub use paths::{PORTABLE_DIR, default_root, portable_root, set_portable, standard_root};
+pub use paths::{PORTABLE_DIR, default_root, log_dir, portable_root, set_portable, standard_root};
 pub use runner::{
     Launched, PROBE_WINDOW, find_executable, is_instance_running, open_directory, open_url,
 };

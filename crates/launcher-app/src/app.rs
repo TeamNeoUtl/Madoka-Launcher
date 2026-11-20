@@ -9,7 +9,9 @@ use iced_m3::theme::{ColorScheme, Mode, Theme};
 use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
 use iced_m3::widget::{self as m3, Badge, navrail};
-use launcher_core::{AppSelection, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo};
+use launcher_core::{
+    AppSelection, Arch, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo,
+};
 use rust_i18n::t;
 use url::Url;
 
@@ -1415,6 +1417,7 @@ impl App {
     fn refilter(&mut self) {
         let selection = AppSelection {
             host: self.services.host,
+            arch: Arch::current(),
             edition: self.form.edition,
             bundle: self.form.bundle(),
         };

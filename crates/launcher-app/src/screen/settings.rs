@@ -103,25 +103,33 @@ pub fn view<'a>(form: &'a Form, theme: &'a Theme, data_dir: &str) -> Element<'a,
     .padding(style::PADDING)
     .width(Length::Fill);
 
+    // The portable switch exists where portable mode does.
+    let portable_row: Element<'a, Message> = if launcher_core::portable_root().is_some() {
+        row![
+            row![
+                style::icon(style::icons::FOLDER_OPEN)
+                    .size(18)
+                    .color(theme.primary()),
+                style::label(theme, t!("portable_mode")).size(14),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
+            .width(Length::Fill),
+            switch(theme, form.portable).on_toggle(Message::PortableToggled(!form.portable)),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into()
+    } else {
+        column![].into()
+    };
+
     // System & Storage Section
     let system_section = m3::card(
         card::Style::filled(theme),
         column![
             version_row(&form.update, theme),
-            row![
-                row![
-                    style::icon(style::icons::FOLDER_OPEN)
-                        .size(18)
-                        .color(theme.primary()),
-                    style::label(theme, t!("portable_mode")).size(14),
-                ]
-                .spacing(8)
-                .align_y(Vertical::Center)
-                .width(Length::Fill),
-                switch(theme, form.portable).on_toggle(Message::PortableToggled(!form.portable)),
-            ]
-            .spacing(8)
-            .align_y(Vertical::Center),
+            portable_row,
             row![
                 row![
                     style::icon(style::icons::FOLDER_OPEN)
