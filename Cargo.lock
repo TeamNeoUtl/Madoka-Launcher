@@ -3342,7 +3342,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-app"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "embed-resource",
  "fontdb 0.24.0",
@@ -3371,7 +3371,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-browser"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "tao",
  "wry",
@@ -3379,7 +3379,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64 0.23.1",
  "directories",
@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-macos"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-providers"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "hickory-resolver",
  "launcher-core",
