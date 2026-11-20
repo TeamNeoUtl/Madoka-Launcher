@@ -624,6 +624,27 @@ mod tests {
     }
 
     #[test]
+    fn macos_form_starts_with_a_kind_that_macos_offers() {
+        assert_eq!(Form::new(Host::MacOs).kind, Kind::Freya);
+    }
+
+    #[test]
+    fn availability_follows_the_host() {
+        assert_eq!(
+            availability(Kind::Macutl, Host::MacOs),
+            Availability::Available
+        );
+        assert_eq!(
+            availability(Kind::Macutl, Host::Windows),
+            Availability::UnsupportedHost
+        );
+        assert_eq!(
+            availability(Kind::Neoutl, Host::MacOs),
+            Availability::UnsupportedHost
+        );
+    }
+
+    #[test]
     fn source_turns_the_submission_into_an_import_named_after_the_folder() {
         let mut form = aviutl2_form();
         form.set_source(PathBuf::from("tools/MyAviUtl2"));

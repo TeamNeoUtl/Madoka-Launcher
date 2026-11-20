@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, info};
 
-use crate::archive::{Archive, Created, Layout, copy_file, extract_sfx, make_dirs};
+use crate::archive::{Archive, Created, Layout, copy_file, copy_link, extract_sfx, make_dirs};
 use crate::model::ensure_relative_path;
 use crate::{
     AUO_SETUP_TIMEOUT_SECS, Error, FileCheck, Hash, Kind, Location, Root, Step, find_executable,
@@ -177,6 +177,8 @@ fn copy_tree(from: &Path, to: &Path, created: &mut Created) -> Result<(), Error>
             copy_tree(&child, &target, created)?;
         } else if file_type.is_file() {
             copy_file(&child, &target, created)?;
+        } else if file_type.is_symlink() {
+            copy_link(&child, &target, created)?;
         }
     }
     Ok(())

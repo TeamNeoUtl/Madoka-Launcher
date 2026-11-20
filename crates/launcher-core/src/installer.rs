@@ -8,19 +8,19 @@ use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::archive::{Archive, Created, Layout};
+use crate::bundle::{bundle_root, is_bundle_dir};
 use crate::model::ensure_single_component;
-use crate::runner::{bundle_root, is_bundle_dir};
 use crate::sign::ensure_signed;
 use crate::stage::{self, Roots};
 use crate::swap::Swap;
 use crate::{
     Artifact, Error, Fetcher, FileCheck, Hash, Host, Instance, InstanceId, InstanceStore, Kind,
     Package, PackageSource, PluginRecord, Progress, ProgressSink, Recipe, StagedPlan, Step,
-    find_executable, is_allowed_url,
+    cache_dir, find_executable, is_allowed_url,
 };
 
-const DOWNLOADS_DIR: &str = "cache/downloads";
-const TMP_DIR: &str = "cache/tmp";
+const DOWNLOADS_DIR: &str = "downloads";
+const TMP_DIR: &str = "tmp";
 const STAGED_DIR: &str = "new";
 const BACKUP_DIR: &str = "old";
 const PART_SUFFIX: &str = ".part";
@@ -30,7 +30,9 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn create(root: &Path) -> Result<Self, Error> {
-        let path = root.join(TMP_DIR).join(Uuid::new_v4().to_string());
+        let path = cache_dir(root)
+            .join(TMP_DIR)
+            .join(Uuid::new_v4().to_string());
         fs::create_dir_all(&path).map_err(|e| Error::io(&path, e))?;
         Ok(Self(path))
     }
@@ -425,7 +427,7 @@ impl<F: Fetcher> Installer<F> {
         if artifact.url.scheme() == "http" && artifact.hash.is_none() {
             return Err(Error::HashRequired(artifact.url.to_string()));
         }
-        let dir = self.root.join(DOWNLOADS_DIR);
+        let dir = cache_dir(&self.root).join(DOWNLOADS_DIR);
         fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
         debug!(dir = %dir.display(), "download directory ready");
 

@@ -404,6 +404,21 @@ fn make_symlink(link: &str, _target: &Path, _created: &mut Created) -> Result<()
     Err(Error::SymlinkEntry(link.to_owned()))
 }
 
+/// Copies the symbolic link `from` to `to` and keeps its target text.
+#[cfg(unix)]
+pub fn copy_link(from: &Path, to: &Path, created: &mut Created) -> Result<(), Error> {
+    let link = fs::read_link(from).map_err(|e| Error::io(from, e))?;
+    std::os::unix::fs::symlink(link, to).map_err(|e| Error::io(to, e))?;
+    created.files.push(to.to_owned());
+    Ok(())
+}
+
+/// Symbolic links are left out on this host, as in `store::copy_dir`.
+#[cfg(not(unix))]
+pub fn copy_link(_from: &Path, _to: &Path, _created: &mut Created) -> Result<(), Error> {
+    Ok(())
+}
+
 /// Removes the first path component of every entry when one directory holds all entries.
 fn strip_common_root(entries: &mut Vec<Entry>) {
     let Some(root) = entries

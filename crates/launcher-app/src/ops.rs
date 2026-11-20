@@ -15,6 +15,7 @@ use launcher_providers::{
     Dns, Http, MadokaProvider, Provider, ProviderError, ReqwestFetcher, ReqwestHttp, SelfUpdater,
     Versions, has_catalog, load_any, load_fresh, store_catalog,
 };
+use rust_i18n::t;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
@@ -57,11 +58,22 @@ pub enum OpError {
     Worker(String),
     #[error("no install procedure for {0}")]
     Unsupported(String),
+    /// A message that is already translated.
+    #[error("{0}")]
+    Localized(String),
 }
 
 impl From<Error> for OpError {
     fn from(error: Error) -> Self {
-        Self::Core(Box::new(error))
+        match error {
+            Error::MinOsUnsupported { required } => {
+                Self::Localized(t!("min_os_unsupported", required = required).into_owned())
+            }
+            Error::LaunchFailed { .. } if Host::current() == Host::MacOs => {
+                Self::Localized(format!("{error}\n{}", t!("gatekeeper_hint")))
+            }
+            error => Self::Core(Box::new(error)),
+        }
     }
 }
 

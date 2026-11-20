@@ -9,6 +9,9 @@ use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tracing::{debug, info, warn};
 use url::Url;
 
+use crate::bundle::{
+    bundle_root, declared_executable, executable_dir, is_bundle_dir, unsupported_min_os,
+};
 use crate::{Error, Host, Instance, Kind};
 
 const LOG_FILE: &str = "launch.log";
@@ -66,36 +69,19 @@ fn is_executable_name(path: &Path, stems: &[&str], host: Host) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(stem))
 }
 
-const BUNDLE_EXTENSION: &str = "app";
-const BUNDLE_EXECUTABLE_DIR: [&str; 2] = ["Contents", "MacOS"];
-
-/// `true` for a directory name that ends with `.app`.
-pub fn is_bundle_dir(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(BUNDLE_EXTENSION))
-}
-
-/// `X.app` of the executable `X.app/Contents/MacOS/<exe>`. `None` for any other layout.
-pub fn bundle_root(exe: &Path) -> Option<&Path> {
-    let macos = exe.parent()?;
-    let contents = macos.parent()?;
-    let bundle = contents.parent()?;
-    let [first, second] = BUNDLE_EXECUTABLE_DIR;
-    (macos.file_name()? == second && contents.file_name()? == first && is_bundle_dir(bundle))
-        .then_some(bundle)
-}
-
-/// Executable of an application bundle: the file of `Contents/MacOS` that matches `stems`.
+/// Executable of an application bundle: the file that `CFBundleExecutable` names,
+/// else the file of `Contents/MacOS` that matches `stems`.
 fn bundle_executable(bundle: &Path, stems: &[&str]) -> Option<PathBuf> {
-    let dir = BUNDLE_EXECUTABLE_DIR
-        .into_iter()
-        .fold(bundle.to_path_buf(), |path, part| path.join(part));
-    fs::read_dir(dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && is_executable_name(path, stems, Host::MacOs))
-        .min()
+    declared_executable(bundle)
+        .filter(|exe| exe.is_file())
+        .or_else(|| {
+            fs::read_dir(executable_dir(bundle))
+                .ok()?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file() && is_executable_name(path, stems, Host::MacOs))
+                .min()
+        })
 }
 
 /// Searches `app_dir` and its sub-directories down to depth 2, shallowest level first.
@@ -158,6 +144,9 @@ impl Launched {
     /// the log file, or the process start fails.
     pub fn spawn(instance: &Instance, host: Host) -> Result<Self, Error> {
         let exe = find_executable(&instance.app_dir(), instance.config.kind, host)?;
+        if let Some(required) = bundle_root(&exe).and_then(unsupported_min_os) {
+            return Err(Error::MinOsUnsupported { required });
+        }
         #[cfg(unix)]
         ensure_executable(&exe)?;
         let log = instance.dir.join(LOG_FILE);

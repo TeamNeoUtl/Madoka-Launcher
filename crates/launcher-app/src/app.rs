@@ -10,7 +10,7 @@ use iced_m3::widget::card;
 use iced_m3::widget::hybrid_icon::Icon;
 use iced_m3::widget::{self as m3, Badge, navrail};
 use launcher_core::{
-    AppSelection, Arch, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo,
+    AppSelection, Arch, Host, InstallPlan, Instance, InstanceId, Kind, Package, TaskInfo,
 };
 use rust_i18n::t;
 use url::Url;
@@ -1234,6 +1234,13 @@ impl App {
                 let settings::UpdateState::Available(version) = &self.settings.update else {
                     return Task::none();
                 };
+                if Host::current() == Host::MacOs {
+                    if let Ok(url) = url::Url::parse(strings::RELEASES_URL) {
+                        let _ = launcher_core::open_url(&url, Host::MacOs);
+                    }
+                    self.notice = Some(t!("self_update_disabled_macos").into_owned());
+                    return Task::none();
+                }
                 let version = version.clone();
                 let title = format!("{}: v{version}", t!("task_self_update"));
                 let handle = self.services.board.add(title);

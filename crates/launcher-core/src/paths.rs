@@ -9,7 +9,9 @@ use crate::Error;
 /// Name of the directory beside the executable that holds all data in portable mode.
 pub const PORTABLE_DIR: &str = "data";
 const LOG_DIR: &str = "logs";
+const CACHE_DIR: &str = "cache";
 const MACOS_LOG_DIR: [&str; 3] = ["Library", "Logs", "Madoka-Launcher"];
+const MACOS_CACHE_DIR: [&str; 3] = ["Library", "Caches", "Madoka-Launcher"];
 
 /// Data directory of portable mode: `<executable directory>/data`.
 /// `None` on macOS: the application bundle may sit on a read-only or translocated volume.
@@ -37,21 +39,33 @@ pub fn default_root() -> Option<PathBuf> {
         .or_else(standard_root)
 }
 
-/// Directory of the launcher log: `~/Library/Logs/Madoka-Launcher` on macOS, `<root>/logs` elsewhere.
-/// macOS falls back to `<root>/logs` when the home directory is unknown.
-#[must_use]
-pub fn log_dir(root: &Path) -> PathBuf {
-    cfg!(target_os = "macos")
+/// `~/<parts>` on macOS while `root` is the standard data directory, else `None`.
+/// A custom root, such as a test directory, keeps every directory below itself.
+fn macos_home_dir(root: &Path, parts: [&str; 3]) -> Option<PathBuf> {
+    (cfg!(target_os = "macos") && standard_root().is_some_and(|standard| standard == root))
         .then(BaseDirs::new)
         .flatten()
-        .map_or_else(
-            || root.join(LOG_DIR),
-            |dirs| {
-                MACOS_LOG_DIR
-                    .into_iter()
-                    .fold(dirs.home_dir().to_path_buf(), |path, part| path.join(part))
-            },
-        )
+        .map(|dirs| {
+            parts
+                .into_iter()
+                .fold(dirs.home_dir().to_path_buf(), |path, part| path.join(part))
+        })
+}
+
+/// Directory of the launcher log: `~/Library/Logs/Madoka-Launcher` on macOS, `<root>/logs` elsewhere.
+/// macOS falls back to `<root>/logs` for a root other than the standard data directory.
+#[must_use]
+pub fn log_dir(root: &Path) -> PathBuf {
+    macos_home_dir(root, MACOS_LOG_DIR).unwrap_or_else(|| root.join(LOG_DIR))
+}
+
+/// Directory of downloads, temporary files, and catalog caches.
+///
+/// `~/Library/Caches/Madoka-Launcher` on macOS, `<root>/cache` elsewhere.
+/// macOS falls back to `<root>/cache` for a root other than the standard data directory.
+#[must_use]
+pub fn cache_dir(root: &Path) -> PathBuf {
+    macos_home_dir(root, MACOS_CACHE_DIR).unwrap_or_else(|| root.join(CACHE_DIR))
 }
 
 /// Copies the content of the current data directory into the target directory of the new mode.
@@ -112,19 +126,21 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{copy_tree, log_dir, portable_root};
+    use super::{cache_dir, copy_tree, log_dir, portable_root};
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn log_dir_sits_below_the_root() {
+    fn custom_root_keeps_log_and_cache_below_itself() {
         let root = std::path::Path::new("root");
         assert_eq!(log_dir(root), root.join("logs"));
+        assert_eq!(cache_dir(root), root.join("cache"));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn log_dir_sits_in_the_library_logs_directory() {
-        assert!(log_dir(std::path::Path::new("root")).ends_with("Library/Logs/Madoka-Launcher"));
+    fn standard_root_uses_the_library_directories() {
+        let root = super::standard_root().unwrap();
+        assert!(log_dir(&root).ends_with("Library/Logs/Madoka-Launcher"));
+        assert!(cache_dir(&root).ends_with("Library/Caches/Madoka-Launcher"));
     }
 
     #[cfg(target_os = "macos")]

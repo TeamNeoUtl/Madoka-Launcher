@@ -2,13 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::Error;
-use crate::archive::{Created, copy_file, make_dirs};
+use crate::archive::{Created, copy_file, copy_link, make_dirs};
 
 /// Content of one directory tree, as paths relative to its base.
 #[derive(Default)]
 struct Tree {
     dirs: Vec<PathBuf>,
     files: Vec<PathBuf>,
+    links: Vec<PathBuf>,
 }
 
 impl Tree {
@@ -23,6 +24,8 @@ impl Tree {
                 self.collect(base, &child)?;
             } else if file_type.is_file() {
                 self.files.push(child);
+            } else if file_type.is_symlink() {
+                self.links.push(child);
             }
         }
         Ok(())
@@ -118,20 +121,31 @@ impl Swap {
         }
         for rel in &tree.files {
             let target = dest.join(rel);
-            if target.is_file() {
-                let saved = backup.join(rel);
-                if let Some(parent) = saved.parent() {
-                    fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-                }
-                fs::rename(&target, &saved).map_err(|e| Error::io(&target, e))?;
-                self.moved.push((target.clone(), saved));
-            }
+            self.back_up(&target, rel, backup)?;
             let from = source.join(rel);
             copy_file(&from, &target, &mut self.created)?;
             let permissions = fs::metadata(&from)
                 .map_err(|e| Error::io(&from, e))?
                 .permissions();
             fs::set_permissions(&target, permissions).map_err(|e| Error::io(&target, e))?;
+        }
+        for rel in &tree.links {
+            let target = dest.join(rel);
+            self.back_up(&target, rel, backup)?;
+            copy_link(&source.join(rel), &target, &mut self.created)?;
+        }
+        Ok(())
+    }
+
+    /// Moves a file or link at `target` to `backup/<rel>`. A missing or directory `target` stays.
+    fn back_up(&mut self, target: &Path, rel: &Path, backup: &Path) -> Result<(), Error> {
+        if fs::symlink_metadata(target).is_ok_and(|metadata| !metadata.is_dir()) {
+            let saved = backup.join(rel);
+            if let Some(parent) = saved.parent() {
+                fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+            }
+            fs::rename(target, &saved).map_err(|e| Error::io(target, e))?;
+            self.moved.push((target.to_owned(), saved));
         }
         Ok(())
     }
@@ -199,6 +213,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest.join("Contents/marker")).unwrap(),
             "old"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_keeps_links_and_roll_back_restores_the_old_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("new");
+        let dest = dir.path().join("app");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        symlink("a.so.2", source.join("a.so")).unwrap();
+        symlink("a.so.1", dest.join("a.so")).unwrap();
+
+        let swap = Swap::apply(&source, &dest, &dir.path().join("old")).unwrap();
+        assert_eq!(
+            fs::read_link(dest.join("a.so")).unwrap().to_str(),
+            Some("a.so.2")
+        );
+
+        swap.roll_back();
+        assert_eq!(
+            fs::read_link(dest.join("a.so")).unwrap().to_str(),
+            Some("a.so.1")
         );
     }
 }

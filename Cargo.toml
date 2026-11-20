@@ -5,6 +5,7 @@ members = [
     "crates/launcher-providers",
     "crates/launcher-app",
     "crates/launcher-browser",
+    "crates/launcher-macos",
 ]
 
 [workspace.package]

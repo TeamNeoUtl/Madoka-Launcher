@@ -1,4 +1,5 @@
 mod archive;
+mod bundle;
 mod catalog;
 mod config;
 mod error;
@@ -35,7 +36,9 @@ pub use lock::InstanceLocks;
 pub use model::{
     Bundle, Edition, Instance, InstanceConfig, InstanceId, Kind, NewInstance, PluginRecord,
 };
-pub use paths::{PORTABLE_DIR, default_root, log_dir, portable_root, set_portable, standard_root};
+pub use paths::{
+    PORTABLE_DIR, cache_dir, default_root, log_dir, portable_root, set_portable, standard_root,
+};
 pub use runner::{
     Launched, PROBE_WINDOW, find_executable, is_instance_running, open_directory, open_url,
 };

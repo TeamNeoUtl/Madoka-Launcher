@@ -15,17 +15,17 @@ Madoka Launcher は完全無料・自由・オープンソースです。広告�
 
 # 対応ソフト
 
-| | YMM4 | YMM4 Lite | ExEdit0 | ExEdit2 | NeoUtl | Freya NLE |
-| --- | --- | --- | --- | --- | --- | --- |
-| **バージョン管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
-| **インスタンス管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
-| **プラグイン管理** | ✅️（[饅頭遣いのおもちゃ箱](https://manjubox.net/ymm4/)参照） | ✅️（[饅頭遣いのおもちゃ箱](https://manjubox.net/ymm4/)参照） | ✅️（[apm-data](https://github.com/team-apm/apm-data) 参照） | ✅️（[aviutl2-catalog-data](https://github.com/Neosku/aviutl2-catalog-data) 参照） | ❌️ | ❌️ |
+| | YMM4 | YMM4 Lite | ExEdit0 | ExEdit2 | NeoUtl | Freya NLE | MacUtl |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **バージョン管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| **インスタンス管理** | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| **プラグイン管理** | ✅️（[饅頭遣いのおもちゃ箱](https://manjubox.net/ymm4/)参照） | ✅️（[饅頭遣いのおもちゃ箱](https://manjubox.net/ymm4/)参照） | ✅️（[apm-data](https://github.com/team-apm/apm-data) 参照） | ✅️（[aviutl2-catalog-data](https://github.com/Neosku/aviutl2-catalog-data) 参照） | ❌️ | ❌️ | ❌️ |
 
 # ダウンロード・インストール
 
 [madoka.taisho-guy.org](https://launcher.taisho-guy.org) から Madoka Launcher を入手できます。
 
-Windows 及び Linux に対応しています。
+Windows、Linux 及び macOS に対応しています。macOS では Freya NLE と MacUtl（Apple Silicon 限定）を管理できます。
 
 # ビルド
 
@@ -33,6 +33,7 @@ Windows 及び Linux に対応しています。
 | --- | --- |
 | Linux | Arch Linux 系推奨（Ubuntu も多分通る） |
 | Windows | MSYS2 推奨（MSVC も多分通る） |
+| macOS | Xcode Command Line Tools。配布用 `.app` は `bash scripts/package-macos.sh` で作成 |
 
 `cargo build --release` だけ。
 
@@ -68,7 +69,7 @@ Windows 及び Linux に対応しています。
 
 Madoka Launcher は現在、Wine 等の互換レイヤーや QEMU 等のエミュレーターによる Windows 以外の OS における Windows 専用のソフトウェアを動作させる機能は搭載しておりません。
 
-NeoUtl や Freya NLE は Linux や macOS に対応していますから、これらをご活用下さい。
+NeoUtl は Linux に、Freya NLE は Linux と macOS に、MacUtl は macOS に対応していますから、これらをご活用下さい。
 
 </details>
 

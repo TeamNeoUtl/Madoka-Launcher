@@ -40,6 +40,19 @@ pub fn init() {
     if let (Some(rx), Ok(mut lock)) = (start_ipc_listener(), IPC_RX.lock()) {
         *lock = Some(rx);
     }
+    #[cfg(target_os = "macos")]
+    {
+        if !launcher_macos::install_url_handler(forward_to_listener) {
+            warn!("URL handler of macOS is unavailable");
+        }
+    }
+}
+
+/// macOS hands URLs to the running process as Apple Events. They take the path of every
+/// other URL: through the local socket of this process into `poll_incoming`.
+#[cfg(target_os = "macos")]
+fn forward_to_listener(url: &str) {
+    try_send_to_running(url);
 }
 
 /// Checks if a deep link URL has been received via IPC.
@@ -217,6 +230,7 @@ pub fn url_from_args() -> Option<String> {
 ///
 /// - **Linux**: Creates/updates a `.desktop` file in `~/.local/share/applications/`.
 /// - **Windows**: Registers `HKCU\Software\Classes\madoka` with URL Protocol.
+/// - **macOS**: Does nothing. `CFBundleURLTypes` of `Info.plist` registers the schemes.
 pub fn register_url_scheme() {
     #[cfg(target_os = "linux")]
     {

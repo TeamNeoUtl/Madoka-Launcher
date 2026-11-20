@@ -26,6 +26,14 @@ jobs:
             label: linux-x86_64
             suffix: ""
             archive: tar.gz
+          - os: macos-latest
+            label: macos-arm64
+            suffix: ""
+            archive: zip
+          - os: macos-15-intel
+            label: macos-x86_64
+            suffix: ""
+            archive: zip
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
@@ -41,7 +49,15 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "launcher-app") | .version')
           test "v$version" = "$GITHUB_REF_NAME"
       - run: cargo build --release --workspace
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          name="Madoka-launcher-$GITHUB_REF_NAME-${{ matrix.label }}"
+          bash scripts/package-macos.sh target/release "${GITHUB_REF_NAME#v}" "$name.zip"
+          echo "ARCHIVE=$name.zip" >> "$GITHUB_ENV"
       - name: Package
+        if: runner.os != 'macOS'
         shell: bash
         run: |
           name="Madoka-launcher-$GITHUB_REF_NAME-${{ matrix.label }}"

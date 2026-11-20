@@ -134,6 +134,44 @@ fn macos_resolves_the_executable_inside_the_app_bundle() {
     );
 }
 
+fn write_plist(root: &Path, bundle: &str, executable: &str) {
+    let path = root.join(bundle).join("Contents/Info.plist");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let text = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
+         <key>CFBundleExecutable</key><string>{executable}</string></dict></plist>"
+    );
+    fs::write(path, text).unwrap();
+}
+
+#[test]
+fn macos_prefers_the_executable_that_info_plist_names() {
+    let dir = tempdir().unwrap();
+    write_plist(dir.path(), "Freya.app", "Launcher");
+    touch(dir.path(), "Freya.app/Contents/MacOS/Launcher");
+    touch(dir.path(), "Freya.app/Contents/MacOS/freya-nle");
+    let found = find_executable(dir.path(), Kind::Freya, Host::MacOs).unwrap();
+    assert_eq!(found, dir.path().join("Freya.app/Contents/MacOS/Launcher"));
+}
+
+#[test]
+fn macos_falls_back_to_the_stems_when_the_named_file_is_missing() {
+    let dir = tempdir().unwrap();
+    write_plist(dir.path(), "Freya.app", "Gone");
+    touch(dir.path(), "Freya.app/Contents/MacOS/freya-nle");
+    let found = find_executable(dir.path(), Kind::Freya, Host::MacOs).unwrap();
+    assert_eq!(found, dir.path().join("Freya.app/Contents/MacOS/freya-nle"));
+}
+
+#[test]
+fn macos_picks_the_smallest_path_among_several_bundles() {
+    let dir = tempdir().unwrap();
+    touch(dir.path(), "B.app/Contents/MacOS/freya-nle");
+    touch(dir.path(), "A.app/Contents/MacOS/freya-nle");
+    let found = find_executable(dir.path(), Kind::Freya, Host::MacOs).unwrap();
+    assert_eq!(found, dir.path().join("A.app/Contents/MacOS/freya-nle"));
+}
+
 #[test]
 fn macos_matches_macutl() {
     let dir = tempdir().unwrap();

@@ -37,6 +37,9 @@ tracing = "0.1"
 url = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+launcher-macos = { path = "../launcher-macos" }
+
 [build-dependencies]
 resvg = { version = "0.50", default-features = false }
 embed-resource = "3"

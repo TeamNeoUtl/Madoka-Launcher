@@ -305,3 +305,22 @@ fn import_rejects_an_unsupported_host() {
     assert!(matches!(result, Err(Error::UnsupportedKind { .. })));
     assert_eq!(store.list().unwrap().instances.len(), 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn import_keeps_symbolic_links() {
+    let root = TempDir::new().unwrap();
+    let source = TempDir::new().unwrap();
+    std::fs::create_dir_all(source.path().join("lib")).unwrap();
+    std::fs::write(source.path().join("freya-nle"), b"exe").unwrap();
+    std::fs::write(source.path().join("lib/a.so.1"), b"a").unwrap();
+    std::os::unix::fs::symlink("a.so.1", source.path().join("lib/a.so")).unwrap();
+    let store = InstanceStore::new(root.path());
+
+    let imported = store
+        .import(new_instance(Kind::Freya), source.path(), Host::Linux)
+        .unwrap();
+
+    let link = imported.app_dir().join("lib/a.so");
+    assert_eq!(std::fs::read_link(link).unwrap().to_str(), Some("a.so.1"));
+}

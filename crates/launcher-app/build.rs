@@ -1,5 +1,6 @@
 //! Renders `assets/Madoka.svg` into `$OUT_DIR/icon.rgba` (256x256, straight alpha) for the window icon.
 //! On Windows targets it also embeds the same image as the executable icon (resource ordinal 1).
+//! On macOS targets it also writes `$OUT_DIR/icon.icns`, which `scripts/package-macos.sh` puts in the bundle.
 //! The SVG renders without text and without raster images.
 
 use std::env;
@@ -16,6 +17,16 @@ const WINDOW_ICON_SIDE: u16 = 256;
 const EXECUTABLE_ICON_SIDES: [u16; 7] = [16, 24, 32, 48, 64, 128, 256];
 const ICO_HEADER_BYTES: u32 = 6;
 const ICO_ENTRY_BYTES: u32 = 16;
+/// PNG-based ICNS entries: the type code and the side in pixels.
+const ICNS_ENTRIES: [(&[u8; 4], u16); 6] = [
+    (b"ic11", 32),
+    (b"ic12", 64),
+    (b"ic07", 128),
+    (b"ic08", 256),
+    (b"ic09", 512),
+    (b"ic10", 1024),
+];
+const ICNS_ELEMENT_HEADER_BYTES: usize = 8;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
@@ -30,8 +41,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "write icon.rgba",
         fs::write(out.join("icon.rgba"), rgba(&icon)),
     )?;
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        embed_executable_icon(&tree, &out)?;
+    match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("windows") => embed_executable_icon(&tree, &out)?,
+        Ok("macos") => write_icns(&tree, &out)?,
+        _ => {}
     }
     Ok(())
 }
@@ -88,6 +101,34 @@ fn embed_executable_icon(tree: &Tree, out: &Path) -> Result<(), Box<dyn Error>> 
     )?;
     embed_resource::compile(&rc, embed_resource::NONE).manifest_required()?;
     Ok(())
+}
+
+fn write_icns(tree: &Tree, out: &Path) -> Result<(), Box<dyn Error>> {
+    let mut elements = Vec::new();
+    for (kind, side) in ICNS_ENTRIES {
+        elements.push((kind, render(tree, side)?.encode_png()?));
+    }
+    Ok(context(
+        "write icon.icns",
+        fs::write(out.join("icon.icns"), icns_of(&elements)?),
+    )?)
+}
+
+/// Packs PNG elements into an ICNS file: `icns`, the total length, then each element as
+/// its type code, its length (header included), and the PNG. Lengths are big endian.
+fn icns_of(elements: &[(&[u8; 4], Vec<u8>)]) -> Result<Vec<u8>, Box<dyn Error>> {
+    let body: usize = elements
+        .iter()
+        .map(|(_, png)| ICNS_ELEMENT_HEADER_BYTES + png.len())
+        .sum();
+    let mut icns = b"icns".to_vec();
+    icns.extend(u32::try_from(ICNS_ELEMENT_HEADER_BYTES + body)?.to_be_bytes());
+    for (kind, png) in elements {
+        icns.extend(*kind);
+        icns.extend(u32::try_from(ICNS_ELEMENT_HEADER_BYTES + png.len())?.to_be_bytes());
+        icns.extend(png);
+    }
+    Ok(icns)
 }
 
 /// Packs PNG images into an ICO file. A side of 256 is stored as 0.

@@ -3,16 +3,18 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use launcher_core::{Kind, Package};
+use launcher_core::{Kind, Package, cache_dir};
 
 /// A cache file younger than this is used without a request.
 pub const CACHE_TTL: Duration = Duration::from_hours(24);
 
-const CATALOG_DIR: &str = "cache/catalog";
+const CATALOG_DIR: &str = "catalog";
 
 fn path_of(root: &Path, kind: Kind) -> PathBuf {
     let name = format!("{kind:?}").to_ascii_lowercase();
-    root.join(CATALOG_DIR).join(format!("{name}.json"))
+    cache_dir(root)
+        .join(CATALOG_DIR)
+        .join(format!("{name}.json"))
 }
 
 fn read(root: &Path, kind: Kind) -> Option<(Vec<Package>, SystemTime)> {

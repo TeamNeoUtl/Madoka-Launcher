@@ -74,6 +74,8 @@ pub enum Error {
         status: String,
         log: String,
     },
+    #[error("the app requires macOS {required} or later")]
+    MinOsUnsupported { required: String },
 }
 
 impl Error {
