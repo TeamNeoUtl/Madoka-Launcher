@@ -123,6 +123,69 @@
                 background-color: var(--accent-hover);
             }
 
+            .download-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.85rem;
+            }
+
+            .mac-arch-notice {
+                font-size: 0.85rem;
+                color: var(--muted);
+                margin: 0;
+            }
+
+            .mac-arch-notice a {
+                color: var(--accent);
+                text-decoration: underline;
+            }
+
+            .mac-arch-notice a:hover {
+                color: var(--accent-hover);
+            }
+
+            .download-all-platforms {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: center;
+                gap: 0.5rem;
+                font-size: 0.825rem;
+                color: var(--muted);
+                margin-top: 0.25rem;
+            }
+
+            .platforms-title {
+                color: var(--muted);
+            }
+
+            .platform-links {
+                display: inline-flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .platform-links a {
+                color: var(--muted);
+                text-decoration: underline;
+                transition: color 0.15s ease;
+            }
+
+            .platform-links a:hover {
+                color: var(--text);
+            }
+
+            .platform-links a.active {
+                color: var(--accent);
+                font-weight: 600;
+            }
+
+            .platform-links .divider {
+                color: var(--border);
+            }
+
             /* Sections */
             section {
                 margin-bottom: 5rem;
@@ -299,13 +362,49 @@
                         専用の、バージョン・プラグイン・インスタンス管理アプリ
                     </p>
 
-                    <!-- ダウンロードボタン（初期状態） -->
-                    <a
-                        href="https://github.com/TeamNeoUtl/Madoka-Launcher/releases"
-                        id="download-btn"
-                        class="cta-button"
-                        >Madoka Launcher 最新版をダウンロード</a
-                    >
+                    <div class="download-container">
+                        <!-- メインダウンロードボタン -->
+                        <a
+                            href="https://github.com/TeamNeoUtl/Madoka-Launcher/releases"
+                            id="download-btn"
+                            class="cta-button"
+                            >Madoka Launcher 最新版をダウンロード</a
+                        >
+
+                        <!-- macOS アーキテクチャの補足案内 -->
+                        <p
+                            id="mac-arch-notice"
+                            class="mac-arch-notice"
+                            style="display: none"
+                        ></p>
+
+                        <!-- 全プラットフォーム直接ダウンロードリンク一覧 -->
+                        <div class="download-all-platforms">
+                            <span class="platforms-title"
+                                >直接ダウンロード:</span
+                            >
+                            <div class="platform-links" id="platform-links">
+                                <a id="link-macos-arm64" href="#"
+                                    >macOS (Apple Silicon)</a
+                                >
+                                <span class="divider">/</span>
+                                <a id="link-macos-x86" href="#"
+                                    >macOS (Intel)</a
+                                >
+                                <span class="divider">/</span>
+                                <a id="link-windows" href="#">Windows</a>
+                                <span class="divider">/</span>
+                                <a id="link-linux" href="#">Linux</a>
+                                <span class="divider">/</span>
+                                <a
+                                    href="https://github.com/TeamNeoUtl/Madoka-Launcher/releases"
+                                    target="_blank"
+                                    rel="noopener"
+                                    >全リリース</a
+                                >
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <section id="features">
@@ -537,82 +636,220 @@
             const GITHUB_REPO = "Madoka-Launcher";
             const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
             const LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+            const DEFAULT_VERSION = "v0.5.5";
 
-            // アセット名は Madoka-launcher-<tag>-<token>.<拡張子>
-            const TARGETS = {
-                windows: { label: "Windows", token: "windows" },
-                linux: { label: "Linux", token: "linux" },
+            // プラットフォーム定義
+            // token はリリースアセット名に含まれる識別子 (Madoka-launcher-<tag>-<token>.<ext>)
+            const PLATFORMS = {
                 macosArm64: {
+                    id: "link-macos-arm64",
                     label: "macOS (Apple Silicon)",
                     token: "macos-arm64",
+                    ext: "zip",
                 },
-                macosX86: { label: "macOS (Intel)", token: "macos-x86_64" },
+                macosX86: {
+                    id: "link-macos-x86",
+                    label: "macOS (Intel)",
+                    token: "macos-x86_64",
+                    ext: "zip",
+                },
+                windows: {
+                    id: "link-windows",
+                    label: "Windows",
+                    token: "windows-x86_64",
+                    ext: "zip",
+                },
+                linux: {
+                    id: "link-linux",
+                    label: "Linux",
+                    token: "linux-x86_64",
+                    ext: "tar.gz",
+                },
             };
-            const FALLBACK_LABEL = "Windows / Linux / macOS";
 
-            // macOS の UA は Apple Silicon でも Intel を名乗る。
-            // Client Hints で x86 と判明した場合のみ Intel とし、不明なら Apple Silicon とする。
-            async function detectMacTarget() {
-                try {
-                    const { architecture } =
-                        await navigator.userAgentData.getHighEntropyValues([
-                            "architecture",
-                        ]);
-                    if (architecture === "x86") return TARGETS.macosX86;
-                } catch {
-                    // Client Hints 非対応（Safari / Firefox）
-                }
-                return TARGETS.macosArm64;
+            const FALLBACK_LABEL = "Windows / macOS / Linux";
+
+            // フォールバック用の直接ダウンロードURL生成
+            function getFallbackUrl(platformKey, version = DEFAULT_VERSION) {
+                const p = PLATFORMS[platformKey];
+                return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${version}/Madoka-launcher-${version}-${p.token}.${p.ext}`;
             }
 
-            async function detectTarget() {
-                const ua = navigator.userAgent.toLowerCase();
-                if (ua.includes("android")) return null;
-                if (ua.includes("windows")) return TARGETS.windows;
-                if (ua.includes("linux")) return TARGETS.linux;
-                if (ua.includes("mac os") && !/iphone|ipad|ipod/.test(ua)) {
-                    return detectMacTarget();
+            // macOS のアーキテクチャ判定
+            async function detectMacArch() {
+                // 1. Client Hints (Chromium系ブラウザ)
+                if (
+                    navigator.userAgentData &&
+                    typeof navigator.userAgentData.getHighEntropyValues ===
+                        "function"
+                ) {
+                    try {
+                        const { architecture } =
+                            await navigator.userAgentData.getHighEntropyValues([
+                                "architecture",
+                            ]);
+                        if (architecture === "arm") return "macosArm64";
+                        if (architecture === "x86") return "macosX86";
+                    } catch (e) {
+                        // ignore
+                    }
                 }
+
+                // 2. WebGL による GPU レンダラー情報 (Safari / Firefox / Chromium系)
+                try {
+                    const canvas = document.createElement("canvas");
+                    const gl =
+                        canvas.getContext("webgl") ||
+                        canvas.getContext("experimental-webgl");
+                    if (gl) {
+                        const debugInfo = gl.getExtension(
+                            "WEBGL_debug_renderer_info",
+                        );
+                        if (debugInfo) {
+                            const renderer =
+                                gl.getParameter(
+                                    debugInfo.UNMASKED_RENDERER_WEBGL,
+                                ) || "";
+                            if (/Apple/i.test(renderer)) {
+                                return "macosArm64";
+                            }
+                            if (/Intel|AMD|Radeon/i.test(renderer)) {
+                                return "macosX86";
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+
+                // 3. デフォルトは最新の Mac の主流である Apple Silicon
+                return "macosArm64";
+            }
+
+            // OS・環境の検出
+            async function detectPlatform() {
+                const ua = navigator.userAgent.toLowerCase();
+
+                // モバイル端末・タッチ端末（iPad含む）の除外
+                const isTouch =
+                    navigator.maxTouchPoints && navigator.maxTouchPoints > 1;
+                const isMobile = /android|iphone|ipad|ipod|mobile/i.test(ua);
+                if (isMobile) return null;
+
+                if (
+                    ua.includes("windows") ||
+                    ua.includes("win32") ||
+                    ua.includes("win64")
+                ) {
+                    return "windows";
+                }
+
+                // macOS判定 (iPadOS 13+ はデスクトップUAを名乗るが touchPoints > 1 で除外済み)
+                if (
+                    (ua.includes("macintosh") || ua.includes("mac os")) &&
+                    !isTouch
+                ) {
+                    return await detectMacArch();
+                }
+
+                if (ua.includes("linux")) {
+                    return "linux";
+                }
+
                 return null;
             }
 
-            async function initDownloadButton() {
+            async function initDownloadLinks() {
                 const btn = document.getElementById("download-btn");
-                const target = await detectTarget();
-                const label = target ? target.label : FALLBACK_LABEL;
+                const notice = document.getElementById("mac-arch-notice");
+                const detectedKey = await detectPlatform();
+                const detectedPlatform = detectedKey
+                    ? PLATFORMS[detectedKey]
+                    : null;
 
-                // 初期設定（APIフェッチ失敗時やリリース未登録時のフォールバック）
-                btn.href = RELEASES_URL;
-                btn.textContent = `Madoka Launcher 最新版 for ${label} をダウンロード`;
+                // 初期状態（API失敗時やオフライン時のフォールバック直接リンク）
+                if (detectedPlatform) {
+                    btn.href = getFallbackUrl(detectedKey);
+                    btn.textContent = `Madoka Launcher 最新版 for ${detectedPlatform.label} をダウンロード`;
+                } else {
+                    btn.href = RELEASES_URL;
+                    btn.textContent = `Madoka Launcher 最新版 for ${FALLBACK_LABEL} をダウンロード`;
+                }
 
+                // 各プラットフォームの直接ダウンロードリンクの初期設定
+                for (const [key, p] of Object.entries(PLATFORMS)) {
+                    const el = document.getElementById(p.id);
+                    if (el) {
+                        el.href = getFallbackUrl(key);
+                        if (key === detectedKey) {
+                            el.classList.add("active");
+                        }
+                    }
+                }
+
+                // APIから最新リリース情報を取得してURLを更新
                 try {
                     const response = await fetch(LATEST_RELEASE_API);
                     if (!response.ok)
                         throw new Error("Failed to fetch release");
 
                     const data = await response.json();
-                    const versionTag = data.tag_name || "latest";
-                    const asset = target
-                        ? (data.assets || []).find((a) =>
-                              a.name.toLowerCase().includes(`-${target.token}`),
-                          )
-                        : null;
+                    const versionTag = data.tag_name || DEFAULT_VERSION;
+                    const assets = data.assets || [];
 
-                    btn.href =
-                        asset?.browser_download_url ||
-                        data.html_url ||
-                        RELEASES_URL;
-                    btn.textContent = `Madoka Launcher ${versionTag} for ${label} をダウンロード`;
+                    // 各プラットフォームのアセットURLを更新
+                    const assetUrlMap = {};
+                    for (const [key, p] of Object.entries(PLATFORMS)) {
+                        const asset = assets.find((a) =>
+                            a.name.toLowerCase().includes(`-${p.token}`),
+                        );
+                        if (asset) {
+                            assetUrlMap[key] = asset.browser_download_url;
+                            const el = document.getElementById(p.id);
+                            if (el) {
+                                el.href = asset.browser_download_url;
+                            }
+                        }
+                    }
+
+                    // メインダウンロードボタンの更新
+                    if (detectedPlatform && assetUrlMap[detectedKey]) {
+                        btn.href = assetUrlMap[detectedKey];
+                        btn.textContent = `Madoka Launcher ${versionTag} for ${detectedPlatform.label} をダウンロード`;
+                    } else if (data.html_url) {
+                        btn.href = data.html_url;
+                        btn.textContent = `Madoka Launcher ${versionTag} for ${detectedPlatform ? detectedPlatform.label : FALLBACK_LABEL} をダウンロード`;
+                    }
+
+                    // macOS のアーキテクチャ補足案内
+                    if (detectedKey === "macosArm64" && assetUrlMap.macosX86) {
+                        notice.innerHTML = `Intel Mac をお使いの方はこちら: <a href="${assetUrlMap.macosX86}">macOS (Intel) をダウンロード (.zip)</a>`;
+                        notice.style.display = "block";
+                    } else if (
+                        detectedKey === "macosX86" &&
+                        assetUrlMap.macosArm64
+                    ) {
+                        notice.innerHTML = `Apple Silicon (M1/M2/M3/M4) Mac をお使いの方はこちら: <a href="${assetUrlMap.macosArm64}">macOS (Apple Silicon) をダウンロード (.zip)</a>`;
+                        notice.style.display = "block";
+                    }
                 } catch (err) {
                     console.warn(
-                        "Could not fetch release info, using default releases page.",
+                        "Could not fetch release info, using default releases fallback.",
                         err,
                     );
-                    // エラー時（まだリリースが作られていない等）もボタンのテキストが不自然にならないよう維持
+
+                    // フォールバック時でも macOS のアーキテクチャ補足案内を表示
+                    if (detectedKey === "macosArm64") {
+                        notice.innerHTML = `Intel Mac をお使いの方はこちら: <a href="${getFallbackUrl("macosX86")}">macOS (Intel) をダウンロード (.zip)</a>`;
+                        notice.style.display = "block";
+                    } else if (detectedKey === "macosX86") {
+                        notice.innerHTML = `Apple Silicon (M1/M2/M3/M4) Mac をお使いの方はこちら: <a href="${getFallbackUrl("macosArm64")}">macOS (Apple Silicon) をダウンロード (.zip)</a>`;
+                        notice.style.display = "block";
+                    }
                 }
             }
 
-            initDownloadButton();
+            initDownloadLinks();
         </script>
     </body>
 </html>
